@@ -88,14 +88,14 @@ Register a new user account.
 
 ```json
 {
-   "username": "Sokheang",
-   "firstname": "Sokheang",
-   "lastname": "Chan",
-   "gender": "M",
-   "dob": "2001-08-08",
-   "email": "sokheang@example.com",
-   "password": "String12345",
-   "confirmPassword": "String12345"
+  "username": "Sokheang",
+  "firstname": "Sokheang",
+  "lastname": "Chan",
+  "gender": "M",
+  "dob": "2001-08-08",
+  "email": "sokheang@example.com",
+  "password": "String12345",
+  "confirmPassword": "String12345"
 }
 ```
 
@@ -103,19 +103,19 @@ Register a new user account.
 
 ```json
 {
-   "payload": {
-      "userId": "550e8400-e29b-41d4-a716-446655440000",
-      "username": "Sokheang",
-      "firstname": "Sokheang",
-      "lastname": "Chan",
-      "email": "sokheang@example.com",
-      "gender": "M",
-      "dob": "2001-08-08",
-      "isVerified": false
-   },
-   "message": "User registered successfully.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "username": "Sokheang",
+    "firstname": "Sokheang",
+    "lastname": "Chan",
+    "email": "sokheang@example.com",
+    "gender": "M",
+    "dob": "2001-08-08",
+    "isVerified": false
+  },
+  "message": "User registered successfully.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -136,8 +136,8 @@ Authenticate and obtain a JWT token.
 
 ```json
 {
-   "email": "sokheang@example.com",
-   "password": "String12345"
+  "email": "sokheang@example.com",
+  "password": "String12345"
 }
 ```
 
@@ -145,20 +145,20 @@ Authenticate and obtain a JWT token.
 
 ```json
 {
-   "payload": {
-      "userId": "550e8400-e29b-41d4-a716-446655440000",
-      "username": "Sokheang",
-      "firstname": "Sokheang",
-      "lastname": "Chan",
-      "email": "sokheang@example.com",
-      "gender": "M",
-      "dob": "2001-08-08",
-      "isVerified": true
-   },
-   "message": "Login successfully.",
-   "code": 200,
-   "status": "OK",
-   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "payload": {
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "username": "Sokheang",
+    "firstname": "Sokheang",
+    "lastname": "Chan",
+    "email": "sokheang@example.com",
+    "gender": "M",
+    "dob": "2001-08-08",
+    "isVerified": true
+  },
+  "message": "Login successfully.",
+  "code": 200,
+  "status": "OK",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
@@ -186,8 +186,8 @@ Create a new company for the currently authenticated user.
 
 ```json
 {
-   "companyName": "Acme Corporation",
-   "businessNumber": "1234567890"
+  "companyName": "Acme Corporation",
+  "businessNumber": "1234567890"
 }
 ```
 
@@ -195,17 +195,17 @@ Create a new company for the currently authenticated user.
 
 ```json
 {
-   "payload": {
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "userId": "550e8400-e29b-41d4-a716-446655440000",
-      "companyName": "Acme Corporation",
-      "businessNumber": "1234567890",
-      "createdDate": "2026-04-05T10:30:00",
-      "ruleDTOList": []
-   },
-   "message": "Company was created successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "companyName": "Acme Corporation",
+    "businessNumber": "1234567890",
+    "createdDate": "2026-04-05T10:30:00",
+    "ruleDTOList": []
+  },
+  "message": "Company was created successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -222,19 +222,19 @@ Retrieve all companies belonging to the currently authenticated user.
 
 ```json
 {
-   "payload": [
-      {
-         "companyId": "550e8400-e29b-41d4-a716-446655440001",
-         "userId": "550e8400-e29b-41d4-a716-446655440000",
-         "companyName": "Acme Corporation",
-         "businessNumber": "1234567890",
-         "createdDate": "2026-04-05T10:30:00",
-         "ruleDTOList": []
-      }
-   ],
-   "message": "Get all companies successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": [
+    {
+      "companyId": "550e8400-e29b-41d4-a716-446655440001",
+      "userId": "550e8400-e29b-41d4-a716-446655440000",
+      "companyName": "Acme Corporation",
+      "businessNumber": "1234567890",
+      "createdDate": "2026-04-05T10:30:00",
+      "ruleDTOList": []
+    }
+  ],
+  "message": "Get all companies successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -254,17 +254,17 @@ Retrieve a single company by its ID.
 
 ```json
 {
-   "payload": {
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "userId": "550e8400-e29b-41d4-a716-446655440000",
-      "companyName": "Acme Corporation",
-      "businessNumber": "1234567890",
-      "createdDate": "2026-04-05T10:30:00",
-      "ruleDTOList": []
-   },
-   "message": "Get company successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "companyName": "Acme Corporation",
+    "businessNumber": "1234567890",
+    "createdDate": "2026-04-05T10:30:00",
+    "ruleDTOList": []
+  },
+  "message": "Get company successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -284,9 +284,9 @@ Delete a company by its ID.
 
 ```json
 {
-   "message": "Company was deleted successfully.",
-   "code": 200,
-   "status": "OK"
+  "message": "Company was deleted successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -317,9 +317,9 @@ Create a single category for a company. If an identical category already exists,
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "code": "RTL01",
-   "category": "Retail"
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "code": "RTL01",
+  "category": "Retail"
 }
 ```
 
@@ -327,16 +327,16 @@ Create a single category for a company. If an identical category already exists,
 
 ```json
 {
-   "payload": {
-      "categoryId": "550e8400-e29b-41d4-a716-446655440002",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "code": "RTL01",
-      "category": "Retail",
-      "isUsed": false
-   },
-   "message": "Category processed successfully. Existing category is returned if duplicate.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "code": "RTL01",
+    "category": "Retail",
+    "isUsed": false
+  },
+  "message": "Category processed successfully. Existing category is returned if duplicate.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -356,18 +356,18 @@ Retrieve all categories belonging to a company.
 
 ```json
 {
-   "payload": [
-      {
-         "categoryId": "550e8400-e29b-41d4-a716-446655440002",
-         "companyId": "550e8400-e29b-41d4-a716-446655440001",
-         "code": "RTL01",
-         "category": "Retail",
-         "isUsed": true
-      }
-   ],
-   "message": "Categories were retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": [
+    {
+      "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+      "companyId": "550e8400-e29b-41d4-a716-446655440001",
+      "code": "RTL01",
+      "category": "Retail",
+      "isUsed": true
+    }
+  ],
+  "message": "Categories were retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -391,15 +391,15 @@ Bulk-import categories from an Excel file.
 
 ```json
 {
-   "payload": {
-      "totalRows": 100,
-      "insertedRows": 95,
-      "skippedRows": 5,
-      "alreadyExistedRows": 3
-   },
-   "message": "Categories were created successfully from Excel.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "totalRows": 100,
+    "insertedRows": 95,
+    "skippedRows": 5,
+    "alreadyExistedRows": 3
+  },
+  "message": "Categories were created successfully from Excel.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -435,16 +435,16 @@ Create a new classification rule.
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "categoryIds": [
-      "550e8400-e29b-41d4-a716-446655440002"
-   ],
-   "ruleName": "Convenience Store Rule",
-   "merchantName": "GS25",
-   "merchantIndustryName": "편의점",
-   "minAmount": 1000,
-   "maxAmount": 50000,
-   "description": "Matches GS25 convenience store purchases"
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "categoryIds": [
+    "550e8400-e29b-41d4-a716-446655440002"
+  ],
+  "ruleName": "Convenience Store Rule",
+  "merchantName": "GS25",
+  "merchantIndustryName": "편의점",
+  "minAmount": 1000,
+  "maxAmount": 50000,
+  "description": "Matches GS25 convenience store purchases"
 }
 ```
 
@@ -452,30 +452,30 @@ Create a new classification rule.
 
 ```json
 {
-   "payload": {
-      "ruleId": "550e8400-e29b-41d4-a716-446655440010",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "ruleName": "Convenience Store Rule",
-      "merchantName": "GS25",
-      "merchantIndustryName": "편의점",
-      "usageStatus": "Y",
-      "minAmount": 1000,
-      "maxAmount": 50000,
-      "description": "Matches GS25 convenience store purchases",
-      "createdDate": "2026-04-05T10:30:00",
-      "categoryDTOList": [
-         {
-            "categoryId": "550e8400-e29b-41d4-a716-446655440002",
-            "companyId": "550e8400-e29b-41d4-a716-446655440001",
-            "code": "RTL01",
-            "category": "Retail",
-            "isUsed": true
-         }
-      ]
-   },
-   "message": "Rule was created successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "ruleId": "550e8400-e29b-41d4-a716-446655440010",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "ruleName": "Convenience Store Rule",
+    "merchantName": "GS25",
+    "merchantIndustryName": "편의점",
+    "usageStatus": "Y",
+    "minAmount": 1000,
+    "maxAmount": 50000,
+    "description": "Matches GS25 convenience store purchases",
+    "createdDate": "2026-04-05T10:30:00",
+    "categoryDTOList": [
+      {
+        "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+        "companyId": "550e8400-e29b-41d4-a716-446655440001",
+        "code": "RTL01",
+        "category": "Retail",
+        "isUsed": true
+      }
+    ]
+  },
+  "message": "Rule was created successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -508,16 +508,16 @@ Update an existing rule.
 
 ```json
 {
-   "categoryIds": [
-      "550e8400-e29b-41d4-a716-446655440002"
-   ],
-   "ruleName": "Convenience Store Rule (Updated)",
-   "merchantName": "GS25",
-   "merchantIndustryName": "편의점",
-   "usageStatus": "Y",
-   "minAmount": 500,
-   "maxAmount": 100000,
-   "description": "Updated rule for GS25 purchases"
+  "categoryIds": [
+    "550e8400-e29b-41d4-a716-446655440002"
+  ],
+  "ruleName": "Convenience Store Rule (Updated)",
+  "merchantName": "GS25",
+  "merchantIndustryName": "편의점",
+  "usageStatus": "Y",
+  "minAmount": 500,
+  "maxAmount": 100000,
+  "description": "Updated rule for GS25 purchases"
 }
 ```
 
@@ -525,30 +525,30 @@ Update an existing rule.
 
 ```json
 {
-   "payload": {
-      "ruleId": "550e8400-e29b-41d4-a716-446655440010",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "ruleName": "Convenience Store Rule (Updated)",
-      "merchantName": "GS25",
-      "merchantIndustryName": "편의점",
-      "usageStatus": "Y",
-      "minAmount": 500,
-      "maxAmount": 100000,
-      "description": "Updated rule for GS25 purchases",
-      "createdDate": "2026-04-05T10:30:00",
-      "categoryDTOList": [
-         {
-            "categoryId": "550e8400-e29b-41d4-a716-446655440002",
-            "companyId": "550e8400-e29b-41d4-a716-446655440001",
-            "code": "RTL01",
-            "category": "Retail",
-            "isUsed": true
-         }
-      ]
-   },
-   "message": "Rule was updated successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "ruleId": "550e8400-e29b-41d4-a716-446655440010",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "ruleName": "Convenience Store Rule (Updated)",
+    "merchantName": "GS25",
+    "merchantIndustryName": "편의점",
+    "usageStatus": "Y",
+    "minAmount": 500,
+    "maxAmount": 100000,
+    "description": "Updated rule for GS25 purchases",
+    "createdDate": "2026-04-05T10:30:00",
+    "categoryDTOList": [
+      {
+        "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+        "companyId": "550e8400-e29b-41d4-a716-446655440001",
+        "code": "RTL01",
+        "category": "Retail",
+        "isUsed": true
+      }
+    ]
+  },
+  "message": "Rule was updated successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -568,32 +568,32 @@ Retrieve all rules for a company.
 
 ```json
 {
-   "payload": [
-      {
-         "ruleId": "550e8400-e29b-41d4-a716-446655440010",
-         "companyId": "550e8400-e29b-41d4-a716-446655440001",
-         "ruleName": "Convenience Store Rule",
-         "merchantName": "GS25",
-         "merchantIndustryName": "편의점",
-         "usageStatus": "Y",
-         "minAmount": 1000,
-         "maxAmount": 50000,
-         "description": "Matches GS25 convenience store purchases",
-         "createdDate": "2026-04-05T10:30:00",
-         "categoryDTOList": [
-            {
-               "categoryId": "550e8400-e29b-41d4-a716-446655440002",
-               "companyId": "550e8400-e29b-41d4-a716-446655440001",
-               "code": "RTL01",
-               "category": "Retail",
-               "isUsed": true
-            }
-         ]
-      }
-   ],
-   "message": "Rules was retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": [
+    {
+      "ruleId": "550e8400-e29b-41d4-a716-446655440010",
+      "companyId": "550e8400-e29b-41d4-a716-446655440001",
+      "ruleName": "Convenience Store Rule",
+      "merchantName": "GS25",
+      "merchantIndustryName": "편의점",
+      "usageStatus": "Y",
+      "minAmount": 1000,
+      "maxAmount": 50000,
+      "description": "Matches GS25 convenience store purchases",
+      "createdDate": "2026-04-05T10:30:00",
+      "categoryDTOList": [
+        {
+          "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+          "companyId": "550e8400-e29b-41d4-a716-446655440001",
+          "code": "RTL01",
+          "category": "Retail",
+          "isUsed": true
+        }
+      ]
+    }
+  ],
+  "message": "Rules was retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -626,12 +626,12 @@ Create or update the AI bot configuration for a company.
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "config": {
-      "modelName": "claude-sonnet-4-6",
-      "temperature": 0.2,
-      "systemPrompt": "You are a corporate expense classifier. Given a merchant name and transaction amount, classify the transaction into one of the provided accounting categories."
-   }
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "config": {
+    "modelName": "claude-sonnet-4-6",
+    "temperature": 0.2,
+    "systemPrompt": "You are a corporate expense classifier. Given a merchant name and transaction amount, classify the transaction into one of the provided accounting categories."
+  }
 }
 ```
 
@@ -639,15 +639,15 @@ Create or update the AI bot configuration for a company.
 
 ```json
 {
-   "payload": {
-      "botId": "550e8400-e29b-41d4-a716-446655440020",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "config": "{\"modelName\":\"claude-sonnet-4-6\",\"temperature\":0.2,\"systemPrompt\":\"...\"}",
-      "createdDate": "2026-04-05T10:30:00"
-   },
-   "message": "Bot config was created successfully.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "botId": "550e8400-e29b-41d4-a716-446655440020",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "config": "{\"modelName\":\"claude-sonnet-4-6\",\"temperature\":0.2,\"systemPrompt\":\"...\"}",
+    "createdDate": "2026-04-05T10:30:00"
+  },
+  "message": "Bot config was created successfully.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -680,17 +680,17 @@ Parse a labeled Excel file and generate rules and categories for a company.
 
 ```json
 {
-   "payload": {
-      "totalRows": 500,
-      "trainedRows": 480,
-      "skippedRows": 20,
-      "createdRules": 25,
-      "createdCategories": 10,
-      "createdMappings": 150
-   },
-   "message": "Training completed successfully.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "totalRows": 500,
+    "trainedRows": 480,
+    "skippedRows": 20,
+    "createdRules": 25,
+    "createdCategories": 10,
+    "createdMappings": 150
+  },
+  "message": "Training completed successfully.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -723,26 +723,26 @@ Upload a transaction Excel file for classification.
 
 ```json
 {
-   "payload": {
-      "fileId": "550e8400-e29b-41d4-a716-446655440030",
-      "totalRows": 1000,
-      "insertedRows": 980,
-      "skippedRows": 20,
-      "batchSize": 100,
-      "enrichedFileUrl": "/api/v1/storage/files/by-name/enriched-txn-20260405-abc123.xlsx",
-      "storedFileName": "enriched-txn-20260405-abc123.xlsx",
-      "ruleMatchedRows": 750,
-      "aiMatchedRows": 180,
-      "ruleUnmatchedRows": 50,
-      "unmatchedMerchantSamples": [
-         "Unknown Vendor A",
-         "Unknown Vendor B",
-         "Unknown Vendor C"
-      ]
-   },
-   "message": "Transactions were created successfully from Excel.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "fileId": "550e8400-e29b-41d4-a716-446655440030",
+    "totalRows": 1000,
+    "insertedRows": 980,
+    "skippedRows": 20,
+    "batchSize": 100,
+    "enrichedFileUrl": "/api/v1/storage/files/by-name/enriched-txn-20260405-abc123.xlsx",
+    "storedFileName": "enriched-txn-20260405-abc123.xlsx",
+    "ruleMatchedRows": 750,
+    "aiMatchedRows": 180,
+    "ruleUnmatchedRows": 50,
+    "unmatchedMerchantSamples": [
+      "Unknown Vendor A",
+      "Unknown Vendor B",
+      "Unknown Vendor C"
+    ]
+  },
+  "message": "Transactions were created successfully from Excel.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -789,17 +789,17 @@ Upload any file to the server and receive a storage URL.
 
 ```json
 {
-   "payload": {
-      "originalFileName": "transactions.xlsx",
-      "storedFileName": "txn-20260405-abc123.xlsx",
-      "fileUrl": "/api/v1/storage/files/by-name/txn-20260405-abc123.xlsx",
-      "size": 102400,
-      "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-   },
-   "message": "File uploaded successfully.",
-   "code": 201,
-   "status": "CREATED",
-   "fileUrl": "/api/v1/storage/files/by-name/txn-20260405-abc123.xlsx"
+  "payload": {
+    "originalFileName": "transactions.xlsx",
+    "storedFileName": "txn-20260405-abc123.xlsx",
+    "fileUrl": "/api/v1/storage/files/by-name/txn-20260405-abc123.xlsx",
+    "size": 102400,
+    "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  },
+  "message": "File uploaded successfully.",
+  "code": 201,
+  "status": "CREATED",
+  "fileUrl": "/api/v1/storage/files/by-name/txn-20260405-abc123.xlsx"
 }
 ```
 
@@ -859,20 +859,20 @@ List all file upload records for a company.
 
 ```json
 {
-   "payload": [
-      {
-         "fileId": "550e8400-e29b-41d4-a716-446655440030",
-         "companyId": "550e8400-e29b-41d4-a716-446655440001",
-         "originalFileName": "transactions_april.xlsx",
-         "storedFileName": "enriched-txn-20260405-abc123.xlsx",
-         "fileUrl": "/api/v1/storage/files/by-name/enriched-txn-20260405-abc123.xlsx",
-         "sheetName": "Sheet1",
-         "createdDate": "2026-04-05T10:30:00"
-      }
-   ],
-   "message": "Files were retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": [
+    {
+      "fileId": "550e8400-e29b-41d4-a716-446655440030",
+      "companyId": "550e8400-e29b-41d4-a716-446655440001",
+      "originalFileName": "transactions_april.xlsx",
+      "storedFileName": "enriched-txn-20260405-abc123.xlsx",
+      "fileUrl": "/api/v1/storage/files/by-name/enriched-txn-20260405-abc123.xlsx",
+      "sheetName": "Sheet1",
+      "createdDate": "2026-04-05T10:30:00"
+    }
+  ],
+  "message": "Files were retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -892,9 +892,9 @@ Delete a file record and its physical file from the server.
 
 ```json
 {
-   "message": "File deleted successfully.",
-   "code": 200,
-   "status": "OK"
+  "message": "File deleted successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -976,28 +976,28 @@ Upload one or more internal documents (PDF, DOCX, TXT) into the vector store for
 
 ```json
 {
-   "payload": {
-      "uploadId": "550e8400-e29b-41d4-a716-446655440050",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "source": "expense-policy-2026",
-      "files": [
-         {
-            "originalFileName": "expense-policy.pdf",
-            "totalChunks": 42,
-            "status": "INDEXED"
-         },
-         {
-            "originalFileName": "travel-regulations.docx",
-            "totalChunks": 31,
-            "status": "INDEXED"
-         }
-      ],
-      "totalChunks": 73,
-      "indexedAt": "2026-04-05T10:30:00"
-   },
-   "message": "Documents indexed successfully.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "uploadId": "550e8400-e29b-41d4-a716-446655440050",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "source": "expense-policy-2026",
+    "files": [
+      {
+        "originalFileName": "expense-policy.pdf",
+        "totalChunks": 42,
+        "status": "INDEXED"
+      },
+      {
+        "originalFileName": "travel-regulations.docx",
+        "totalChunks": 31,
+        "status": "INDEXED"
+      }
+    ],
+    "totalChunks": 73,
+    "indexedAt": "2026-04-05T10:30:00"
+  },
+  "message": "Documents indexed successfully.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -1017,18 +1017,18 @@ List all indexed document sources for a company.
 
 ```json
 {
-   "payload": [
-      {
-         "uploadId": "550e8400-e29b-41d4-a716-446655440050",
-         "source": "expense-policy-2026",
-         "fileCount": 2,
-         "totalChunks": 73,
-         "indexedAt": "2026-04-05T10:30:00"
-      }
-   ],
-   "message": "Documents retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": [
+    {
+      "uploadId": "550e8400-e29b-41d4-a716-446655440050",
+      "source": "expense-policy-2026",
+      "fileCount": 2,
+      "totalChunks": 73,
+      "indexedAt": "2026-04-05T10:30:00"
+    }
+  ],
+  "message": "Documents retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1048,9 +1048,9 @@ Remove an indexed document batch from the vector store.
 
 ```json
 {
-   "message": "Documents deleted from index successfully.",
-   "code": 200,
-   "status": "OK"
+  "message": "Documents deleted from index successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1088,11 +1088,11 @@ Submit a question. The server retrieves the top-K most relevant document chunks 
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "question": "해외 출장 시 숙박비 한도는 얼마인가요?",
-   "sessionId": "session-abc123",
-   "topK": 5,
-   "similarityThreshold": 0.7
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "question": "해외 출장 시 숙박비 한도는 얼마인가요?",
+  "sessionId": "session-abc123",
+  "topK": 5,
+  "similarityThreshold": 0.7
 }
 ```
 
@@ -1100,29 +1100,29 @@ Submit a question. The server retrieves the top-K most relevant document chunks 
 
 ```json
 {
-   "payload": {
-      "answer": "사내 규정 제12조에 따르면, 해외 출장 숙박비 한도는 북미·유럽 지역 USD 200/박, 아시아 지역 USD 150/박입니다.",
-      "sessionId": "session-abc123",
-      "sources": [
-         {
-            "source": "travel-regulations.docx",
-            "chunkIndex": 7,
-            "similarityScore": 0.923,
-            "excerpt": "제12조(숙박비) 해외 출장의 경우 북미·유럽 USD 200..."
-         },
-         {
-            "source": "travel-regulations.docx",
-            "chunkIndex": 8,
-            "similarityScore": 0.871,
-            "excerpt": "아시아 지역 출장의 경우 USD 150을 초과할 수 없으며..."
-         }
-      ],
-      "retrievedChunks": 2,
-      "model": "SKT/A.X-4.0-72B"
-   },
-   "message": "Answer generated successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "answer": "사내 규정 제12조에 따르면, 해외 출장 숙박비 한도는 북미·유럽 지역 USD 200/박, 아시아 지역 USD 150/박입니다.",
+    "sessionId": "session-abc123",
+    "sources": [
+      {
+        "source": "travel-regulations.docx",
+        "chunkIndex": 7,
+        "similarityScore": 0.923,
+        "excerpt": "제12조(숙박비) 해외 출장의 경우 북미·유럽 USD 200..."
+      },
+      {
+        "source": "travel-regulations.docx",
+        "chunkIndex": 8,
+        "similarityScore": 0.871,
+        "excerpt": "아시아 지역 출장의 경우 USD 150을 초과할 수 없으며..."
+      }
+    ],
+    "retrievedChunks": 2,
+    "model": "SKT/A.X-4.0-72B"
+  },
+  "message": "Answer generated successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1285,21 +1285,21 @@ Run all active compliance rules against one or more transactions. Returns a flag
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "transactions": [
-      {
-         "transactionId": "TXN-20260405-001",
-         "employeeId": "EMP-0042",
-         "merchantName": "스타벅스 강남점",
-         "mccCode": "5812",
-         "merchantRegNumber": "123-45-67890",
-         "amount": 49500,
-         "category": "식대",
-         "approvalDatetime": "2026-04-05T23:15:00",
-         "receiptHash": "sha256-abc123...",
-         "receiptFileId": "550e8400-e29b-41d4-a716-446655440060"
-      }
-   ]
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "transactions": [
+    {
+      "transactionId": "TXN-20260405-001",
+      "employeeId": "EMP-0042",
+      "merchantName": "스타벅스 강남점",
+      "mccCode": "5812",
+      "merchantRegNumber": "123-45-67890",
+      "amount": 49500,
+      "category": "식대",
+      "approvalDatetime": "2026-04-05T23:15:00",
+      "receiptHash": "sha256-abc123...",
+      "receiptFileId": "550e8400-e29b-41d4-a716-446655440060"
+    }
+  ]
 }
 ```
 
@@ -1307,87 +1307,87 @@ Run all active compliance rules against one or more transactions. Returns a flag
 
 ```json
 {
-   "payload": {
-      "auditId": "550e8400-e29b-41d4-a716-446655440070",
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "auditedAt": "2026-04-05T23:20:00",
-      "summary": {
-         "total": 1,
-         "flagged": 1,
-         "clean": 0
-      },
-      "results": [
-         {
-            "transactionId": "TXN-20260405-001",
-            "flagged": true,
-            "ruleResults": [
-               {
-                  "ruleId": "R01",
-                  "ruleName": "Split payment detection",
-                  "triggered": false,
-                  "detail": null
-               },
-               {
-                  "ruleId": "R02",
-                  "ruleName": "Nighttime transaction",
-                  "triggered": true,
-                  "detail": "Transaction approved at 23:15, outside allowed hours (06:00–22:00)"
-               },
-               {
-                  "ruleId": "R03",
-                  "ruleName": "Limit exceed",
-                  "triggered": false,
-                  "detail": null
-               },
-               {
-                  "ruleId": "R04",
-                  "ruleName": "MCC prohibited",
-                  "triggered": false,
-                  "detail": null
-               },
-               {
-                  "ruleId": "R05",
-                  "ruleName": "Duplicate receipt",
-                  "triggered": false,
-                  "detail": null
-               },
-               {
-                  "ruleId": "R06",
-                  "ruleName": "Card mismatch",
-                  "triggered": null,
-                  "detail": "Placeholder — OCR integration pending"
-               },
-               {
-                  "ruleId": "R07",
-                  "ruleName": "Business registration check",
-                  "triggered": null,
-                  "detail": "Placeholder — data.go.kr API integration pending"
-               },
-               {
-                  "ruleId": "R08",
-                  "ruleName": "Location anomaly",
-                  "triggered": null,
-                  "detail": "Placeholder — GPS data not available"
-               },
-               {
-                  "ruleId": "R09",
-                  "ruleName": "Holiday / weekend use",
-                  "triggered": false,
-                  "detail": null
-               },
-               {
-                  "ruleId": "R10",
-                  "ruleName": "Requisition mismatch",
-                  "triggered": null,
-                  "detail": "Placeholder — requisition data not available"
-               }
-            ]
-         }
-      ]
-   },
-   "message": "Audit completed successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "auditId": "550e8400-e29b-41d4-a716-446655440070",
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "auditedAt": "2026-04-05T23:20:00",
+    "summary": {
+      "total": 1,
+      "flagged": 1,
+      "clean": 0
+    },
+    "results": [
+      {
+        "transactionId": "TXN-20260405-001",
+        "flagged": true,
+        "ruleResults": [
+          {
+            "ruleId": "R01",
+            "ruleName": "Split payment detection",
+            "triggered": false,
+            "detail": null
+          },
+          {
+            "ruleId": "R02",
+            "ruleName": "Nighttime transaction",
+            "triggered": true,
+            "detail": "Transaction approved at 23:15, outside allowed hours (06:00–22:00)"
+          },
+          {
+            "ruleId": "R03",
+            "ruleName": "Limit exceed",
+            "triggered": false,
+            "detail": null
+          },
+          {
+            "ruleId": "R04",
+            "ruleName": "MCC prohibited",
+            "triggered": false,
+            "detail": null
+          },
+          {
+            "ruleId": "R05",
+            "ruleName": "Duplicate receipt",
+            "triggered": false,
+            "detail": null
+          },
+          {
+            "ruleId": "R06",
+            "ruleName": "Card mismatch",
+            "triggered": null,
+            "detail": "Placeholder — OCR integration pending"
+          },
+          {
+            "ruleId": "R07",
+            "ruleName": "Business registration check",
+            "triggered": null,
+            "detail": "Placeholder — data.go.kr API integration pending"
+          },
+          {
+            "ruleId": "R08",
+            "ruleName": "Location anomaly",
+            "triggered": null,
+            "detail": "Placeholder — GPS data not available"
+          },
+          {
+            "ruleId": "R09",
+            "ruleName": "Holiday / weekend use",
+            "triggered": false,
+            "detail": null
+          },
+          {
+            "ruleId": "R10",
+            "ruleName": "Requisition mismatch",
+            "triggered": null,
+            "detail": "Placeholder — requisition data not available"
+          }
+        ]
+      }
+    ]
+  },
+  "message": "Audit completed successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1425,23 +1425,23 @@ Retrieve past audit records for a company.
 
 ```json
 {
-   "payload": {
-      "content": [
-         {
-            "auditId": "550e8400-e29b-41d4-a716-446655440070",
-            "auditedAt": "2026-04-05T23:20:00",
-            "total": 50,
-            "flagged": 3,
-            "clean": 47
-         }
-      ],
-      "page": 0,
-      "size": 20,
-      "totalElements": 1
-   },
-   "message": "Audit history retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "content": [
+      {
+        "auditId": "550e8400-e29b-41d4-a716-446655440070",
+        "auditedAt": "2026-04-05T23:20:00",
+        "total": 50,
+        "flagged": 3,
+        "clean": 47
+      }
+    ],
+    "page": 0,
+    "size": 20,
+    "totalElements": 1
+  },
+  "message": "Audit history retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1470,32 +1470,32 @@ Retrieve the active rule configuration for a company.
 
 ```json
 {
-   "payload": [
-      {
-         "ruleId": "R03",
-         "ruleName": "Limit exceed",
-         "enabled": true,
-         "params": {
-            "limits": {
-               "식대": 100000,
-               "교통비": 50000,
-               "출장비": 500000
-            },
-            "default": 200000
-         }
-      },
-      {
-         "ruleId": "R04",
-         "ruleName": "MCC prohibited",
-         "enabled": true,
-         "params": {
-            "blocked": ["5813", "5912", "7995"]
-         }
+  "payload": [
+    {
+      "ruleId": "R03",
+      "ruleName": "Limit exceed",
+      "enabled": true,
+      "params": {
+        "limits": {
+          "식대": 100000,
+          "교통비": 50000,
+          "출장비": 500000
+        },
+        "default": 200000
       }
-   ],
-   "message": "Compliance rules retrieved successfully.",
-   "code": 200,
-   "status": "OK"
+    },
+    {
+      "ruleId": "R04",
+      "ruleName": "MCC prohibited",
+      "enabled": true,
+      "params": {
+        "blocked": ["5813", "5912", "7995"]
+      }
+    }
+  ],
+  "message": "Compliance rules retrieved successfully.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1519,18 +1519,18 @@ Create or overwrite a rule configuration for a company.
 **R03 — Limit exceed**
 ```json
 {
-   "limits": {
-      "식대": 100000,
-      "교통비": 50000
-   },
-   "default": 200000
+  "limits": {
+    "식대": 100000,
+    "교통비": 50000
+  },
+  "default": 200000
 }
 ```
 
 **R04 — MCC prohibited**
 ```json
 {
-   "blocked": ["5813", "5912", "7995"]
+  "blocked": ["5813", "5912", "7995"]
 }
 ```
 
@@ -1538,19 +1538,19 @@ Create or overwrite a rule configuration for a company.
 
 ```json
 {
-   "payload": {
-      "companyId": "550e8400-e29b-41d4-a716-446655440001",
-      "ruleId": "R03",
-      "enabled": true,
-      "params": {
-         "limits": { "식대": 100000, "교통비": 50000 },
-         "default": 200000
-      },
-      "updatedAt": "2026-04-05T10:30:00"
-   },
-   "message": "Compliance rule saved successfully.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "companyId": "550e8400-e29b-41d4-a716-446655440001",
+    "ruleId": "R03",
+    "enabled": true,
+    "params": {
+      "limits": { "식대": 100000, "교통비": 50000 },
+      "default": 200000
+    },
+    "updatedAt": "2026-04-05T10:30:00"
+  },
+  "message": "Compliance rule saved successfully.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -1599,10 +1599,10 @@ Ask a question about expense regulations or get an explanation of a flagged tran
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "question": "야간 거래가 왜 규정 위반인가요? 예외가 있나요?",
-   "sessionId": "session-xyz789",
-   "auditId": "550e8400-e29b-41d4-a716-446655440070"
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "question": "야간 거래가 왜 규정 위반인가요? 예외가 있나요?",
+  "sessionId": "session-xyz789",
+  "auditId": "550e8400-e29b-41d4-a716-446655440070"
 }
 ```
 
@@ -1614,11 +1614,59 @@ Ask a question about expense regulations or get an explanation of a flagged tran
 
 ### R06 — Card Mismatch (OCR + VLM)
 
-When a `receiptFileId` is present:
-- **Digital receipts** → `dots.ocr` ([rednote-hilab/dots.ocr](https://huggingface.co/rednote-hilab/dots.ocr)) extracts the card number from the receipt image
-- **Handwritten receipts** → Vision Language Model (VLM) interprets the handwritten card digits
-- Extracted card number is compared against the transaction's registered card number
-- Mismatch → `triggered: true`
+When a `receiptFileId` is present, the pipeline selects the OCR method based on document type:
+
+| Document type | Model | Role |
+|---|---|---|
+| Standard Korean receipt / tax invoice (printed) | **Naver CLOVA OCR** | Structured Korean receipt parsing — directly returns field-level output (merchant name, amount, card number) without post-processing |
+| General printed / digital document | **PaddleOCR** / **Surya OCR** | Confirmed Korean support; fully on-premise; fast text extraction |
+| Handwritten receipt or form | **Qwen2.5-VL** / **InternVL2** / **EXAONE Vision** | VLM interprets handwritten Korean card digits and field values |
+
+**Processing steps:**
+1. Detect document type (receipt vs. general document vs. handwritten)
+2. Route to the appropriate model above
+3. Extract the card number from the model output
+4. Normalize both numbers to masked format (e.g. `****-****-****-1234`) before comparison
+5. Compare against the transaction's registered card number
+6. Mismatch → `triggered: true`
+
+> **Note:** Step 4 (masked string comparison) is a post-OCR normalization step — not an LLM call. This keeps the comparison deterministic regardless of which OCR model was used.
+
+---
+
+#### OCR Models — Experiment List
+
+**Korean-Specialized (Commercial)**
+
+| Model | Type | Open Source | Korean | Notes |
+|---|---|---|---|---|
+| **Naver CLOVA OCR** | API service | No | Excellent | Best-in-class for Korean receipts and tax invoices; returns structured field-level output directly; on-premise version available |
+| **Upstage Document Parse** | API service | No | Excellent | Korean AI company; structured key-value extraction; strong on Korean business documents and forms |
+
+**General Multilingual — Korean Confirmed (Open Source)**
+
+| Model | Type | Open Source | Korean | Notes |
+|---|---|---|---|---|
+| **PaddleOCR** | Pure OCR | Yes | Good | Confirmed Korean (Hangul) support; fast; fully on-premise; well-maintained |
+| **EasyOCR** | Pure OCR | Yes | Good | 80+ confirmed languages including Korean; simplest API for quick prototyping |
+| **GOT-OCR 2.0** (`stepfun-ai/GOT-OCR2_0`) | End-to-end OCR | Yes | Good | Handles plain text, tables, math, charts in one pass; confirmed multilingual Korean support |
+| **Surya OCR** | Pure OCR | Yes | Good | 90+ confirmed languages including Korean; line-level OCR; designed for document-scale throughput |
+
+---
+
+#### VLM Models — Experiment List
+
+| Model | Params | Open Source | Korean | Strength for This Use Case |
+|---|---|---|---|---|
+| **Qwen2.5-VL** (`Qwen/Qwen2.5-VL-72B-Instruct`) | 72B | Yes | Good | Best overall reasoning on document images; understands layout, tables, handwriting; pairs naturally with Qwen2.5-72B already in the stack |
+| **Qwen2.5-VL** (`Qwen/Qwen2.5-VL-7B-Instruct`) | 7B | Yes | Good | Lighter variant; suitable for single-GPU deployment when 72B is too heavy |
+| **InternVL2** (`OpenGVLab/InternVL2-8B`) | 8B | Yes | Good | Strong document understanding benchmark scores; efficient on-premise deployment |
+| **InternVL2** (`OpenGVLab/InternVL2-40B`) | 40B | Yes | Good | Higher accuracy for complex handwritten or degraded documents |
+| **EXAONE Vision** | — | Limited | Excellent | LG AI's Korean-specialized vision model; shares infra with EXAONE-3.5 already in the stack |
+
+> **Recommendation for Korean handwritten forms (R06, R10):** Start with **Qwen2.5-VL-7B** (fastest to deploy, reuses existing Qwen infrastructure) and compare against **InternVL2-8B**. Escalate to the 72B / 40B variants only if smaller models fail on degraded or complex handwriting.
+
+---
 
 ### R07 — Business Registration Check
 
@@ -1752,33 +1800,33 @@ formType   = TRAVEL_REQUEST
 
 ```json
 {
-   "payload": {
-      "sessionId": "session-form-abc123",
-      "formType": "TRAVEL_REQUEST",
-      "status": "IN_PROGRESS",
-      "form": {
-         "destination": "부산",
-         "departureDate": "2026-04-10",
-         "returnDate": "2026-04-12",
-         "nights": 2,
-         "transportType": "KTX",
-         "transportCost": null,
-         "accommodationName": "해운대 호텔",
-         "accommodationCost": null,
-         "purpose": null,
-         "estimatedTotal": null,
-         "category": "출장비"
-      },
-      "missingFields": [
-         { "field": "transportCost",     "prompt": "KTX 왕복 비용이 얼마인가요?" },
-         { "field": "accommodationCost", "prompt": "숙박 비용을 알려주세요." },
-         { "field": "purpose",           "prompt": "출장 목적을 간단히 설명해 주세요." }
-      ],
-      "extractedFromFiles": []
-   },
-   "message": "Form partially filled. Please provide missing fields.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "sessionId": "session-form-abc123",
+    "formType": "TRAVEL_REQUEST",
+    "status": "IN_PROGRESS",
+    "form": {
+      "destination": "부산",
+      "departureDate": "2026-04-10",
+      "returnDate": "2026-04-12",
+      "nights": 2,
+      "transportType": "KTX",
+      "transportCost": null,
+      "accommodationName": "해운대 호텔",
+      "accommodationCost": null,
+      "purpose": null,
+      "estimatedTotal": null,
+      "category": "출장비"
+    },
+    "missingFields": [
+      { "field": "transportCost",     "prompt": "KTX 왕복 비용이 얼마인가요?" },
+      { "field": "accommodationCost", "prompt": "숙박 비용을 알려주세요." },
+      { "field": "purpose",           "prompt": "출장 목적을 간단히 설명해 주세요." }
+    ],
+    "extractedFromFiles": []
+  },
+  "message": "Form partially filled. Please provide missing fields.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1803,15 +1851,15 @@ Once all fields are complete, the employee submits the form. This saves the requ
 
 ```json
 {
-   "payload": {
-      "requestId": "REQ-20260410-0042",
-      "formType": "TRAVEL_REQUEST",
-      "status": "PENDING_APPROVAL",
-      "submittedAt": "2026-04-05T11:00:00"
-   },
-   "message": "Request submitted. Waiting for manager approval.",
-   "code": 201,
-   "status": "CREATED"
+  "payload": {
+    "requestId": "REQ-20260410-0042",
+    "formType": "TRAVEL_REQUEST",
+    "status": "PENDING_APPROVAL",
+    "submittedAt": "2026-04-05T11:00:00"
+  },
+  "message": "Request submitted. Waiting for manager approval.",
+  "code": 201,
+  "status": "CREATED"
 }
 ```
 
@@ -1839,17 +1887,17 @@ A manager approves or rejects a submitted request. On approval, the system gener
 
 ```json
 {
-   "payload": {
-      "requestId": "REQ-20260410-0042",
-      "status": "APPROVED",
-      "approvedBy": "MGR-0010",
-      "approvedAt": "2026-04-06T09:15:00",
-      "requisitionFileId": "550e8400-e29b-41d4-a716-446655440080",
-      "requisitionFileUrl": "/api/v1/storage/files/by-id/550e8400-e29b-41d4-a716-446655440080"
-   },
-   "message": "Request approved. Requisition PDF generated.",
-   "code": 200,
-   "status": "OK"
+  "payload": {
+    "requestId": "REQ-20260410-0042",
+    "status": "APPROVED",
+    "approvedBy": "MGR-0010",
+    "approvedAt": "2026-04-06T09:15:00",
+    "requisitionFileId": "550e8400-e29b-41d4-a716-446655440080",
+    "requisitionFileUrl": "/api/v1/storage/files/by-id/550e8400-e29b-41d4-a716-446655440080"
+  },
+  "message": "Request approved. Requisition PDF generated.",
+  "code": 200,
+  "status": "OK"
 }
 ```
 
@@ -1936,18 +1984,18 @@ Ask a question in plain language. Returns the matching data rows and, optionally
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "question": "이번 달 교통비가 5만원을 초과한 직원 목록을 보여줘",
-   "returnSql": true,
-   "topK": 20
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "question": "이번 달 교통비가 5만원을 초과한 직원 목록을 보여줘",
+  "returnSql": true,
+  "topK": 20
 }
 ```
 
 ```json
 {
-   "companyId": "550e8400-e29b-41d4-a716-446655440001",
-   "question": "지난 분기 가장 많이 사용된 가맹점 상위 10개는?",
-   "sessionId": "session-query-xyz"
+  "companyId": "550e8400-e29b-41d4-a716-446655440001",
+  "question": "지난 분기 가장 많이 사용된 가맹점 상위 10개는?",
+  "sessionId": "session-query-xyz"
 }
 ```
 
