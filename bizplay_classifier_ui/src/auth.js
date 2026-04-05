@@ -1,7 +1,6 @@
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
-
-const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8080/api/v1'
+import { loginRaw } from './service/authService'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -13,32 +12,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        let res
+        let res, payload
         try {
-          res = await fetch(`${BACKEND_URL}/auths/login`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              accept: 'application/json',
-            },
-            body: JSON.stringify({
-              email:    credentials.email,
-              password: credentials.password,
-            }),
-          })
+          ;({ res, payload } = await loginRaw({
+            email:    credentials.email,
+            password: credentials.password,
+          }))
         } catch {
           throw new Error('Unable to reach the server. Please try again.')
-        }
-
-        let payload = null
-        const ct = res.headers.get('content-type') ?? ''
-        if (ct.includes('application/json')) {
-          payload = await res.json().catch(() => null)
-        } else {
-          const text = await res.text().catch(() => '')
-          if (text.trim()) {
-            try { payload = JSON.parse(text) } catch { payload = { message: text } }
-          }
         }
 
         if (!res.ok) {

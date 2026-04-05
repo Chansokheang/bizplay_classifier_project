@@ -1,9 +1,11 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import Link from 'next/link'
-import { ListFilter, Plus, Search, Pencil, Trash2, X, ChevronRight, MoreHorizontal, ToggleLeft, ToggleRight, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { ListFilter, Plus, Search, Pencil, Trash2, X, ChevronRight, MoreHorizontal, ToggleLeft, ToggleRight, AlertCircle, CheckCircle2, Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { COMPANIES, CATEGORIES, RULES as INIT_RULES } from '../../../../../lib/mock-data'
+import { trainRulesFromExcel } from '../../../../../service/ruleService'
 import {
   Table, TableBody, TableCell, TableHead,
   TableHeader, TableRow,
@@ -105,8 +107,139 @@ function RuleModal({ rule, categories, onClose, onSave }) {
   )
 }
 
+function TrainModal({ onClose, token }) {
+  const fileRef = useRef(null)
+  const [file, setFile] = useState(null)
+  const [dragOver, setDragOver] = useState(false)
+  const [status, setStatus] = useState('idle') // idle | uploading | success | error
+
+  const handleFile = (f) => {
+    if (!f) return
+    const ext = f.name.split('.').pop().toLowerCase()
+    if (!['xlsx', 'xls'].includes(ext)) return
+    setFile(f)
+    setStatus('idle')
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragOver(false)
+    handleFile(e.dataTransfer.files[0])
+  }
+
+  const handleTrain = async () => {
+    if (!file) return
+    setStatus('uploading')
+    try {
+      await trainRulesFromExcel(file, token)
+      setStatus('success')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.4)' }} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg" style={{ background: 'rgba(245,158,11,0.1)' }}>
+              <Upload size={16} color="#F59E0B" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-sm" style={{ color: '#0F172A' }}>Import Rules from Excel</h2>
+              <p className="text-xs" style={{ color: '#94A3B8' }}>Train rule-based classifier from file</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer" style={{ color: '#94A3B8' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Drop zone */}
+          <div
+            className="rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors"
+            style={{
+              border: `2px dashed ${dragOver ? '#F59E0B' : file ? '#10B981' : '#E2E8F0'}`,
+              background: dragOver ? 'rgba(245,158,11,0.04)' : file ? 'rgba(16,185,129,0.04)' : '#F8FAFC',
+              padding: '32px 24px',
+            }}
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            {file ? (
+              <>
+                <div className="flex items-center justify-center w-10 h-10 rounded-xl" style={{ background: 'rgba(16,185,129,0.1)' }}>
+                  <FileSpreadsheet size={20} color="#10B981" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold" style={{ color: '#0F172A' }}>{file.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>{(file.size / 1024).toFixed(1)} KB · Click to change</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-center w-10 h-10 rounded-xl" style={{ background: 'rgba(245,158,11,0.1)' }}>
+                  <Upload size={20} color="#F59E0B" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold" style={{ color: '#0F172A' }}>Drop Excel file here</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>or click to browse · .xlsx, .xls</p>
+                </div>
+              </>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = '' }} />
+
+          {/* Status feedback */}
+          {status === 'success' && (
+            <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+              <CheckCircle size={16} color="#10B981" />
+              <p className="text-sm font-medium" style={{ color: '#059669' }}>Rules imported successfully</p>
+            </div>
+          )}
+          {status === 'error' && (
+            <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <XCircle size={16} color="#EF4444" />
+              <p className="text-sm font-medium" style={{ color: '#DC2626' }}>Upload failed. Please try again.</p>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer" style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }} onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
+              {status === 'success' ? 'Close' : 'Cancel'}
+            </button>
+            {status !== 'success' && (
+              <button
+                type="button"
+                onClick={handleTrain}
+                disabled={!file || status === 'uploading'}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: '#F59E0B', color: '#fff' }}
+                onMouseEnter={(e) => { if (file && status !== 'uploading') e.currentTarget.style.background = '#D97706' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#F59E0B' }}
+              >
+                {status === 'uploading' ? <><Loader2 size={14} className="animate-spin" />Training…</> : <>Train Rules</>}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function RulesPage() {
   const { id: companyId } = useParams()
+  const { data: session } = useSession()
   const company = COMPANIES.find(c=>c.id===companyId)
   const baseCategories = CATEGORIES.filter(c=>c.companyId===companyId)
   const categories = baseCategories.length ? baseCategories : CATEGORIES.map(c=>({ ...c, companyId }))
@@ -117,6 +250,7 @@ export default function RulesPage() {
   const [modal, setModal] = useState(null)
   const [menuOpen, setMenuOpen] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [trainOpen, setTrainOpen] = useState(false)
 
   const filtered = rules.filter(r=>{
     const ms = r.name.toLowerCase().includes(search.toLowerCase())||r.pattern.toLowerCase().includes(search.toLowerCase())||r.categoryName.toLowerCase().includes(search.toLowerCase())
@@ -135,10 +269,16 @@ export default function RulesPage() {
           <h1 className="text-2xl font-bold" style={{color:'#0F172A'}}>Classification Rules</h1>
           <p className="mt-1 text-sm" style={{color:'#94A3B8'}}>{rules.length} rules · {rules.filter(r=>r.status==='active').length} active</p>
         </div>
-        <button onClick={()=>setModal('create')} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold cursor-pointer" style={{background:'#F59E0B',color:'#fff'}}
-          onMouseEnter={(e)=>{e.currentTarget.style.background='#D97706'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
-          <Plus size={16} strokeWidth={2.5}/>New Rule
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={()=>setTrainOpen(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold cursor-pointer" style={{background:'#FFFFFF',color:'#64748B',border:'1px solid #E2E8F0'}}
+            onMouseEnter={(e)=>{e.currentTarget.style.background='#F8FAFC'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#FFFFFF'}}>
+            <Upload size={15} />Import from Excel
+          </button>
+          <button onClick={()=>setModal('create')} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold cursor-pointer" style={{background:'#F59E0B',color:'#fff'}}
+            onMouseEnter={(e)=>{e.currentTarget.style.background='#D97706'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
+            <Plus size={16} strokeWidth={2.5}/>New Rule
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 mb-5 flex-wrap">
@@ -234,6 +374,7 @@ export default function RulesPage() {
         )}
       </div>
 
+      {trainOpen && <TrainModal onClose={()=>setTrainOpen(false)} token={session?.accessToken ?? null}/>}
       {modal!==null && <RuleModal rule={modal==='create'?null:modal} categories={categories} onClose={()=>setModal(null)} onSave={handleSave}/>}
 
       {confirmDelete && (

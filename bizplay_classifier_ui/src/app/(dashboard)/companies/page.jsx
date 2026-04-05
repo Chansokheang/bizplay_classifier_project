@@ -3,19 +3,41 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
-import { Plus, Search, MoreHorizontal, ArrowRight, X, Check, Pencil, Trash2, Building2 } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, X, Pencil, Trash2, Building2, Loader2 } from 'lucide-react'
 import { COMPANIES as INITIAL } from '../../../lib/mock-data'
-
-const INDUSTRIES = ['Manufacturing','Software','Logistics','Retail','Finance','Healthcare','Education','Real Estate','Hospitality','Other']
-const IND_COLORS = { Manufacturing:'#64748B', Software:'#64748B', Logistics:'#64748B', Retail:'#64748B', Finance:'#64748B', Healthcare:'#64748B', Education:'#64748B', 'Real Estate':'#64748B', Hospitality:'#64748B', Other:'#64748B' }
+import { getAllCompanies, createCompany } from '../../../service/companyService'
 
 function CompanyModal({ company, onClose, onSave }) {
   const isEdit = !!company?.id
-  const [form, setForm] = useState(company ?? { name:'', industry:'Software', status:'active' })
-  const handleSubmit = (e) => { e.preventDefault(); if (!form.name.trim()) return; onSave({ ...form, id: form.id ?? String(Date.now()) }) }
+  const [form, setForm] = useState(company ?? { name: '', businessNumber: '' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [bnError, setBnError] = useState('')
+
+  const validateBn = (value) => {
+    if (!value) return ''
+    if (!/^\d{10}$/.test(value)) return 'Business number must be exactly 10 digits.'
+    return ''
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!form.name.trim()) return
+    const bnErr = validateBn(form.businessNumber)
+    if (bnErr) { setBnError(bnErr); return }
+    setLoading(true)
+    setError('')
+    try {
+      await onSave(form)
+    } catch (err) {
+      setError(err.message ?? 'Something went wrong. Please try again.')
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background:'rgba(15,23,42,0.4)' }}
-      onClick={(e) => e.target===e.currentTarget && onClose()}>
+      onClick={(e) => e.target===e.currentTarget && !loading && onClose()}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in" style={{ background:'#FFFFFF', border:'1px solid #E2E8F0', boxShadow:'0 20px 60px rgba(0,0,0,0.15)' }}>
         <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom:'1px solid #F1F5F9', background:'#F8FAFC' }}>
           <div className="flex items-center gap-2.5">
@@ -24,7 +46,7 @@ function CompanyModal({ company, onClose, onSave }) {
             </div>
             <h2 className="font-semibold text-sm" style={{ color:'#0F172A' }}>{isEdit ? 'Edit Company' : 'New Company'}</h2>
           </div>
-          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer" style={{ color:'#94A3B8' }}
+          <button onClick={onClose} disabled={loading} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer disabled:opacity-40" style={{ color:'#94A3B8' }}
             onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9';e.currentTarget.style.color='#64748B'}}
             onMouseLeave={(e)=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='#94A3B8'}}>
             <X size={16} />
@@ -41,40 +63,51 @@ function CompanyModal({ company, onClose, onSave }) {
               onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.background='#F8FAFC'}} />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold" style={{ color:'#64748B' }}>Industry</label>
-            <select value={form.industry} onChange={(e)=>setForm({...form,industry:e.target.value})}
-              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none cursor-pointer"
-              style={{ background:'#F8FAFC', border:'1px solid #E2E8F0', color:'#0F172A' }}
-              onFocus={(e)=>{e.target.style.borderColor='#F59E0B'}}
-              onBlur={(e)=>{e.target.style.borderColor='#E2E8F0'}}>
-              {INDUSTRIES.map(i=><option key={i}>{i}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold" style={{ color:'#64748B' }}>Status</label>
-            <div className="flex gap-3">
-              {['active','inactive'].map(s=>(
-                <button key={s} type="button" onClick={()=>setForm({...form,status:s})}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium cursor-pointer flex-1 justify-center"
-                  style={form.status===s
-                    ? s==='active' ? {background:'rgba(16,185,129,0.1)',color:'#059669',border:'1.5px solid rgba(16,185,129,0.3)'}
-                                   : {background:'#F1F5F9',color:'#64748B',border:'1.5px solid #E2E8F0'}
-                    : {background:'#F8FAFC',color:'#94A3B8',border:'1px solid #E2E8F0'}}>
-                  {form.status===s && <Check size={14}/>}{s.charAt(0).toUpperCase()+s.slice(1)}
-                </button>
-              ))}
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold" style={{ color:'#64748B' }}>Business Number</label>
+              <span className="text-xs" style={{ color: form.businessNumber.length === 10 ? '#10B981' : '#94A3B8' }}>
+                {form.businessNumber.length}/10
+              </span>
             </div>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="e.g. 1234567890"
+              value={form.businessNumber}
+              maxLength={10}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, '')
+                setForm({ ...form, businessNumber: digits })
+                setBnError(validateBn(digits))
+              }}
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
+              style={{
+                background: '#F8FAFC',
+                border: `1px solid ${bnError ? '#EF4444' : '#E2E8F0'}`,
+                color: '#0F172A',
+              }}
+              onFocus={(e) => { e.target.style.borderColor = bnError ? '#EF4444' : '#F59E0B'; e.target.style.background = '#FFFFFF' }}
+              onBlur={(e) => { e.target.style.borderColor = bnError ? '#EF4444' : '#E2E8F0'; e.target.style.background = '#F8FAFC' }}
+            />
+            {bnError && <p className="text-xs" style={{ color: '#EF4444' }}>{bnError}</p>}
           </div>
+
+          {error && (
+            <div className="px-3.5 py-2.5 rounded-xl text-xs font-medium" style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)', color:'#DC2626' }}>
+              {error}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
+            <button type="button" onClick={onClose} disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer disabled:opacity-40"
               style={{ background:'#F8FAFC', color:'#64748B', border:'1px solid #E2E8F0' }}
               onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}}
               onMouseLeave={(e)=>{e.currentTarget.style.background='#F8FAFC'}}>Cancel</button>
-            <button type="submit" className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer"
+            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
               style={{ background:'#F59E0B', color:'#fff' }}
-              onMouseEnter={(e)=>{e.currentTarget.style.background='#D97706'}}
+              onMouseEnter={(e)=>{if(!loading)e.currentTarget.style.background='#D97706'}}
               onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
-              {isEdit ? 'Save Changes' : 'Create Company'}
+              {loading ? <><Loader2 size={14} className="animate-spin" />Creating…</> : isEdit ? 'Save Changes' : 'Create Company'}
             </button>
           </div>
         </form>
@@ -144,7 +177,7 @@ function CompanyCard({ company, onEdit, onDelete }) {
         <div className="mb-4">
           <h3 className="text-base font-semibold text-gray-900 tracking-tight truncate">{company.name}</h3>
           <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-gray-500">ID: {String(company.id).padStart(4, '0')}</span>
+            <span className="text-xs text-gray-500 truncate">{company.industry && company.industry !== '—' ? company.industry : `ID: ${String(company.id).padStart(4, '0')}`}</span>
           </div>
         </div>
 
@@ -180,18 +213,8 @@ export default function CompaniesPage() {
       try {
         setLoading(true)
         setLoadError('')
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080'
         const token = session?.accessToken ?? null
-        const res = await fetch(`${baseUrl}/api/v1/companies/allCompanies`, {
-          headers: {
-            accept: '*/*',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        })
-        if (!res.ok) {
-          throw new Error(`Request failed: ${res.status}`)
-        }
-        const data = await res.json()
+        const data = await getAllCompanies(token)
         const mapped = Array.isArray(data?.payload) ? data.payload.map((c) => {
           const rules = c.ruleDTOList ?? []
           const categories = rules.flatMap((r) => r.categoryDTOList ?? [])
@@ -235,12 +258,31 @@ export default function CompaniesPage() {
     c.industry.toLowerCase().includes(search.toLowerCase())
   )
 
-  const handleSave = (data) => {
-    setCompanies(prev => {
-      const exists = prev.find(c=>c.id===data.id)
-      if (exists) return prev.map(c=>c.id===data.id?{...c,...data}:c)
-      return [...prev, {...data,categoriesCount:0,rulesCount:0,transactionsCount:0,createdAt:new Date().toISOString().split('T')[0]}]
-    })
+  const handleSave = async (data) => {
+    if (data.id) {
+      // Edit — UI only for now
+      setCompanies(prev => prev.map(c => c.id === data.id ? { ...c, name: data.name, industry: data.businessNumber } : c))
+      setModal(null)
+      return
+    }
+
+    const token = session?.accessToken ?? null
+    const result = await createCompany(
+      { companyName: data.name, businessNumber: data.businessNumber },
+      token,
+    )
+    const payload = result?.payload ?? {}
+    const created = {
+      id: payload.companyId ?? String(Date.now()),
+      name: payload.companyName ?? data.name,
+      industry: payload.businessNumber ?? data.businessNumber,
+      status: 'active',
+      categoriesCount: 0,
+      rulesCount: 0,
+      transactionsCount: 0,
+      createdAt: new Date().toISOString().split('T')[0],
+    }
+    setCompanies(prev => [...prev, created])
     setModal(null)
   }
 
@@ -283,7 +325,7 @@ export default function CompaniesPage() {
             <p className="text-sm font-semibold" style={{color:'#1A32D8'}}>Add Company</p>
           </button>
           {filtered.map(c=>(
-            <CompanyCard key={c.id} company={c} onEdit={c=>setModal(c)} onDelete={id=>setCompanies(prev=>prev.filter(c=>c.id!==id))}/>
+            <CompanyCard key={c.id} company={c} onEdit={c=>setModal({ ...c, businessNumber: c.industry ?? '' })} onDelete={id=>setCompanies(prev=>prev.filter(c=>c.id!==id))}/>
           ))}
         </div>
       )}
