@@ -20,6 +20,7 @@ public class TransactionUploadSummaryResponse {
     private String enrichedFileUrl;
     private String storedFileName;
     private Integer ruleMatchedRows;
+    private Integer aiMatchedRows;
     private Integer ruleUnmatchedRows;
     private List<String> unmatchedMerchantSamples;
 }

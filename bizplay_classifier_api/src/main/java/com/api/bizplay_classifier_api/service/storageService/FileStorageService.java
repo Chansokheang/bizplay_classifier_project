@@ -10,4 +10,6 @@ public interface FileStorageService {
     FileStorageResponse storeBytes(byte[] bytes, String originalFileName, String contentType);
 
     Resource loadAsResource(String storedFileName);
+
+    void deleteByStoredFileName(String storedFileName);
 }

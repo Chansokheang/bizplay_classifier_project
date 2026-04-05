@@ -6,6 +6,7 @@ import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -185,6 +186,26 @@ public class FileStorageServiceImple implements FileStorageService {
             };
         } catch (Exception e) {
             throw new IllegalArgumentException("File not found: " + storedFileName, e);
+        }
+    }
+
+    @Override
+    public void deleteByStoredFileName(String storedFileName) {
+        ensureMinioReady();
+        String cleaned = StringUtils.cleanPath(storedFileName);
+        if (cleaned.contains("..")) {
+            throw new IllegalArgumentException("Invalid file name.");
+        }
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(bucketName)
+                            .object(cleaned)
+                            .build()
+            );
+            log.info("Deleted stored file '{}'", cleaned);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to delete file: " + storedFileName, e);
         }
     }
 

@@ -1,6 +1,5 @@
 package com.api.bizplay_classifier_api.service.transactionService;
 
-import com.api.bizplay_classifier_api.model.dto.TransactionDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleClassifierDTO;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
@@ -13,7 +12,9 @@ import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
+import com.api.bizplay_classifier_api.repository.BotConfigRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
+import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.companyService.CompanyService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import lombok.AllArgsConstructor;
@@ -22,7 +23,6 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
-import org.modelmapper.ModelMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,13 +33,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Collections;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 @AllArgsConstructor
@@ -47,11 +47,13 @@ public class TransactionServiceImple implements TransactionService {
 
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final RuleRepo ruleRepo;
+    private final BotConfigRepo botConfigRepo;
     private final CategoryRepo categoryRepo;
     private final CompanyService companyService;
     private final FileStorageService fileStorageService;
-    private final ModelMapper modelMapper;
+    private final AiFallbackService aiFallbackService;
     private static final int EXCEL_BATCH_SIZE = 500;
+    private static final int AI_FALLBACK_CONTEXT_LIMIT = 30;
     private static final String USAGE_CODE_HEADER = "field_name1";
     private static final String USAGE_NAME_HEADER = "usage_name";
     private static final String METHOD_HEADER = "method";
@@ -175,14 +177,17 @@ public class TransactionServiceImple implements TransactionService {
             Map<String, Integer> headerMap = headerParseResult.headerMap();
 
             validateRequiredHeaders(headerMap, defaultCompanyId);
-            ensureUsageAndMethodColumns(sheet.getRow(headerParseResult.headerRowIndex()), headerMap);
+            ensureUsageAndMethodColumnsSafe(sheet.getRow(headerParseResult.headerRowIndex()), headerMap);
 
             Map<UUID, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
+            Map<UUID, String> promptTemplateCache = new HashMap<>();
+            Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
             UUID fileCompanyId = defaultCompanyId;
             int totalRows = 0;
             int skippedRows = 0;
             int insertedRows = 0;
             int ruleMatchedRows = 0;
+            int aiMatchedRows = 0;
             int ruleUnmatchedRows = 0;
             List<String> unmatchedMerchantSamples = new ArrayList<>();
 
@@ -197,14 +202,35 @@ public class TransactionServiceImple implements TransactionService {
                 UUID companyId = resolveCompanyId(row, headerMap, formatter, rowIndex, defaultCompanyId);
                 fileCompanyId = mergeFileCompanyId(fileCompanyId, companyId);
                 UsageValue usageValue = resolveUsageValueByMerchantName(row, headerMap, formatter, companyId, rulesCache);
+                boolean shouldCallAi = !usageValue.matchedByRule()
+                        || usageValue.usageCode() == null || usageValue.usageCode().isBlank()
+                        || usageValue.usageName() == null || usageValue.usageName().isBlank();
+                if (shouldCallAi) {
+                    UsageValue aiUsageValue = resolveUsageValueByAi(
+                            row,
+                            headerMap,
+                            formatter,
+                            companyId,
+                            rulesCache,
+                            promptTemplateCache,
+                            aiResultCache,
+                            usageValue
+                    );
+                    if (aiUsageValue != null) {
+                        usageValue = aiUsageValue;
+                    }
+                }
                 applyUsageValueToSheet(row, headerMap, usageValue);
                 upsertRuleCategoryFromRow(
                         companyId,
                         getCellValue(row, headerMap, formatter, "merchant_name"),
+                        getCellValue(row, headerMap, formatter, "merchant_industry_name"),
                         usageValue.usageCode(),
                         usageValue.usageName()
                 );
-                if (usageValue.matchedByRule()) {
+                if (usageValue.matchedByAi()) {
+                    aiMatchedRows++;
+                } else if (usageValue.matchedByRule()) {
                     ruleMatchedRows++;
                 } else {
                     ruleUnmatchedRows++;
@@ -240,6 +266,7 @@ public class TransactionServiceImple implements TransactionService {
                     .enrichedFileUrl(enrichedFile.getFileUrl())
                     .storedFileName(enrichedFile.getStoredFileName())
                     .ruleMatchedRows(ruleMatchedRows)
+                    .aiMatchedRows(aiMatchedRows)
                     .ruleUnmatchedRows(ruleUnmatchedRows)
                     .unmatchedMerchantSamples(unmatchedMerchantSamples)
                     .build();
@@ -296,12 +323,42 @@ public class TransactionServiceImple implements TransactionService {
             if (rawHeader.isEmpty()) {
                 continue;
             }
-            String canonicalHeader = resolveHeader(rawHeader);
+            String canonicalHeader = resolveHeaderSafe(rawHeader);
             if (canonicalHeader != null) {
                 headerMap.put(canonicalHeader, i);
             }
         }
         return headerMap;
+    }
+
+    private String resolveHeaderSafe(String rawHeader) {
+        String normalized = normalizeHeader(rawHeader);
+
+        if (containsAny(normalized, "가맹점명")) {
+            return "merchant_name";
+        }
+        if (containsAny(normalized, "가맹점업종코드")) {
+            return "merchant_industry_code";
+        }
+        if (containsAny(normalized, "가맹점업종명")) {
+            return "merchant_industry_name";
+        }
+        if (containsAny(normalized, "가맹점사업자번호", "사업자번호")) {
+            return "merchant_business_registration_number";
+        }
+        if (containsAny(normalized, "용도코드")) {
+            return "field_name1";
+        }
+        if (containsAny(normalized, "용도명", "입력항목명")) {
+            return "usage_name";
+        }
+        if (containsAny(normalized, "사용자id")) {
+            return "user_tx_id";
+        }
+        if (containsAny(normalized, "작성자id")) {
+            return "writer_tx_id";
+        }
+        return resolveHeader(rawHeader);
     }
 
     private String resolveHeader(String rawHeader) {
@@ -310,6 +367,13 @@ public class TransactionServiceImple implements TransactionService {
         String mapped = HEADER_ALIASES.get(normalized);
         if (mapped != null) {
             return mapped;
+        }
+
+        if (containsAny(normalized, "method", "방법")) {
+            return METHOD_HEADER;
+        }
+        if (containsAny(normalized, "reason", "description", "사유")) {
+            return DESCRIPTION_HEADER;
         }
 
         if (containsAny(normalized, "approvaldate", "승인일자", "수입일자")) {
@@ -427,25 +491,27 @@ public class TransactionServiceImple implements TransactionService {
         String usageCode = getCellValue(row, headerMap, formatter, USAGE_CODE_HEADER);
         String usageName = getCellValue(row, headerMap, formatter, USAGE_NAME_HEADER);
         String merchantName = getCellValue(row, headerMap, formatter, "merchant_name");
-        if (merchantName == null || merchantName.isBlank()) {
-            return new UsageValue(usageCode, usageName, false);
+        String merchantIndustryName = getCellValue(row, headerMap, formatter, "merchant_industry_name");
+        if ((merchantName == null || merchantName.isBlank())
+                && (merchantIndustryName == null || merchantIndustryName.isBlank())) {
+            return UsageValue.unmatched(usageCode, usageName);
         }
 
         List<RuleClassifierDTO> classifiers = rulesCache.computeIfAbsent(
                 companyId, ruleRepo::getRuleClassifiersByCompanyId
         );
         if (classifiers == null || classifiers.isEmpty()) {
-            return new UsageValue(usageCode, usageName, false);
+            return UsageValue.unmatched(usageCode, usageName);
         }
 
         String merchantNormalized = normalizeMatcherText(merchantName);
+        String industryNormalized = normalizeMatcherText(merchantIndustryName);
         List<RuleClassifierDTO> matched = classifiers.stream()
-                .filter(c -> c.getRuleName() != null && !c.getRuleName().isBlank())
-                .filter(c -> isRuleMatched(merchantNormalized, c.getRuleName()))
+                .filter(c -> isRuleMatched(merchantNormalized, industryNormalized, c))
                 .toList();
 
         if (matched.isEmpty()) {
-            return new UsageValue(usageCode, usageName, false);
+            return UsageValue.unmatched(usageCode, usageName);
         }
 
         List<String> matchedCodes = matched.stream()
@@ -462,19 +528,228 @@ public class TransactionServiceImple implements TransactionService {
 
         String finalUsageCode = mergeMultiValue(usageCode, matchedCodes);
         String finalUsageName = mergeMultiValue(usageName, matchedCategories);
-        return new UsageValue(finalUsageCode, finalUsageName, true);
+        return UsageValue.ruleMatched(finalUsageCode, finalUsageName);
     }
 
-    private boolean isRuleMatched(String merchantNormalized, String ruleName) {
-        if (merchantNormalized == null || merchantNormalized.isBlank() || ruleName == null || ruleName.isBlank()) {
+    private UsageValue resolveUsageValueByAi(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
+                                             Map<UUID, List<RuleClassifierDTO>> rulesCache,
+                                             Map<UUID, String> promptTemplateCache,
+                                             Map<String, AiFallbackService.AiFallbackResult> aiResultCache,
+                                             UsageValue current) {
+        Map<String, String> rowSnapshot = extractRowSnapshot(row, headerMap, formatter);
+        if (rowSnapshot.isEmpty()) {
+            return null;
+        }
+        String merchantName = rowSnapshot.get("merchant_name");
+        String merchantIndustryName = rowSnapshot.get("merchant_industry_name");
+        if ((merchantName == null || merchantName.isBlank())
+                && (merchantIndustryName == null || merchantIndustryName.isBlank())) {
+            return null;
+        }
+
+        List<RuleClassifierDTO> classifiers = rulesCache.computeIfAbsent(
+                companyId, ruleRepo::getRuleClassifiersByCompanyId
+        );
+        if (classifiers == null || classifiers.isEmpty()) {
+            return null;
+        }
+        List<RuleClassifierDTO> matchedClassifiers = filterClassifiersForAi(rowSnapshot, classifiers);
+        List<RuleClassifierDTO> aiContexts = matchedClassifiers.isEmpty()
+                ? selectFallbackAiContexts(classifiers)
+                : matchedClassifiers;
+        if (aiContexts.isEmpty()) {
+            return null;
+        }
+
+        String cacheKey = buildAiCacheKey(companyId, rowSnapshot);
+        if (aiResultCache.containsKey(cacheKey)) {
+            AiFallbackService.AiFallbackResult cached = aiResultCache.get(cacheKey);
+            return toAiUsageValue(current, cached);
+        }
+
+        String promptTemplate = resolvePromptTemplate(companyId, promptTemplateCache);
+        AiFallbackService.AiFallbackResult aiResult = aiFallbackService.classify(rowSnapshot, aiContexts, promptTemplate);
+        if (aiResult == null) {
+            return inferUsageValueFromContexts(current, rowSnapshot, aiContexts);
+        }
+
+        aiResultCache.put(cacheKey, aiResult);
+        return toAiUsageValue(current, aiResult);
+    }
+
+    private UsageValue inferUsageValueFromContexts(UsageValue current, Map<String, String> rowSnapshot, List<RuleClassifierDTO> contexts) {
+        if (contexts == null || contexts.isEmpty()) {
+            return null;
+        }
+        String merchant = normalizeMatcherText(rowSnapshot.get("merchant_name"));
+        String industry = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
+
+        RuleClassifierDTO best = contexts.stream()
+                .filter(c -> c != null)
+                .filter(c -> c.getCode() != null && !c.getCode().isBlank())
+                .filter(c -> c.getCategory() != null && !c.getCategory().isBlank())
+                .filter(c -> textMatched(merchant, normalizeMatcherText(c.getMerchantName()))
+                        || textMatched(industry, normalizeMatcherText(c.getMerchantIndustryName()))
+                        || textMatched(merchant, normalizeMatcherText(c.getRuleName()))
+                        || textMatched(industry, normalizeMatcherText(c.getRuleName())))
+                .findFirst()
+                .orElseGet(() -> contexts.stream()
+                        .filter(c -> c != null)
+                        .filter(c -> c.getCode() != null && !c.getCode().isBlank())
+                        .filter(c -> c.getCategory() != null && !c.getCategory().isBlank())
+                        .findFirst()
+                        .orElse(null));
+        if (best == null) {
+            return null;
+        }
+
+        String mergedCode = mergeMultiValue(current.usageCode(), List.of(best.getCode().trim()));
+        String mergedName = mergeMultiValue(current.usageName(), List.of(best.getCategory().trim()));
+        return UsageValue.aiMatched(mergedCode, mergedName, "AI response empty; filled from nearest rule context.");
+    }
+
+    private UsageValue toAiUsageValue(UsageValue current, AiFallbackService.AiFallbackResult aiResult) {
+        if (aiResult == null) {
+            return null;
+        }
+        String mergedCode = mergeMultiValue(current.usageCode(), splitMultiValue(aiResult.usageCode()));
+        String mergedName = mergeMultiValue(current.usageName(), splitMultiValue(aiResult.usageName()));
+        String reason = aiResult.reason() == null ? "AI fallback classification succeeded." : aiResult.reason();
+        return UsageValue.aiMatched(mergedCode, mergedName, reason);
+    }
+
+    private String buildAiCacheKey(UUID companyId, Map<String, String> rowSnapshot) {
+        String merchant = normalizeMatcherText(rowSnapshot.get("merchant_name"));
+        String industry = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
+        String taxType = normalizeMatcherText(rowSnapshot.get("tax_type"));
+        String amountBucket = amountBucket(rowSnapshot.get("supply_amount"));
+        return companyId + "::" + merchant + "::" + industry + "::" + taxType + "::" + amountBucket;
+    }
+
+    private List<RuleClassifierDTO> filterClassifiersForAi(Map<String, String> rowSnapshot, List<RuleClassifierDTO> classifiers) {
+        String merchantNormalized = normalizeMatcherText(rowSnapshot.get("merchant_name"));
+        String industryNormalized = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
+        List<RuleClassifierDTO> strictMatches = classifiers.stream()
+                .filter(c -> c != null)
+                .filter(c -> textMatched(merchantNormalized, normalizeMatcherText(c.getMerchantName()))
+                        || textMatched(industryNormalized, normalizeMatcherText(c.getMerchantIndustryName())))
+                .toList();
+        if (!strictMatches.isEmpty()) {
+            return strictMatches;
+        }
+
+        // Fallback: still avoid all-rules context, but allow rule_name-based narrowing when
+        // dedicated merchant columns are sparse/legacy.
+        return classifiers.stream()
+                .filter(c -> c != null)
+                .filter(c -> textMatched(merchantNormalized, normalizeMatcherText(c.getRuleName()))
+                        || textMatched(industryNormalized, normalizeMatcherText(c.getRuleName())))
+                .toList();
+    }
+
+    private List<RuleClassifierDTO> selectFallbackAiContexts(List<RuleClassifierDTO> classifiers) {
+        // Deduplicate by category code so the AI always sees every distinct account
+        // in the company's chart of accounts, regardless of how many rules exist.
+        // Previously this was limited to the first 30 rules, which caused categories
+        // appearing after position 30 to be invisible to the AI.
+        LinkedHashMap<String, RuleClassifierDTO> byCode = new java.util.LinkedHashMap<>();
+        for (RuleClassifierDTO c : classifiers) {
+            if (c != null
+                    && c.getCode() != null && !c.getCode().isBlank()
+                    && c.getCategory() != null && !c.getCategory().isBlank()) {
+                byCode.putIfAbsent(c.getCode().trim(), c);
+            }
+        }
+        return new ArrayList<>(byCode.values());
+    }
+
+    private String amountBucket(String rawAmount) {
+        if (rawAmount == null || rawAmount.isBlank()) {
+            return "na";
+        }
+        String digits = rawAmount.replaceAll("[^0-9-]", "");
+        if (digits.isBlank()) {
+            return "na";
+        }
+        try {
+            long value = Long.parseLong(digits);
+            long bucket = (value / 50000L) * 50000L;
+            return Long.toString(bucket);
+        } catch (NumberFormatException e) {
+            return "na";
+        }
+    }
+
+    private String resolvePromptTemplate(UUID companyId, Map<UUID, String> promptTemplateCache) {
+        if (promptTemplateCache.containsKey(companyId)) {
+            String cached = promptTemplateCache.get(companyId);
+            return cached == null || cached.isBlank() ? null : cached;
+        }
+        String prompt = botConfigRepo.getLatestSystemPromptByCompanyId(companyId);
+        promptTemplateCache.put(companyId, prompt);
+        return prompt == null || prompt.isBlank() ? null : prompt;
+    }
+
+    private static final List<String> AI_SNAPSHOT_HEADERS = List.of(
+            "approval_date",
+            "approval_time",
+            "merchant_name",
+            "merchant_industry_code",
+            "merchant_industry_name",
+            "merchant_business_registration_number",
+            "supply_amount",
+            "vat_amount",
+            "tax_type"
+    );
+    private static final java.util.Set<String> AI_CONTEXT_EXCLUDED_HEADERS = java.util.Set.of(
+            "pk",
+            "user_tx_id",
+            "writer_tx_id"
+    );
+
+    private Map<String, String> extractRowSnapshot(Row row, Map<String, Integer> headerMap, DataFormatter formatter) {
+        Map<String, String> snapshot = new LinkedHashMap<>();
+        for (String header : AI_SNAPSHOT_HEADERS) {
+            if (AI_CONTEXT_EXCLUDED_HEADERS.contains(header)) {
+                continue;
+            }
+            String value = getCellValue(row, headerMap, formatter, header);
+            if (value != null && !value.isBlank() && !isAbstractIdLike(value)) {
+                snapshot.put(header, value);
+            }
+        }
+        return snapshot;
+    }
+
+    private boolean isAbstractIdLike(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isBlank()) {
             return false;
         }
-        String ruleNormalized = normalizeMatcherText(ruleName);
-        if (ruleNormalized.isBlank()) {
+        return normalized.matches("(?i)^[A-Z]{2,}\\+[A-Z]+\\d+:[A-Z]+\\d+$")
+                || normalized.matches("(?i)^[A-Z]+\\d+:[A-Z]+\\d+$");
+    }
+
+    private boolean isRuleMatched(String merchantNormalized, String industryNormalized, RuleClassifierDTO classifier) {
+        String ruleNameNormalized = normalizeMatcherText(classifier.getRuleName());
+        String ruleIndustryNormalized = normalizeMatcherText(classifier.getMerchantIndustryName());
+        String ruleMerchantNormalized = normalizeMatcherText(classifier.getMerchantName());
+        if (ruleNameNormalized.isBlank() && ruleIndustryNormalized.isBlank()) {
             return false;
         }
-        // Bidirectional contains to support cases where one side is abbreviated.
-        return merchantNormalized.contains(ruleNormalized) || ruleNormalized.contains(merchantNormalized);
+        return textMatched(merchantNormalized, ruleNameNormalized)
+                || textMatched(merchantNormalized, ruleMerchantNormalized)
+                || textMatched(merchantNormalized, ruleIndustryNormalized)
+                || textMatched(industryNormalized, ruleNameNormalized)
+                || textMatched(industryNormalized, ruleMerchantNormalized)
+                || textMatched(industryNormalized, ruleIndustryNormalized);
+    }
+
+    private boolean textMatched(String left, String right) {
+        if (left == null || left.isBlank() || right == null || right.isBlank()) {
+            return false;
+        }
+        return left.contains(right) || right.contains(left);
     }
 
     private String normalizeMatcherText(String value) {
@@ -504,10 +779,10 @@ public class TransactionServiceImple implements TransactionService {
         if (merged.isEmpty()) {
             return null;
         }
-        return merged.stream().collect(Collectors.joining(","));
+        return String.join(",", merged);
     }
 
-    private void upsertRuleCategoryFromRow(UUID companyId, String merchantName, String usageCodeRaw, String usageNameRaw) {
+    private void upsertRuleCategoryFromRow(UUID companyId, String merchantName, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {
         if (companyId == null || merchantName == null || merchantName.isBlank()) {
             return;
         }
@@ -521,12 +796,23 @@ public class TransactionServiceImple implements TransactionService {
             return;
         }
 
-        RuleDTO rule = ruleRepo.findByCompanyIdAndRuleName(companyId, merchantName.trim());
+        String normalizedMerchantIndustryName = merchantIndustryName == null ? null : merchantIndustryName.trim();
+        if (normalizedMerchantIndustryName != null && normalizedMerchantIndustryName.isBlank()) {
+            normalizedMerchantIndustryName = null;
+        }
+
+        RuleDTO rule = ruleRepo.findByCompanyIdAndMerchantNameAndMerchantIndustryName(
+                companyId,
+                merchantName.trim(),
+                normalizedMerchantIndustryName
+        );
         if (rule == null) {
             rule = ruleRepo.createRule(
                     RuleRequest.builder()
                             .companyId(companyId)
                             .ruleName(merchantName.trim())
+                            .merchantName(merchantName.trim())
+                            .merchantIndustryName(normalizedMerchantIndustryName)
                             .categoryIds(Collections.emptyList())
                             .description("auto-trained-from-upload")
                             .build()
@@ -588,13 +874,13 @@ public class TransactionServiceImple implements TransactionService {
         }
         if (codes.size() == 1) {
             for (String name : names) {
-                result.add(new Pair(codes.get(0), name));
+                result.add(new Pair(codes.getFirst(), name));
             }
             return result;
         }
         if (names.size() == 1) {
             for (String code : codes) {
-                result.add(new Pair(code, names.get(0)));
+                result.add(new Pair(code, names.getFirst()));
             }
             return result;
         }
@@ -621,10 +907,10 @@ public class TransactionServiceImple implements TransactionService {
             row.createCell(usageNameCol).setCellValue(usageValue.usageName());
         }
         if (methodCol != null) {
-            row.createCell(methodCol).setCellValue(usageValue.matchedByRule() ? "Rule-Based" : "");
+            row.createCell(methodCol).setCellValue(usageValue.method());
         }
         if (descriptionCol != null) {
-            row.createCell(descriptionCol).setCellValue(usageValue.matchedByRule() ? "Rule-based classification succeeded." : "");
+            row.createCell(descriptionCol).setCellValue(usageValue.description());
         }
     }
 
@@ -636,22 +922,49 @@ public class TransactionServiceImple implements TransactionService {
         short nextCol = headerRow.getLastCellNum() < 0 ? 0 : headerRow.getLastCellNum();
         if (!headerMap.containsKey(USAGE_CODE_HEADER)) {
             headerMap.put(USAGE_CODE_HEADER, (int) nextCol);
-            headerRow.createCell(nextCol).setCellValue("\uC6A9\uB3C4\uCF54\uB4DC");
+            headerRow.createCell(nextCol).setCellValue("용도코드");
             nextCol++;
         }
         if (!headerMap.containsKey(USAGE_NAME_HEADER)) {
             headerMap.put(USAGE_NAME_HEADER, (int) nextCol);
-            headerRow.createCell(nextCol).setCellValue("\uC6A9\uB3C4\uBA85");
+            headerRow.createCell(nextCol).setCellValue("용도명");
             nextCol++;
         }
         if (!headerMap.containsKey(METHOD_HEADER)) {
             headerMap.put(METHOD_HEADER, (int) nextCol);
-            headerRow.createCell(nextCol).setCellValue("\uBC29\uBC95");
+            headerRow.createCell(nextCol).setCellValue("방법");
             nextCol++;
         }
         if (!headerMap.containsKey(DESCRIPTION_HEADER)) {
             headerMap.put(DESCRIPTION_HEADER, (int) nextCol);
-            headerRow.createCell(nextCol).setCellValue("reason");
+            headerRow.createCell(nextCol).setCellValue("Reason");
+        }
+    }
+
+    private void ensureUsageAndMethodColumnsSafe(Row headerRow, Map<String, Integer> headerMap) {
+        if (headerRow == null) {
+            return;
+        }
+
+        short nextCol = headerRow.getLastCellNum() < 0 ? 0 : headerRow.getLastCellNum();
+        if (!headerMap.containsKey(USAGE_CODE_HEADER)) {
+            headerMap.put(USAGE_CODE_HEADER, (int) nextCol);
+            headerRow.createCell(nextCol).setCellValue("용도코드");
+            nextCol++;
+        }
+        if (!headerMap.containsKey(USAGE_NAME_HEADER)) {
+            headerMap.put(USAGE_NAME_HEADER, (int) nextCol);
+            headerRow.createCell(nextCol).setCellValue("용도명");
+            nextCol++;
+        }
+        if (!headerMap.containsKey(METHOD_HEADER)) {
+            headerMap.put(METHOD_HEADER, (int) nextCol);
+            headerRow.createCell(nextCol).setCellValue("방법");
+            nextCol++;
+        }
+        if (!headerMap.containsKey(DESCRIPTION_HEADER)) {
+            headerMap.put(DESCRIPTION_HEADER, (int) nextCol);
+            headerRow.createCell(nextCol).setCellValue("Reason");
         }
     }
 
@@ -727,7 +1040,20 @@ public class TransactionServiceImple implements TransactionService {
     private record HeaderParseResult(int headerRowIndex, Map<String, Integer> headerMap) {
     }
 
-    private record UsageValue(String usageCode, String usageName, boolean matchedByRule) {
+    private record UsageValue(String usageCode, String usageName, boolean matchedByRule, boolean matchedByAi,
+                              String method, String description) {
+        private static UsageValue unmatched(String usageCode, String usageName) {
+            return new UsageValue(usageCode, usageName, false, false, "", "");
+        }
+
+        private static UsageValue ruleMatched(String usageCode, String usageName) {
+            return new UsageValue(usageCode, usageName, true, false, "Rule-based", "");
+        }
+
+        private static UsageValue aiMatched(String usageCode, String usageName, String reason) {
+            String message = (reason == null || reason.isBlank()) ? "AI fallback classification succeeded." : reason;
+            return new UsageValue(usageCode, usageName, false, true, "AI", message);
+        }
     }
 
     private record Pair(String code, String name) {

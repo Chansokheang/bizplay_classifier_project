@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -87,6 +88,34 @@ public class FileStorageController {
                 ApiResponse.<List<FileUploadHistoryDTO>>builder()
                         .payload(payload)
                         .message("Files were retrieved successfully.")
+                        .status(HttpStatus.OK)
+                        .code(HttpStatus.OK.value())
+                        .build()
+        );
+    }
+
+    @DeleteMapping("/files/{fileId}")
+    public ResponseEntity<ApiResponse<?>> deleteFileById(@PathVariable UUID fileId) {
+        FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.getFileById(fileId);
+        if (fileRecord == null) {
+            throw new CustomNotFoundException("File record not found for id: " + fileId);
+        }
+
+        UUID currentUserId = getCurrentUser.getCurrentUserId();
+        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(fileRecord.getCompanyId(), currentUserId);
+        if (exists == 0) {
+            throw new CustomNotFoundException("Company was not found with Id: " + fileRecord.getCompanyId());
+        }
+
+        fileStorageService.deleteByStoredFileName(fileRecord.getStoredFileName());
+        int deletedRows = fileUploadHistoryRepo.deleteFileById(fileId);
+        if (deletedRows == 0) {
+            throw new CustomNotFoundException("File record not found for id: " + fileId);
+        }
+
+        return ResponseEntity.ok(
+                ApiResponse.builder()
+                        .message("File deleted successfully.")
                         .status(HttpStatus.OK)
                         .code(HttpStatus.OK.value())
                         .build()

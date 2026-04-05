@@ -15,14 +15,16 @@ import java.util.UUID;
 public interface RuleRepo {
 
     @Select("""
-        INSERT INTO rules (company_id, rule_name, min_amount, max_amount, description)
-        VALUES (#{rule.companyId}, #{rule.ruleName}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
+        INSERT INTO rules (company_id, rule_name, "가맹점명", "가맹점업종명", min_amount, max_amount, description)
+        VALUES (#{rule.companyId}, #{rule.ruleName}, #{rule.merchantName}, #{rule.merchantIndustryName}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
         RETURNING *
     """)
     @Results(id = "ruleMap", value = {
             @Result(property = "ruleId", column = "rule_id",   jdbcType = JdbcType.OTHER,   typeHandler = UUIDTypeHandler.class),
             @Result(property = "companyId", column = "company_id",   jdbcType = JdbcType.OTHER,   typeHandler = UUIDTypeHandler.class),
             @Result(property = "ruleName", column = "rule_name"),
+            @Result(property = "merchantName", column = "가맹점명"),
+            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
             @Result(property = "usageStatus", column = "usage_status"),
             @Result(property = "minAmount", column = "min_amount"),
             @Result(property = "maxAmount", column = "max_amount"),
@@ -49,8 +51,26 @@ public interface RuleRepo {
     RuleDTO findByCompanyIdAndRuleName(@Param("companyId") UUID companyId, @Param("ruleName") String ruleName);
 
     @Select("""
+        SELECT *
+        FROM rules
+        WHERE company_id = #{companyId}
+          AND "가맹점명" = #{merchantName}
+          AND "가맹점업종명" IS NOT DISTINCT FROM #{merchantIndustryName}
+        LIMIT 1
+    """)
+    @ResultMap("ruleMap")
+    RuleDTO findByCompanyIdAndMerchantNameAndMerchantIndustryName(
+            @Param("companyId") UUID companyId,
+            @Param("merchantName") String merchantName,
+            @Param("merchantIndustryName") String merchantIndustryName
+    );
+
+    @Select("""
         SELECT
             r.rule_name AS rule_name,
+            r."가맹점명" AS merchant_name,
+            r."가맹점업종명" AS merchant_industry_name,
+            r.description AS description,
             c.code AS code,
             c.category AS category
         FROM rules r
@@ -60,6 +80,9 @@ public interface RuleRepo {
     """)
     @Results(id = "ruleClassifierMap", value = {
             @Result(property = "ruleName", column = "rule_name"),
+            @Result(property = "merchantName", column = "merchant_name"),
+            @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
+            @Result(property = "description", column = "description"),
             @Result(property = "code", column = "code"),
             @Result(property = "category", column = "category")
     })
@@ -69,6 +92,8 @@ public interface RuleRepo {
         UPDATE rules
         SET
             rule_name = #{rule.ruleName},
+            "가맹점명" = #{rule.merchantName},
+            "가맹점업종명" = #{rule.merchantIndustryName},
             usage_status = COALESCE(#{rule.usageStatus}, usage_status),
             min_amount = #{rule.minAmount},
             max_amount = #{rule.maxAmount},

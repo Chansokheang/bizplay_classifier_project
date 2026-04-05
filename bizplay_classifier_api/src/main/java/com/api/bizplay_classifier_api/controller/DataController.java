@@ -19,7 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/data")
+@RequestMapping("/api/v1/data")
 @AllArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000"})

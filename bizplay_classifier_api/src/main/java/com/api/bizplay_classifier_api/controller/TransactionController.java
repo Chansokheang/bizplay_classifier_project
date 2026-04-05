@@ -60,20 +60,20 @@ public class TransactionController {
         );
     }
 
-    @PostMapping(value = "/upload", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public ResponseEntity<ApiResponse<?>> uploadTransactionsByExcelRaw(
-            @RequestBody byte[] fileBytes,
-            @RequestParam(value = "companyId", required = false) UUID companyId,
-            @RequestParam(value = "sheetName", required = false) String sheetName
-    ) {
-        TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(fileBytes, companyId, sheetName);
-        return ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse.<TransactionUploadSummaryResponse>builder()
-                        .payload(payload)
-                        .message("Transactions were created successfully from Excel.")
-                        .code(HttpStatus.CREATED.value())
-                        .status(HttpStatus.CREATED)
-                        .build()
-        );
-    }
+//    @PostMapping(value = "/upload", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+//    public ResponseEntity<ApiResponse<?>> uploadTransactionsByExcelRaw(
+//            @RequestBody byte[] fileBytes,
+//            @RequestParam(value = "companyId", required = false) UUID companyId,
+//            @RequestParam(value = "sheetName", required = false) String sheetName
+//    ) {
+//        TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(fileBytes, companyId, sheetName);
+//        return ResponseEntity.status(HttpStatus.CREATED).body(
+//                ApiResponse.<TransactionUploadSummaryResponse>builder()
+//                        .payload(payload)
+//                        .message("Transactions were created successfully from Excel.")
+//                        .code(HttpStatus.CREATED.value())
+//                        .status(HttpStatus.CREATED)
+//                        .build()
+//        );
+//    }
 }

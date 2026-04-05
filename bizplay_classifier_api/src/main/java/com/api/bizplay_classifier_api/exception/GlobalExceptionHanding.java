@@ -90,4 +90,15 @@ public class GlobalExceptionHanding {
         problemDetail.setProperty("timestamp", LocalDateTime.now());
         return problemDetail;
     }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ProblemDetail handleIllegalStateException(IllegalStateException e) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                e.getMessage() != null ? e.getMessage() : "Service is temporarily unavailable."
+        );
+        problemDetail.setTitle("Service Unavailable");
+        problemDetail.setProperty("timestamp", LocalDateTime.now());
+        return problemDetail;
+    }
 }

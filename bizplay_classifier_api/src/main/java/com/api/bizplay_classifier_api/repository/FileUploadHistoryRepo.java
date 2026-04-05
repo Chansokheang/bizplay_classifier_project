@@ -5,6 +5,7 @@ import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Result;
 import org.apache.ibatis.annotations.ResultMap;
 import org.apache.ibatis.annotations.Results;
@@ -67,4 +68,10 @@ public interface FileUploadHistoryRepo {
           AND user_id = #{userId}
     """)
     int existsCompanyByIdAndUserId(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+
+    @Delete("""
+        DELETE FROM file_upload_history
+        WHERE file_id = #{fileId}
+    """)
+    int deleteFileById(@Param("fileId") UUID fileId);
 }

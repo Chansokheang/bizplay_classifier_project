@@ -16,6 +16,8 @@ public class Rule {
     private UUID ruleId;
     private UUID companyId;
     private String ruleName;
+    private String merchantName;
+    private String merchantIndustryName;
     private String usageStatus;
     private Integer minAmount;
     private Integer maxAmount;

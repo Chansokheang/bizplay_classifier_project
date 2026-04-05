@@ -1,5 +1,7 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -24,6 +26,14 @@ public class RuleRequest {
 
     @NotBlank(message = "Rule name can not be blank.")
     private String ruleName;
+    @NotBlank(message = "Merchant name can not be blank.")
+    @JsonProperty("\uAC00\uB9F9\uC810\uBA85")
+    @JsonAlias("merchantName")
+    private String merchantName;
+
+    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
+    @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
+    private String merchantIndustryName;
     private Integer minAmount;
     private Integer maxAmount;
     private String description;

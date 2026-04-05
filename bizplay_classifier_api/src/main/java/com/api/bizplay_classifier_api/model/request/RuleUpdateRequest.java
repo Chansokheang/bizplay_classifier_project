@@ -1,8 +1,9 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,6 +23,14 @@ public class RuleUpdateRequest {
 
     @NotBlank(message = "Rule name can not be blank.")
     private String ruleName;
+
+    @NotBlank(message = "Merchant name can not be blank.")
+    @JsonProperty("\uAC00\uB9F9\uC810\uBA85")
+    @JsonAlias("merchantName")
+    private String merchantName;
+    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
+    @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
+    private String merchantIndustryName;
 
     @Pattern(regexp = "^[YN]$", message = "Usage status must be Y or N.")
     private String usageStatus;

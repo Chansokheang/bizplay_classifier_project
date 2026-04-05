@@ -59,15 +59,6 @@ public class CompanyServiceImple implements CompanyService {
     @Transactional
     public void deleteCompanyByCompanyId(UUID companyId) {
         UUID userId = getCurrentUser.getCurrentUserId();
-        companyRepo.deleteClassifyRuleByCompanyId(companyId);
-        companyRepo.deleteClassifySummaryByCompanyId(companyId);
-        companyRepo.deleteClassifyDetailByCompanyId(companyId);
-        companyRepo.deleteTransactionsByCompanyId(companyId);
-        companyRepo.deleteRuleCategoryMapByCompanyId(companyId);
-        companyRepo.deleteRulesByCompanyId(companyId);
-        companyRepo.deleteCategoriesByCompanyId(companyId);
-        companyRepo.deleteBotConfigByCompanyId(companyId);
-        companyRepo.deleteFileUploadHistoryByCompanyId(companyId);
         int deletedRows = companyRepo.deleteCompanyByCompanyId(userId, companyId);
         if (deletedRows == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);

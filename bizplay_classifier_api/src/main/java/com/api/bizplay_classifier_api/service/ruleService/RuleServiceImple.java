@@ -99,7 +99,7 @@ public class RuleServiceImple implements RuleService {
             DataFormatter formatter = new DataFormatter();
             HeaderParseResult headerResult = findHeaderMap(sheet, formatter);
             Map<String, Integer> headerMap = headerResult.headerMap();
-            validateRequiredHeaders(headerMap);
+            validateRequiredHeadersForRuleTraining(headerMap);
 
             int totalRows = 0;
             int trainedRows = 0;
@@ -118,10 +118,12 @@ public class RuleServiceImple implements RuleService {
                 }
 
                 String merchantName = getCellValue(row, headerMap, formatter, "merchant_name");
+                String merchantIndustryName = getCellValue(row, headerMap, formatter, "merchant_industry_name");
                 String code = getCellValue(row, headerMap, formatter, "usage_code");
                 String categoryName = getCellValue(row, headerMap, formatter, "usage_name");
 
                 if (merchantName == null || merchantName.isBlank()
+                        || merchantIndustryName == null || merchantIndustryName.isBlank()
                         || code == null || code.isBlank()
                         || categoryName == null || categoryName.isBlank()) {
                     skippedRows++;
@@ -133,6 +135,9 @@ public class RuleServiceImple implements RuleService {
                     skippedRows++;
                     continue;
                 }
+                String normalizedMerchantName = merchantName.trim();
+                String normalizedMerchantIndustryName = merchantIndustryName.trim();
+                String ruleName = normalizedMerchantName + "_" + normalizedMerchantIndustryName;
 
                 CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, categoryName.trim());
                 CategoryDTO category = categoryUpsert.category();
@@ -140,12 +145,18 @@ public class RuleServiceImple implements RuleService {
                     createdCategories++;
                 }
 
-                RuleDTO rule = ruleRepo.findByCompanyIdAndRuleName(companyId, merchantName.trim());
+                RuleDTO rule = ruleRepo.findByCompanyIdAndMerchantNameAndMerchantIndustryName(
+                        companyId,
+                        normalizedMerchantName,
+                        normalizedMerchantIndustryName
+                );
                 if (rule == null) {
                     rule = ruleRepo.createRule(
                             RuleRequest.builder()
                                     .companyId(companyId)
-                                    .ruleName(merchantName.trim())
+                                    .ruleName(ruleName)
+                                    .merchantName(normalizedMerchantName)
+                                    .merchantIndustryName(normalizedMerchantIndustryName)
                                     .description("trained-from-data")
                                     .build()
                     );
@@ -229,12 +240,40 @@ public class RuleServiceImple implements RuleService {
             if (rawHeader.isEmpty()) {
                 continue;
             }
-            String canonical = resolveHeader(rawHeader);
+            String canonical = resolveHeaderForRuleTraining(rawHeader);
             if (canonical != null) {
                 headerMap.put(canonical, i);
             }
         }
         return headerMap;
+    }
+
+    private String resolveHeaderForRuleTraining(String rawHeader) {
+        String normalized = normalizeHeader(rawHeader);
+        if (containsAny(normalized, "가맹점명", "merchantname", "merchant_name")) {
+            return "merchant_name";
+        }
+        if (containsAny(normalized, "가맹점업종명", "merchantindustryname", "merchant_industry_name")) {
+            return "merchant_industry_name";
+        }
+        if (containsAny(normalized, "용도코드", "usagecode", "fieldname1", "code")) {
+            return "usage_code";
+        }
+        if (containsAny(normalized, "용도명", "usagename", "category", "purpose")) {
+            return "usage_name";
+        }
+        return null;
+    }
+
+    private void validateRequiredHeadersForRuleTraining(Map<String, Integer> headerMap) {
+        if (!headerMap.containsKey("merchant_name")
+                || !headerMap.containsKey("merchant_industry_name")
+                || !headerMap.containsKey("usage_code")
+                || !headerMap.containsKey("usage_name")) {
+            throw new IllegalArgumentException(
+                    "Missing required headers. Required: merchant_name(가맹점명), merchant_industry_name(가맹점업종명), usage_code(용도코드), usage_name(용도명)"
+            );
+        }
     }
 
     private String resolveHeader(String rawHeader) {

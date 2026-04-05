@@ -35,4 +35,13 @@ public interface BotConfigRepo {
           AND user_id = #{userId}
     """)
     int existsCompanyByIdAndUserId(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+
+    @Select("""
+        SELECT config ->> 'systemPrompt'
+        FROM bot_config
+        WHERE company_id = #{companyId}
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    String getLatestSystemPromptByCompanyId(@Param("companyId") UUID companyId);
 }
