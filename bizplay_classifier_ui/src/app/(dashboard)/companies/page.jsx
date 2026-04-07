@@ -2,203 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import Link from 'next/link'
-import { Plus, Search, MoreHorizontal, X, Pencil, Trash2, Building2, Loader2 } from 'lucide-react'
+import { Plus, Search, Building2 } from 'lucide-react'
 import { COMPANIES as INITIAL } from '../../../lib/mock-data'
 import { getAllCompanies, createCompany } from '../../../service/companyService'
-
-function CompanyModal({ company, onClose, onSave }) {
-  const isEdit = !!company?.id
-  const [form, setForm] = useState(company ?? { name: '', businessNumber: '' })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [bnError, setBnError] = useState('')
-
-  const validateBn = (value) => {
-    if (!value) return ''
-    if (!/^\d{10}$/.test(value)) return 'Business number must be exactly 10 digits.'
-    return ''
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!form.name.trim()) return
-    const bnErr = validateBn(form.businessNumber)
-    if (bnErr) { setBnError(bnErr); return }
-    setLoading(true)
-    setError('')
-    try {
-      await onSave(form)
-    } catch (err) {
-      setError(err.message ?? 'Something went wrong. Please try again.')
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background:'rgba(15,23,42,0.4)' }}
-      onClick={(e) => e.target===e.currentTarget && !loading && onClose()}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in" style={{ background:'#FFFFFF', border:'1px solid #E2E8F0', boxShadow:'0 20px 60px rgba(0,0,0,0.15)' }}>
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom:'1px solid #F1F5F9', background:'#F8FAFC' }}>
-          <div className="flex items-center gap-2.5">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg" style={{ background:'rgba(139,92,246,0.1)' }}>
-              <Building2 size={16} color="#8B5CF6" />
-            </div>
-            <h2 className="font-semibold text-sm" style={{ color:'#0F172A' }}>{isEdit ? 'Edit Company' : 'New Company'}</h2>
-          </div>
-          <button onClick={onClose} disabled={loading} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer disabled:opacity-40" style={{ color:'#94A3B8' }}
-            onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9';e.currentTarget.style.color='#64748B'}}
-            onMouseLeave={(e)=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='#94A3B8'}}>
-            <X size={16} />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold" style={{ color:'#64748B' }}>Company Name *</label>
-            <input type="text" required placeholder="e.g. Acme Corporation" value={form.name}
-              onChange={(e)=>setForm({...form,name:e.target.value})}
-              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
-              style={{ background:'#F8FAFC', border:'1px solid #E2E8F0', color:'#0F172A' }}
-              onFocus={(e)=>{e.target.style.borderColor='#F59E0B';e.target.style.background='#FFFFFF'}}
-              onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.background='#F8FAFC'}} />
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold" style={{ color:'#64748B' }}>Business Number</label>
-              <span className="text-xs" style={{ color: form.businessNumber.length === 10 ? '#10B981' : '#94A3B8' }}>
-                {form.businessNumber.length}/10
-              </span>
-            </div>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="e.g. 1234567890"
-              value={form.businessNumber}
-              maxLength={10}
-              onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, '')
-                setForm({ ...form, businessNumber: digits })
-                setBnError(validateBn(digits))
-              }}
-              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
-              style={{
-                background: '#F8FAFC',
-                border: `1px solid ${bnError ? '#EF4444' : '#E2E8F0'}`,
-                color: '#0F172A',
-              }}
-              onFocus={(e) => { e.target.style.borderColor = bnError ? '#EF4444' : '#F59E0B'; e.target.style.background = '#FFFFFF' }}
-              onBlur={(e) => { e.target.style.borderColor = bnError ? '#EF4444' : '#E2E8F0'; e.target.style.background = '#F8FAFC' }}
-            />
-            {bnError && <p className="text-xs" style={{ color: '#EF4444' }}>{bnError}</p>}
-          </div>
-
-          {error && (
-            <div className="px-3.5 py-2.5 rounded-xl text-xs font-medium" style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)', color:'#DC2626' }}>
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer disabled:opacity-40"
-              style={{ background:'#F8FAFC', color:'#64748B', border:'1px solid #E2E8F0' }}
-              onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}}
-              onMouseLeave={(e)=>{e.currentTarget.style.background='#F8FAFC'}}>Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
-              style={{ background:'#F59E0B', color:'#fff' }}
-              onMouseEnter={(e)=>{if(!loading)e.currentTarget.style.background='#D97706'}}
-              onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
-              {loading ? <><Loader2 size={14} className="animate-spin" />Creating…</> : isEdit ? 'Save Changes' : 'Create Company'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function CompanyCard({ company, onEdit, onDelete }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const initials = company.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  const tints = ['#1A32D8', '#0F766E', '#9333EA', '#DC2626']
-  const tint = tints[(parseInt(company.id, 10) - 1) % tints.length] ?? '#1A32D8'
-
-  return (
-    <div
-      className="relative rounded-2xl overflow-hidden cursor-pointer"
-      style={{
-        background: '#FFFFFF',
-        border: '1px solid #E2E8F0',
-        boxShadow: hovered ? '0 6px 18px rgba(15,23,42,0.08)' : '0 1px 3px rgba(15,23,42,0.04)',
-        transition: 'box-shadow 0.2s ease, transform 0.2s ease',
-        transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setMenuOpen(false) }}
-      onClick={() => { window.location.href = `/companies/${company.id}/transactions` }}
-    >
-      <div className="p-4">
-        <div className="flex justify-between items-start mb-5">
-          <div
-            className="flex items-center justify-center w-10 h-10 rounded-lg shrink-0 text-xs font-bold"
-            style={{ background: `${tint}14`, border: `1px solid ${tint}29`, color: tint }}
-          >
-            {initials}
-          </div>
-          <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
-            <button
-              onClick={() => setMenuOpen(o => !o)}
-              className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
-              style={{ color: '#9CA3AF' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#4B5563' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
-            >
-              <MoreHorizontal size={15} />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-8 z-20 rounded-xl py-1 w-36 shadow-lg" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
-                <button onClick={() => { onEdit(company); setMenuOpen(false) }}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-xs cursor-pointer" style={{ color: '#64748B' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#0F172A' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#64748B' }}>
-                  <Pencil size={13} />Edit
-                </button>
-                <button onClick={() => { onDelete(company.id); setMenuOpen(false) }}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-xs cursor-pointer" style={{ color: '#EF4444' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
-                  <Trash2 size={13} />Delete
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="mb-4">
-          <h3 className="text-base font-semibold text-gray-900 tracking-tight truncate">{company.name}</h3>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs text-gray-500 truncate">{company.industry && company.industry !== '—' ? company.industry : `ID: ${String(company.id).padStart(4, '0')}`}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3 pt-3" style={{ borderTop: '1px solid #F1F5F9' }}>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Rules</span>
-            <span className="text-sm font-semibold text-gray-900">{company.rulesCount}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Categories</span>
-            <span className="text-sm font-semibold text-gray-900">{company.categoriesCount}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Processed</span>
-            <span className="text-sm font-semibold text-gray-900">{(company.transactionsCount / 1000).toFixed(1)}k</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
+import CompanyCard from '../../../components/CompanyCard'
+import CompanyModal from '../../../components/CompanyModal'
 
 export default function CompaniesPage() {
   const { data: session } = useSession()
@@ -260,7 +68,6 @@ export default function CompaniesPage() {
 
   const handleSave = async (data) => {
     if (data.id) {
-      // Edit — UI only for now
       setCompanies(prev => prev.map(c => c.id === data.id ? { ...c, name: data.name, industry: data.businessNumber } : c))
       setModal(null)
       return
@@ -295,13 +102,13 @@ export default function CompaniesPage() {
         </div>
       </div>
 
-        <div className="relative mb-6 max-w-xl">
+      <div className="relative mb-6 max-w-xl">
         <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{color:'#CBD5E1'}}/>
         <input type="text" placeholder="Search companies..." value={search} onChange={e=>setSearch(e.target.value)}
           className="w-full pl-11 pr-4 py-3 rounded-xl text-sm outline-none"
           style={{background:'#FFFFFF',border:'1px solid #E2E8F0',color:'#0F172A',boxShadow:'0 1px 2px rgba(15,23,42,0.04)'}}
-          onFocus={(e)=>{e.target.style.borderColor='#1A32D8';e.target.style.boxShadow='0 0 0 1px rgba(26,50,216,0.25)'}}
-          onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.boxShadow='0 1px 2px rgba(15,23,42,0.04)'}}/>
+          onFocus={(e)=>{e.target.style.borderColor='#1A32D8'}}
+          onBlur={(e)=>{e.target.style.borderColor='#E2E8F0'}}/>
       </div>
 
       {loadError && (
@@ -310,15 +117,40 @@ export default function CompaniesPage() {
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="rounded-[22px] overflow-hidden min-h-[210px] flex flex-col p-5 gap-4"
+              style={{ background: 'rgba(255,255,255,0.5)', backdropFilter: 'blur(16px)', border: '1px solid rgba(255,255,255,0.6)', boxShadow: '0 4px 16px -4px rgba(15,23,42,0.05)' }}>
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl animate-pulse" style={{ background: 'rgba(226,232,240,0.8)' }} />
+                <div className="flex-1 space-y-2 pt-1">
+                  <div className="h-5 rounded-lg animate-pulse w-3/4" style={{ background: 'rgba(226,232,240,0.8)' }} />
+                  <div className="h-3 rounded-lg animate-pulse w-1/2" style={{ background: 'rgba(226,232,240,0.5)' }} />
+                </div>
+              </div>
+              <div className="mt-auto flex items-center justify-between gap-2">
+                {[...Array(3)].map((_, j) => (
+                  <div key={j} className="h-3 rounded-lg animate-pulse flex-1" style={{ background: 'rgba(226,232,240,0.6)' }} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-center py-20"><Building2 size={40} color="#E2E8F0" className="mx-auto mb-3"/><p className="text-sm" style={{color:'#CBD5E1'}}>No companies found</p></div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
           <button onClick={()=>setModal('create')}
-            className="rounded-2xl flex flex-col items-center justify-center gap-3 min-h-[140px] cursor-pointer"
-            style={{background:'#FFFFFF',border:'2px dashed #1A32D8'}}
-            onMouseEnter={(e)=>{e.currentTarget.style.borderColor='#1A32D8';e.currentTarget.style.background='#FFFFFF';e.currentTarget.style.boxShadow='0 6px 18px rgba(15,23,42,0.08)';e.currentTarget.style.transform='translateY(-1px)'}}
-            onMouseLeave={(e)=>{e.currentTarget.style.borderColor='#1A32D8';e.currentTarget.style.background='#FFFFFF';e.currentTarget.style.boxShadow='0 1px 3px rgba(15,23,42,0.04)';e.currentTarget.style.transform='translateY(0)'}}>
+            className="rounded-[22px] flex flex-col items-center justify-center gap-3 min-h-[210px] cursor-pointer transition-all duration-300"
+            style={{
+              background: 'rgba(255,255,255,0.3)',
+              backdropFilter: 'blur(16px)',
+              border:'2px dashed rgba(26,50,216,0.3)',
+              boxShadow: '0 4px 16px -4px rgba(15,23,42,0.02)'
+            }}
+            onMouseEnter={(e)=>{e.currentTarget.style.borderColor='rgba(26,50,216,0.6)';e.currentTarget.style.background='rgba(255,255,255,0.7)';e.currentTarget.style.boxShadow='0 12px 32px -8px rgba(26,50,216,0.12)';e.currentTarget.style.transform='translateY(-2px)'}}
+            onMouseLeave={(e)=>{e.currentTarget.style.borderColor='rgba(26,50,216,0.3)';e.currentTarget.style.background='rgba(255,255,255,0.3)';e.currentTarget.style.boxShadow='0 4px 16px -4px rgba(15,23,42,0.02)';e.currentTarget.style.transform='translateY(0)'}}>
             <div className="flex items-center justify-center w-10 h-10 rounded-xl" style={{background:'rgba(26,50,216,0.1)'}}>
               <Plus size={20} color="#1A32D8"/>
             </div>
@@ -330,9 +162,9 @@ export default function CompaniesPage() {
         </div>
       )}
 
-        {modal !== null && (
-          <CompanyModal company={modal==='create'?null:modal} onClose={()=>setModal(null)} onSave={handleSave}/>
-        )}
+      {modal !== null && (
+        <CompanyModal company={modal==='create'?null:modal} onClose={()=>setModal(null)} onSave={handleSave}/>
+      )}
     </div>
   )
 }

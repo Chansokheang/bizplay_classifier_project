@@ -12,10 +12,16 @@ export const metadata = {
   description: "Intelligent expense classification for your business.",
 };
 
+import ProgressBarProvider from "../components/ProgressBarProvider";
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className={`${sans.variable} h-full antialiased`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <ProgressBarProvider>
+          {children}
+        </ProgressBarProvider>
+      </body>
     </html>
   );
 }

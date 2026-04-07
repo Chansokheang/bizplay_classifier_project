@@ -68,7 +68,7 @@ export function TableHead({ className, ...props }) {
 export function TableCell({ className, ...props }) {
   return (
     <td
-      className={cn('whitespace-nowrap px-4 py-3 align-middle text-sm', className)}
+      className={cn('whitespace-nowrap px-4 py-2 align-middle text-sm', className)}
       data-slot="table-cell"
       {...props}
     />

@@ -17,6 +17,7 @@ import {
   HelpCircle,
   LogOut,
   Settings,
+  Brain,
 } from 'lucide-react'
 import { COMPANIES } from '../lib/mock-data'
 
@@ -24,6 +25,7 @@ const PROJECT_LINKS = [
   { href: 'transactions', label: 'Transactions', icon: FileSpreadsheet },
   { href: 'categories', label: 'Categories', icon: Layers },
   { href: 'rules', label: 'Rules', icon: ShieldCheck },
+  { href: 'training', label: 'Training', icon: Brain },
   { href: 'chatbot', label: 'Chatbot', icon: MessageSquare },
 ]
 

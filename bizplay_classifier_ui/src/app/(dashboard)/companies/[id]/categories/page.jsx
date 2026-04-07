@@ -1,64 +1,156 @@
 'use client'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import Link from 'next/link'
-import { Tags, Plus, Search, Pencil, Trash2, X, Check, ChevronRight, ListFilter } from 'lucide-react'
-import { COMPANIES, CATEGORIES as INIT_CATS } from '../../../../../lib/mock-data'
 import {
-  Table, TableBody, TableCell, TableHead,
-  TableHeader, TableRow,
-} from '../../../../../components/ui/table'
+  Tags, Plus, Search, Pencil, Trash2, X, Check,
+  FileSpreadsheet, ChevronDown, Loader2,
+  AlertCircle, FileUp, LayoutGrid,
+} from 'lucide-react'
+import {
+  getCategoriesByCompany,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  uploadCategories,
+} from '../../../../../service/categoryService'
 
-const COLORS = ['#EF4444','#F97316','#F59E0B','#EAB308','#84CC16','#10B981','#14B8A6','#06B6D4','#3B82F6','#6366F1','#8B5CF6','#A855F7','#EC4899','#F43F5E','#64748B','#475569']
+const COLORS = [
+  '#EF4444','#F97316','#F59E0B','#EAB308','#84CC16','#10B981',
+  '#14B8A6','#06B6D4','#3B82F6','#6366F1','#8B5CF6','#A855F7',
+  '#EC4899','#F43F5E','#64748B','#475569',
+]
 
-function Modal({ category, onClose, onSave }) {
-  const isEdit = !!category?.id
-  const [form, setForm] = useState(category ?? { name:'', description:'', color:'#3B82F6' })
-  const handleSubmit = (e) => { e.preventDefault(); if (!form.name.trim()) return; onSave({...form, id:form.id??String(Date.now()), rulesCount:form.rulesCount??0}) }
+// ─── Create (manual) modal ─────────────────────────────────────────────────
+function CreateModal({ onClose, onSave, loading, error }) {
+  const [form, setForm] = useState({ code: '', category: '', color: '#3B82F6' })
+  const [codeError, setCodeError] = useState('')
+
+  const validateCode = (v) => {
+    if (!v) return 'Code is required'
+    if (!/^[A-Za-z0-9]{5}$/.test(v)) return 'Code must be exactly 5 alphanumeric characters'
+    return ''
+  }
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    const err = validateCode(form.code)
+    if (err) { setCodeError(err); return }
+    if (!form.category.trim()) return
+    onSave({ code: form.code.toUpperCase(), category: form.category.trim(), color: form.color })
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(15,23,42,0.4)'}} onClick={(e)=>e.target===e.currentTarget&&onClose()}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in" style={{background:'#FFFFFF',border:'1px solid #E2E8F0',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'}}>
-        <div className="flex items-center justify-between px-6 py-4" style={{borderBottom:'1px solid #F1F5F9',background:'#F8FAFC'}}>
-          <div className="flex items-center gap-2.5">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg" style={{background:`${form.color}15`}}><Tags size={16} color={form.color}/></div>
-            <h2 className="font-semibold text-sm" style={{color:'#0F172A'}}>{isEdit?'Edit Category':'New Category'}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in"
+        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        {/* Header — live logo preview */}
+        <div className="flex flex-col items-center pt-7 pb-5 px-6 relative"
+          style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+          <button onClick={onClose} className="absolute top-4 right-4 flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer"
+            style={{ color: '#94A3B8' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#E2E8F0' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <X size={16} />
+          </button>
+          {/* Logo */}
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl text-white font-bold text-2xl select-none mb-3 transition-all"
+            style={{ background: form.color, boxShadow: `0 8px 24px ${form.color}55` }}>
+            {form.category.trim() ? form.category.trim().charAt(0).toUpperCase() : <Tags size={26} color="#fff" />}
           </div>
-          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer" style={{color:'#94A3B8'}}
-            onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}} onMouseLeave={(e)=>{e.currentTarget.style.background='transparent'}}><X size={16}/></button>
+          <h2 className="font-bold text-base" style={{ color: '#0F172A' }}>
+            {form.category.trim() || 'New Category'}
+          </h2>
+          {form.code && (
+            <span className="mt-1 font-mono text-xs px-2 py-0.5 rounded-md font-semibold"
+              style={{ background: `${form.color}18`, color: form.color }}>
+              {form.code.toUpperCase()}
+            </span>
+          )}
         </div>
+
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* Code */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold" style={{color:'#64748B'}}>Name *</label>
-            <input type="text" required placeholder="e.g. Travel & Transport" value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})}
-              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none" style={{background:'#F8FAFC',border:'1px solid #E2E8F0',color:'#0F172A'}}
-              onFocus={(e)=>{e.target.style.borderColor='#F59E0B';e.target.style.background='#FFFFFF'}} onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.background='#F8FAFC'}}/>
+            <label className="text-xs font-semibold" style={{ color: '#64748B' }}>
+              Code <span style={{ color: '#EF4444' }}>*</span>
+              <span className="ml-1 font-normal" style={{ color: '#94A3B8' }}>(5 alphanumeric chars)</span>
+            </label>
+            <input
+              type="text"
+              required
+              maxLength={5}
+              placeholder="e.g. TRV01"
+              value={form.code}
+              onChange={(e) => { setForm({ ...form, code: e.target.value }); setCodeError(validateCode(e.target.value)) }}
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none font-mono tracking-widest"
+              style={{ background: '#F8FAFC', border: `1px solid ${codeError ? '#EF4444' : '#E2E8F0'}`, color: '#0F172A' }}
+              onFocus={(e) => { e.target.style.borderColor = codeError ? '#EF4444' : '#F59E0B'; e.target.style.background = '#FFFFFF' }}
+              onBlur={(e) => { e.target.style.borderColor = codeError ? '#EF4444' : '#E2E8F0'; e.target.style.background = '#F8FAFC' }}
+            />
+            {codeError && <p className="text-xs" style={{ color: '#EF4444' }}>{codeError}</p>}
           </div>
+
+          {/* Category name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold" style={{color:'#64748B'}}>Description</label>
-            <textarea rows={2} placeholder="Brief description..." value={form.description} onChange={(e)=>setForm({...form,description:e.target.value})}
-              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none resize-none" style={{background:'#F8FAFC',border:'1px solid #E2E8F0',color:'#0F172A'}}
-              onFocus={(e)=>{e.target.style.borderColor='#F59E0B';e.target.style.background='#FFFFFF'}} onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.background='#F8FAFC'}}/>
+            <label className="text-xs font-semibold" style={{ color: '#64748B' }}>
+              Category Name <span style={{ color: '#EF4444' }}>*</span>
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Travel & Transport"
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
+              style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#0F172A' }}
+              onFocus={(e) => { e.target.style.borderColor = '#F59E0B'; e.target.style.background = '#FFFFFF' }}
+              onBlur={(e) => { e.target.style.borderColor = '#E2E8F0'; e.target.style.background = '#F8FAFC' }}
+            />
           </div>
+
+          {/* Color — logo color picker */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold" style={{color:'#64748B'}}>Color</label>
+            <label className="text-xs font-semibold" style={{ color: '#64748B' }}>Logo Color</label>
             <div className="flex flex-wrap gap-2">
-              {COLORS.map(c=>(
-                <button key={c} type="button" onClick={()=>setForm({...form,color:c})}
-                  className="w-7 h-7 rounded-full cursor-pointer flex items-center justify-center"
-                  style={{background:c, outline:form.color===c?`3px solid ${c}`:'none', outlineOffset:'2px'}}>
-                  {form.color===c && <Check size={13} color="#fff" strokeWidth={3}/>}
+              {COLORS.map(c => (
+                <button key={c} type="button" onClick={() => setForm({ ...form, color: c })}
+                  className="w-7 h-7 rounded-lg cursor-pointer flex items-center justify-center transition-transform"
+                  style={{
+                    background: c,
+                    outline: form.color === c ? `2px solid ${c}` : 'none',
+                    outlineOffset: '2px',
+                    transform: form.color === c ? 'scale(1.15)' : 'scale(1)',
+                  }}>
+                  {form.color === c && <Check size={12} color="#fff" strokeWidth={3} />}
                 </button>
               ))}
             </div>
           </div>
+
+          {error && (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm"
+              style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', color: '#DC2626' }}>
+              <AlertCircle size={14} />{error}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
-              style={{background:'#F8FAFC',color:'#64748B',border:'1px solid #E2E8F0'}}
-              onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F8FAFC'}}>Cancel</button>
-            <button type="submit" className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer"
-              style={{background:'#F59E0B',color:'#fff'}}
-              onMouseEnter={(e)=>{e.currentTarget.style.background='#D97706'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
-              {isEdit?'Save Changes':'Create Category'}
+              style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
+              Cancel
+            </button>
+            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
+              style={{ background: loading ? '#FCD34D' : '#F59E0B', color: '#fff' }}
+              onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = '#D97706' }}
+              onMouseLeave={(e) => { if (!loading) e.currentTarget.style.background = '#F59E0B' }}>
+              {loading && <Loader2 size={14} className="animate-spin" />}
+              Create Category
             </button>
           </div>
         </form>
@@ -67,20 +159,438 @@ function Modal({ category, onClose, onSave }) {
   )
 }
 
+// ─── Edit modal ────────────────────────────────────────────────────────────
+function EditModal({ category, onClose, onSave, loading, error }) {
+  const [form, setForm] = useState({ ...category })
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!form.category?.trim() && !form.name?.trim()) return
+    onSave(form)
+  }
+
+  const displayName = form.category ?? form.name ?? ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in"
+        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg"
+              style={{ background: `${form.color ?? '#3B82F6'}20` }}>
+              <Tags size={16} color={form.color ?? '#3B82F6'} />
+            </div>
+            <h2 className="font-semibold text-sm" style={{ color: '#0F172A' }}>Edit Category</h2>
+          </div>
+          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer"
+            style={{ color: '#94A3B8' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <X size={16} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold" style={{ color: '#64748B' }}>Category Name *</label>
+            <input type="text" required value={displayName}
+              onChange={(e) => setForm({ ...form, category: e.target.value, name: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
+              style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#0F172A' }}
+              onFocus={(e) => { e.target.style.borderColor = '#F59E0B'; e.target.style.background = '#FFFFFF' }}
+              onBlur={(e) => { e.target.style.borderColor = '#E2E8F0'; e.target.style.background = '#F8FAFC' }}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold" style={{ color: '#64748B' }}>Display Color</label>
+            <div className="flex flex-wrap gap-2">
+              {COLORS.map(c => (
+                <button key={c} type="button" onClick={() => setForm({ ...form, color: c })}
+                  className="w-7 h-7 rounded-full cursor-pointer flex items-center justify-center"
+                  style={{ background: c, outline: (form.color ?? '#3B82F6') === c ? `3px solid ${c}` : 'none', outlineOffset: '2px' }}>
+                  {(form.color ?? '#3B82F6') === c && <Check size={13} color="#fff" strokeWidth={3} />}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm"
+              style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', color: '#DC2626' }}>
+              <AlertCircle size={14} />{error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
+              style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
+              Cancel
+            </button>
+            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
+              style={{ background: loading ? '#FCD34D' : '#F59E0B', color: '#fff' }}
+              onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = '#D97706' }}
+              onMouseLeave={(e) => { if (!loading) e.currentTarget.style.background = '#F59E0B' }}>
+              {loading && <Loader2 size={14} className="animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Upload modal ──────────────────────────────────────────────────────────
+function UploadModal({ onClose, onUpload, loading, error }) {
+  const [file, setFile] = useState(null)
+  const [sheets, setSheets] = useState([])
+  const [selectedSheet, setSelectedSheet] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [parseError, setParseError] = useState('')
+  const fileRef = useRef(null)
+
+  const parseSheets = async (f) => {
+    setParseError('')
+    setSheets([])
+    setSelectedSheet('')
+    setFile(f)
+
+    if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
+      try {
+        const XLSX = await import('xlsx')
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result)
+            const wb = XLSX.read(data, { type: 'array' })
+            if (wb.SheetNames.length > 1) {
+              setSheets(wb.SheetNames)
+              setSelectedSheet(wb.SheetNames[0])
+            }
+          } catch {
+            // can't read — just proceed without sheet selection
+          }
+        }
+        reader.readAsArrayBuffer(f)
+      } catch {
+        // xlsx not available
+      }
+    }
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const f = e.dataTransfer.files[0]
+    if (f) parseSheets(f)
+  }
+
+  const handleFileInput = (e) => {
+    const f = e.target.files[0]
+    if (f) parseSheets(f)
+  }
+
+  const handleSubmit = () => {
+    if (!file) return
+    onUpload(file, sheets.length > 1 ? selectedSheet : null)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-fade-in"
+        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg"
+              style={{ background: 'rgba(245,158,11,0.12)' }}>
+              <FileSpreadsheet size={16} color="#F59E0B" />
+            </div>
+            <h2 className="font-semibold text-sm" style={{ color: '#0F172A' }}>Upload from Excel</h2>
+          </div>
+          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer"
+            style={{ color: '#94A3B8' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {/* Drop zone */}
+          <div
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            className="rounded-xl p-6 flex flex-col items-center gap-3 cursor-pointer transition-all"
+            style={{
+              border: `2px dashed ${isDragging ? '#F59E0B' : file ? '#10B981' : '#E2E8F0'}`,
+              background: isDragging ? 'rgba(245,158,11,0.04)' : file ? 'rgba(16,185,129,0.04)' : '#F8FAFC',
+            }}>
+            {file ? (
+              <>
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl"
+                  style={{ background: 'rgba(16,185,129,0.1)' }}>
+                  <FileSpreadsheet size={22} color="#10B981" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold" style={{ color: '#0F172A' }}>{file.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>
+                    {(file.size / 1024).toFixed(1)} KB · Click to change
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl"
+                  style={{ background: 'rgba(245,158,11,0.1)' }}>
+                  <FileUp size={22} color="#F59E0B" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold" style={{ color: '#0F172A' }}>Drop your Excel file here</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>or click to browse · .xlsx, .xls</p>
+                </div>
+              </>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileInput} />
+
+          {/* Multi-sheet selector */}
+          {sheets.length > 1 && (
+            <div className="space-y-2 animate-fade-in">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center w-5 h-5 rounded"
+                  style={{ background: 'rgba(99,102,241,0.1)' }}>
+                  <LayoutGrid size={11} color="#6366F1" />
+                </div>
+                <label className="text-xs font-semibold" style={{ color: '#64748B' }}>
+                  Multiple sheets detected — select one
+                </label>
+              </div>
+              <div className="relative">
+                <select
+                  value={selectedSheet}
+                  onChange={(e) => setSelectedSheet(e.target.value)}
+                  className="w-full appearance-none px-3.5 py-2.5 rounded-xl text-sm outline-none pr-9 cursor-pointer"
+                  style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#0F172A' }}>
+                  {sheets.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{ color: '#94A3B8' }} />
+              </div>
+              <p className="text-xs" style={{ color: '#94A3B8' }}>
+                Only the selected sheet will be imported.
+              </p>
+            </div>
+          )}
+
+          {(error || parseError) && (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm"
+              style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', color: '#DC2626' }}>
+              <AlertCircle size={14} />{error || parseError}
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
+              style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
+              Cancel
+            </button>
+            <button onClick={handleSubmit} disabled={!file || loading}
+              className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
+              style={{ background: !file || loading ? '#FCD34D' : '#F59E0B', color: '#fff', opacity: !file ? 0.6 : 1 }}
+              onMouseEnter={(e) => { if (file && !loading) e.currentTarget.style.background = '#D97706' }}
+              onMouseLeave={(e) => { if (file && !loading) e.currentTarget.style.background = '#F59E0B' }}>
+              {loading && <Loader2 size={14} className="animate-spin" />}
+              {loading ? 'Uploading…' : 'Upload'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Create method picker ──────────────────────────────────────────────────
+function MethodPicker({ onChoose, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden animate-fade-in"
+        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
+          <h2 className="font-semibold text-sm" style={{ color: '#0F172A' }}>Add Categories</h2>
+          <button onClick={onClose} className="flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer"
+            style={{ color: '#94A3B8' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-5 grid grid-cols-2 gap-3">
+          {/* Manual */}
+          <button onClick={() => onChoose('manual')}
+            className="flex flex-col items-center gap-3 p-5 rounded-xl cursor-pointer text-left"
+            style={{ background: '#F8FAFC', border: '1px solid #E2E8F0' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#F59E0B'; e.currentTarget.style.background = 'rgba(245,158,11,0.04)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC' }}>
+            <div className="flex items-center justify-center w-11 h-11 rounded-xl"
+              style={{ background: 'rgba(245,158,11,0.1)' }}>
+              <Tags size={20} color="#F59E0B" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-center" style={{ color: '#0F172A' }}>Create manually</p>
+              <p className="text-xs text-center mt-0.5" style={{ color: '#94A3B8' }}>Fill in a form</p>
+            </div>
+          </button>
+
+          {/* Upload */}
+          <button onClick={() => onChoose('upload')}
+            className="flex flex-col items-center gap-3 p-5 rounded-xl cursor-pointer text-left"
+            style={{ background: '#F8FAFC', border: '1px solid #E2E8F0' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#10B981'; e.currentTarget.style.background = 'rgba(16,185,129,0.04)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC' }}>
+            <div className="flex items-center justify-center w-11 h-11 rounded-xl"
+              style={{ background: 'rgba(16,185,129,0.1)' }}>
+              <FileSpreadsheet size={20} color="#10B981" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-center" style={{ color: '#0F172A' }}>Upload Excel</p>
+              <p className="text-xs text-center mt-0.5" style={{ color: '#94A3B8' }}>Import from .xlsx</p>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────
 export default function CategoriesPage() {
   const { id: companyId } = useParams()
-  const company = COMPANIES.find(c=>c.id===companyId)
-  const baseCategories = INIT_CATS.filter(c=>c.companyId===companyId)
-  const seedCategories = baseCategories.length ? baseCategories : INIT_CATS.map(c=>({ ...c, companyId }))
-  const [categories, setCategories] = useState(seedCategories)
+  const { data: session } = useSession()
+  const token = session?.accessToken
+
+  const [categories, setCategories] = useState([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+
+  // modal state: null | 'picker' | 'create' | 'upload' | {id,...} (edit)
   const [modal, setModal] = useState(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionError, setActionError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
 
-  const filtered = categories.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.description.toLowerCase().includes(search.toLowerCase()))
+  // ── fetch ──
+  const fetchCategories = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await getCategoriesByCompany(companyId, token)
+      const payload = Array.isArray(res?.payload) ? res.payload : []
+      // normalise API shape → internal shape
+      const mapped = payload.map((c) => ({
+        id: c.id ?? c.categoryId,
+        code: c.code ?? '',
+        name: c.category ?? c.name ?? '',
+        category: c.category ?? c.name ?? '',
+        color: c.color ?? COLORS[Math.floor(Math.random() * COLORS.length)],
+        rulesCount: c.rulesCount ?? 0,
+        isUsed: c.isUsed ?? false,
+      }))
+      setCategories(mapped)
+    } catch (e) {
+      console.error('Failed to fetch categories:', e)
+    } finally {
+      setLoading(false)
+    }
+  }, [companyId, token])
 
-  const handleSave = (data) => { setCategories(prev=>{ const e=prev.find(c=>c.id===data.id); return e?prev.map(c=>c.id===data.id?{...c,...data}:c):[...prev,{...data,companyId}] }); setModal(null) }
-  const handleDelete = (id) => { setCategories(prev=>prev.filter(c=>c.id!==id)); setConfirmDelete(null) }
+  useEffect(() => { fetchCategories() }, [fetchCategories])
+
+  const filtered = categories.filter(
+    (c) => c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.code?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  // ── create (manual) ──
+  const handleCreate = async ({ code, category }) => {
+    setActionLoading(true)
+    setActionError('')
+    try {
+      await createCategory({ companyId, code, category }, token)
+      await fetchCategories()
+      setModal(null)
+    } catch (e) {
+      setActionError(e.message || 'Failed to create category')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // ── edit ──
+  const handleEdit = async (data) => {
+    setActionLoading(true)
+    setActionError('')
+    try {
+      await updateCategory(data.id, { name: data.category ?? data.name, color: data.color }, token)
+      await fetchCategories()
+      setModal(null)
+    } catch (e) {
+      setActionError(e.message || 'Failed to update category')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // ── upload ──
+  const handleUpload = async (file, sheetName) => {
+    setActionLoading(true)
+    setActionError('')
+    try {
+      await uploadCategories(file, companyId, token, sheetName)
+      await fetchCategories()
+      setModal(null)
+    } catch (e) {
+      setActionError(e.message || 'Upload failed. Please try again.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // ── delete ──
+  const handleDelete = async (cat) => {
+    setDeleteLoading(true)
+    try {
+      await deleteCategory(cat.id, token)
+      await fetchCategories()
+      setConfirmDelete(null)
+    } catch (e) {
+      console.error('Delete failed:', e)
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const openModal = (type) => {
+    setActionError('')
+    setModal(type)
+  }
 
   return (
     <div className="py-8 animate-fade-in">
@@ -88,115 +598,203 @@ export default function CategoriesPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold" style={{color:'#0F172A'}}>Categories</h1>
-          <p className="mt-1 text-sm" style={{color:'#94A3B8'}}>{categories.length} categories · {categories.reduce((s,c)=>s+c.rulesCount,0)} total rules</p>
+          <h1 className="text-2xl font-bold" style={{ color: '#0F172A' }}>Categories</h1>
+          <p className="mt-1 text-sm" style={{ color: '#94A3B8' }}>
+            {categories.length} categories · {categories.reduce((s, c) => s + (c.rulesCount ?? 0), 0)} total rules
+          </p>
         </div>
-        <button onClick={()=>setModal('create')} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold cursor-pointer" style={{background:'#F59E0B',color:'#fff'}}
-          onMouseEnter={(e)=>{e.currentTarget.style.background='#D97706'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F59E0B'}}>
-          <Plus size={16} strokeWidth={2.5}/>New Category
+        <button
+          onClick={() => openModal('picker')}
+          className="flex items-center gap-2 pl-2 pr-4 py-2 rounded-xl text-sm font-bold cursor-pointer"
+          style={{ background: '#1A32D8', color: '#fff', boxShadow: '0 4px 12px rgba(26,50,216,0.35)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#1529AB'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,50,216,0.5)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = '#1A32D8'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.35)' }}>
+          {/* mini logo */}
+          <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/25 font-bold text-sm select-none">
+            <Plus size={15} strokeWidth={3} />
+          </div>
+          New Category
         </button>
       </div>
 
       {/* Category pills */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {categories.slice(0,6).map(cat=>(
-          <span key={cat.id} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium" style={{background:'#F8FAFC',color:'#475569',border:'1px solid #E2E8F0'}}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{background:cat.color}}/>{cat.name}
-          </span>
-        ))}
-        {categories.length>6 && <span className="px-3 py-1.5 rounded-full text-xs font-medium" style={{background:'#F8FAFC',color:'#94A3B8',border:'1px solid #E2E8F0'}}>+{categories.length-6} more</span>}
-      </div>
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-6">
+          {categories.slice(0, 6).map(cat => (
+            <span key={cat.id} className="flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-xs font-medium"
+              style={{ background: '#F8FAFC', color: '#475569', border: '1px solid #E2E8F0' }}>
+              <span className="flex items-center justify-center w-4 h-4 rounded-full text-white font-bold"
+                style={{ background: cat.color, fontSize: '9px' }}>
+                {cat.name.charAt(0).toUpperCase()}
+              </span>
+              {cat.name}
+            </span>
+          ))}
+          {categories.length > 6 && (
+            <span className="px-3 py-1.5 rounded-full text-xs font-medium"
+              style={{ background: '#F8FAFC', color: '#94A3B8', border: '1px solid #E2E8F0' }}>
+              +{categories.length - 6} more
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative mb-5 max-w-sm">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{color:'#CBD5E1'}}/>
-        <input type="text" placeholder="Search categories..." value={search} onChange={e=>setSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none" style={{background:'#FFFFFF',border:'1px solid #E2E8F0',color:'#0F172A'}}
-          onFocus={(e)=>{e.target.style.borderColor='#F59E0B';e.target.style.background='#FFFFFF'}} onBlur={(e)=>{e.target.style.borderColor='#E2E8F0';e.target.style.background='#FFFFFF'}}/>
+        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#CBD5E1' }} />
+        <input
+          type="text"
+          placeholder="Search categories or codes..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none"
+          style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', color: '#0F172A' }}
+          onFocus={(e) => { e.target.style.borderColor = '#F59E0B' }}
+          onBlur={(e) => { e.target.style.borderColor = '#E2E8F0' }}
+        />
       </div>
 
       {/* Table */}
-      <div className="rounded-2xl overflow-hidden" style={{background:'#FFFFFF',border:'1px solid #E2E8F0',boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
-        {filtered.length === 0 ? (
+      <div className="rounded-2xl overflow-hidden"
+        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+        {loading ? (
+          <div className="flex items-center justify-center py-16 gap-2" style={{ color: '#CBD5E1' }}>
+            <Loader2 size={20} className="animate-spin" />
+            <span className="text-sm">Loading categories…</span>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="text-center py-16">
-            <Tags size={32} color="#E2E8F0" className="mx-auto mb-3"/>
-            <p className="text-sm" style={{color:'#CBD5E1'}}>No categories found</p>
+            <Tags size={32} color="#E2E8F0" className="mx-auto mb-3" />
+            <p className="text-sm" style={{ color: '#CBD5E1' }}>
+              {search ? 'No categories match your search' : 'No categories yet'}
+            </p>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow style={{borderColor:'#F1F5F9',background:'#F8FAFC'}}>
-                <TableHead style={{color:'#94A3B8'}}>Color</TableHead>
-                <TableHead style={{color:'#94A3B8'}}>Name</TableHead>
-                <TableHead style={{color:'#94A3B8'}}>Description</TableHead>
-                <TableHead className="text-right" style={{color:'#94A3B8'}}>Rules</TableHead>
-                <TableHead style={{color:'#94A3B8'}}/>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((cat) => (
-                <TableRow
-                  key={cat.id}
-                  style={{borderColor:'#F1F5F9'}}
-                  onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}}
-                  onMouseLeave={(e)=>{e.currentTarget.style.background='transparent'}}
-                >
-                  <TableCell>
-                    <div className="w-5 h-5 rounded-full" style={{background:cat.color}}/>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-semibold text-sm" style={{color:'#0F172A'}}>{cat.name}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm" style={{color:'#94A3B8'}}>{cat.description}</span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Link href={`/companies/${companyId}/rules`}
-                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full cursor-pointer"
-                      style={{background:'#F1F5F9',color:'#64748B'}}
-                      onMouseEnter={(e)=>{e.currentTarget.style.background='#E2E8F0'}}
-                      onMouseLeave={(e)=>{e.currentTarget.style.background='#F1F5F9'}}>
-                      <ListFilter size={11}/>{cat.rulesCount} rule{cat.rulesCount!==1?'s':''}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={()=>setModal(cat)}
-                        className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
-                        style={{color:'#CBD5E1'}}
-                        onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9';e.currentTarget.style.color='#64748B'}}
-                        onMouseLeave={(e)=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='#CBD5E1'}}>
-                        <Pencil size={13}/>
-                      </button>
-                      <button onClick={()=>setConfirmDelete(cat)}
-                        className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
-                        style={{color:'#CBD5E1'}}
-                        onMouseEnter={(e)=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color='#EF4444'}}
-                        onMouseLeave={(e)=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='#CBD5E1'}}>
-                        <Trash2 size={13}/>
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '50px' }} />
+                <col style={{ width: '110px' }} />
+                <col />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '80px' }} />
+              </colgroup>
+              <thead>
+                <tr className="text-[12px] font-bold uppercase tracking-wider text-slate-500" style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
+                  <th className="px-4 py-3 text-center">#</th>
+                  <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Category</th>
+                  <th className="px-4 py-3">Situation</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((cat, idx) => (
+                  <tr
+                    key={cat.id}
+                    className="group transition-colors hover:bg-slate-50/80"
+                    style={{ borderBottom: idx < filtered.length - 1 ? '1px solid #F1F5F9' : 'none' }}>
+                    <td className="px-4 py-2.5 text-center text-[12px] font-bold text-slate-400">{idx + 1}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-mono text-xs px-2 py-0.5 rounded-md font-semibold"
+                        style={{ background: '#F1F5F9', color: '#475569' }}>
+                        {cat.code || '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0 text-white font-bold text-sm select-none"
+                          style={{ background: cat.color }}>
+                          {cat.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="font-semibold text-sm" style={{ color: '#0F172A' }}>{cat.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {cat.isUsed ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                          style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', border: '1px solid rgba(16,185,129,0.2)' }}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          In Use
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                          style={{ background: 'rgba(148,163,184,0.1)', color: '#94A3B8', border: '1px solid rgba(148,163,184,0.2)' }}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                          Unused
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => { setActionError(''); setModal(cat) }}
+                          className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
+                          style={{ color: '#CBD5E1' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; e.currentTarget.style.color = '#64748B' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#CBD5E1' }}>
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => setConfirmDelete(cat)}
+                          className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
+                          style={{ color: '#CBD5E1' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#EF4444' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#CBD5E1' }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {modal!==null && <Modal category={modal==='create'?null:modal} onClose={()=>setModal(null)} onSave={handleSave}/>}
+      {/* ── Modals ── */}
+      {modal === 'picker' && (
+        <MethodPicker onClose={() => setModal(null)} onChoose={(type) => openModal(type)} />
+      )}
+      {modal === 'create' && (
+        <CreateModal onClose={() => setModal(null)} onSave={handleCreate} loading={actionLoading} error={actionError} />
+      )}
+      {modal === 'upload' && (
+        <UploadModal onClose={() => setModal(null)} onUpload={handleUpload} loading={actionLoading} error={actionError} />
+      )}
+      {modal && modal !== 'picker' && modal !== 'create' && modal !== 'upload' && (
+        <EditModal category={modal} onClose={() => setModal(null)} onSave={handleEdit} loading={actionLoading} error={actionError} />
+      )}
 
+      {/* Delete confirm */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(15,23,42,0.4)'}} onClick={(e)=>e.target===e.currentTarget&&setConfirmDelete(null)}>
-          <div className="w-full max-w-sm rounded-2xl p-6 animate-fade-in" style={{background:'#FFFFFF',border:'1px solid #E2E8F0',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'}}>
-            <div className="flex items-center justify-center w-12 h-12 rounded-xl mx-auto mb-4" style={{background:'rgba(239,68,68,0.1)'}}><Trash2 size={22} color="#EF4444"/></div>
-            <h2 className="font-bold text-center mb-2" style={{color:'#0F172A'}}>Delete Category</h2>
-            <p className="text-sm text-center mb-6" style={{color:'#64748B'}}>Delete <strong style={{color:'#0F172A'}}>{confirmDelete.name}</strong>? This will also remove its rules.</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(15,23,42,0.45)' }}
+          onClick={(e) => e.target === e.currentTarget && setConfirmDelete(null)}>
+          <div className="w-full max-w-sm rounded-2xl p-6 animate-fade-in"
+            style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <div className="flex items-center justify-center w-12 h-12 rounded-xl mx-auto mb-4"
+              style={{ background: 'rgba(239,68,68,0.1)' }}>
+              <Trash2 size={22} color="#EF4444" />
+            </div>
+            <h2 className="font-bold text-center mb-2" style={{ color: '#0F172A' }}>Delete Category</h2>
+            <p className="text-sm text-center mb-6" style={{ color: '#64748B' }}>
+              Delete <strong style={{ color: '#0F172A' }}>{confirmDelete.name}</strong>? This will also remove its rules.
+            </p>
             <div className="flex gap-3">
-              <button onClick={()=>setConfirmDelete(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer" style={{background:'#F8FAFC',color:'#64748B',border:'1px solid #E2E8F0'}}
-                onMouseEnter={(e)=>{e.currentTarget.style.background='#F1F5F9'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#F8FAFC'}}>Cancel</button>
-              <button onClick={()=>handleDelete(confirmDelete.id)} className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer" style={{background:'#EF4444',color:'#fff'}}
-                onMouseEnter={(e)=>{e.currentTarget.style.background='#DC2626'}} onMouseLeave={(e)=>{e.currentTarget.style.background='#EF4444'}}>Delete</button>
+              <button onClick={() => setConfirmDelete(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
+                style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
+                Cancel
+              </button>
+              <button onClick={() => handleDelete(confirmDelete)} disabled={deleteLoading}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
+                style={{ background: deleteLoading ? '#FCA5A5' : '#EF4444', color: '#fff' }}
+                onMouseEnter={(e) => { if (!deleteLoading) e.currentTarget.style.background = '#DC2626' }}
+                onMouseLeave={(e) => { if (!deleteLoading) e.currentTarget.style.background = '#EF4444' }}>
+                {deleteLoading && <Loader2 size={14} className="animate-spin" />}
+                Delete
+              </button>
             </div>
           </div>
         </div>

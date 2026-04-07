@@ -53,7 +53,8 @@ export default function Breadcrumbs() {
       const company = COMPANIES.find((c) => c.id === companyId)
       const storedName = companyIndex[companyId]
       crumbs.push({ label: LABELS[segment] ?? 'Companies', href })
-      crumbs.push({ label: company?.name ?? storedName ?? `Company ${companyId}`, href: `${href}/${companyId}` })
+      href += `/${companyId}`
+      crumbs.push({ label: company?.name ?? storedName ?? `Company ${companyId}`, href })
       i += 1
       continue
     }
@@ -63,7 +64,8 @@ export default function Breadcrumbs() {
       const companyId = segments[i - 1]
       const fileName = filesIndex?.[companyId]?.[fileId]
       crumbs.push({ label: LABELS[segment] ?? 'Transactions', href })
-      crumbs.push({ label: fileName ?? `File ${fileId}`, href: `${href}/${fileId}` })
+      href += `/${fileId}`
+      crumbs.push({ label: fileName ?? `File ${fileId}`, href })
       i += 1
       continue
     }
