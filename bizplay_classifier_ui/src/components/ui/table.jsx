@@ -45,7 +45,7 @@ export function TableFooter({ className, ...props }) {
 export function TableRow({ className, ...props }) {
   return (
     <tr
-      className={cn('border-b transition-colors', className)}
+      className={cn('border-b border-[#F1F5F9] transition-colors hover:bg-[#F8FAFC]', className)}
       data-slot="table-row"
       {...props}
     />
@@ -56,7 +56,7 @@ export function TableHead({ className, ...props }) {
   return (
     <th
       className={cn(
-        'h-10 whitespace-nowrap px-4 text-left align-middle font-semibold text-xs uppercase tracking-wider',
+        'whitespace-nowrap px-4 py-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]',
         className,
       )}
       data-slot="table-head"
@@ -68,7 +68,7 @@ export function TableHead({ className, ...props }) {
 export function TableCell({ className, ...props }) {
   return (
     <td
-      className={cn('whitespace-nowrap px-4 py-2 align-middle text-sm', className)}
+      className={cn('px-4 py-3.5 align-middle text-[13px] text-slate-800', className)}
       data-slot="table-cell"
       {...props}
     />

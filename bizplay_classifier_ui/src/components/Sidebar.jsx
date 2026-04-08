@@ -17,15 +17,15 @@ import {
   HelpCircle,
   LogOut,
   Settings,
-  Brain,
 } from 'lucide-react'
 import { COMPANIES } from '../lib/mock-data'
+
+const FIRST_COMPANY_ID = COMPANIES[0]?.id ?? '1'
 
 const PROJECT_LINKS = [
   { href: 'transactions', label: 'Transactions', icon: FileSpreadsheet },
   { href: 'categories', label: 'Categories', icon: Layers },
   { href: 'rules', label: 'Rules', icon: ShieldCheck },
-  { href: 'training', label: 'Training', icon: Brain },
   { href: 'chatbot', label: 'Chatbot', icon: MessageSquare },
 ]
 
@@ -118,14 +118,14 @@ export default function Sidebar() {
                       </Link>
                     </li>
                     {PROJECT_LINKS.map(({ href, label, icon: Icon }) => {
-                      const fullHref = currentCompanyId ? `/companies/${currentCompanyId}/${href}` : null
-                      const disabled = !currentCompanyId
-                      const active = fullHref ? isActive(fullHref) : false
+                      const companyIdForLink = currentCompanyId ?? FIRST_COMPANY_ID
+                      const fullHref = `/companies/${companyIdForLink}/${href}`
+                      const active = isActive(fullHref)
                       return (
                         <li key={href}>
                           <Link
-                            href={fullHref || '/companies'}
-                            className={`flex items-center gap-2 pl-3 pr-3 py-1.5 text-[13px] transition-all duration-200 hover:text-[#1A32D8] hover:bg-[rgba(26,50,216,0.08)] ${disabled ? 'opacity-50' : ''}`}
+                            href={fullHref}
+                            className="flex items-center gap-2 pl-3 pr-3 py-1.5 text-[13px] transition-all duration-200 hover:text-[#1A32D8] hover:bg-[rgba(26,50,216,0.08)]"
                             style={
                               active
                                 ? { background: 'rgba(26,50,216,0.08)', color: '#1A32D8', borderRadius: '8px' }

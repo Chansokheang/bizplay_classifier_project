@@ -1,4 +1,4 @@
-import { BASE_URL, buildHeaders } from './api'
+import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
 
 /**
  * GET /api/v1/categories/{companyId} — list categories for a company
@@ -22,8 +22,8 @@ export async function createCategory({ companyId, code, category }, token) {
     body: JSON.stringify({ companyId, code, category }),
   })
   if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(parseApiErrorBody(body, res.status))
   }
   return res.json()
 }
@@ -47,8 +47,8 @@ export async function uploadCategories(file, companyId, token, sheetName = null)
     body: form,
   })
   if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(parseApiErrorBody(body, res.status))
   }
   return res.json()
 }
@@ -56,15 +56,15 @@ export async function uploadCategories(file, companyId, token, sheetName = null)
 /**
  * PUT /api/v1/categories/{categoryId}
  */
-export async function updateCategory(categoryId, { name, description, color }, token) {
+export async function updateCategory(categoryId, { code, category }, token) {
   const res = await fetch(`${BASE_URL}/api/v1/categories/${categoryId}`, {
     method: 'PUT',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ name, description, color }),
+    body: JSON.stringify({ code, category }),
   })
   if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(parseApiErrorBody(body, res.status))
   }
   return res.json()
 }

@@ -1,4 +1,4 @@
-import { BASE_URL, buildHeaders } from './api'
+import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
 
 /**
  * GET /api/v1/companies/allCompanies
@@ -7,8 +7,13 @@ export async function getAllCompanies(token) {
   const res = await fetch(`${BASE_URL}/api/v1/companies/allCompanies`, {
     headers: buildHeaders(token),
   })
-  if (!res.ok) throw new Error(`Request failed (${res.status})`)
-  return res.json()
+  const text = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(parseApiErrorBody(text, res.status))
+  try {
+    return text ? JSON.parse(text) : {}
+  } catch {
+    return {}
+  }
 }
 
 /**

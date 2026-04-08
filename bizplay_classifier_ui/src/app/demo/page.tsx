@@ -1,4 +1,4 @@
-import AnimatedDropdown from '@/components/ui/animated-dropdown'
+import AnimatedDropdown from '../../components/ui/animated-dropdown'
 
 export default function Demo() {
   return (

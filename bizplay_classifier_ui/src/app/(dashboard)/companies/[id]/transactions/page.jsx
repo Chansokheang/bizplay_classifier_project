@@ -6,31 +6,29 @@ import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import {
   Upload, FileSpreadsheet, CheckCircle2, Clock,
-  Loader2, AlertCircle, ArrowUpRight, FileUp, BarChart3, Layers, RefreshCw, RotateCcw, X
+  Loader2, AlertCircle, ArrowUpRight, FileUp, RotateCcw, X
 } from 'lucide-react'
 import { uploadTransactions, getOutputFiles } from '../../../../../service/transactionService'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../../../components/ui/table'
+
+const FILES_TABLE_CARD = {
+  background: '#FFFFFF',
+  border: '1px solid #E2E8F0',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+}
 
 const STATUS_CFG = {
   completed:  { label: 'Completed',  color: '#059669', bg: 'rgba(5,150,105,0.08)',  border: 'rgba(5,150,105,0.2)',  Icon: CheckCircle2 },
   pending:    { label: 'Pending',    color: '#D97706', bg: 'rgba(217,119,6,0.08)',  border: 'rgba(217,119,6,0.2)',  Icon: Clock },
   processing: { label: 'Processing', color: '#2563EB', bg: 'rgba(37,99,235,0.08)',  border: 'rgba(37,99,235,0.2)',  Icon: Loader2 },
   failed:     { label: 'Failed',     color: '#DC2626', bg: 'rgba(220,38,38,0.08)',  border: 'rgba(220,38,38,0.2)',  Icon: AlertCircle },
-}
-
-function StatCard({ icon: Icon, label, value, color }) {
-  return (
-    <div className="flex items-center gap-4 px-5 py-4 rounded-2xl"
-      style={{ background: 'rgba(255,255,255,0.6)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.8)', boxShadow: '0 2px 8px rgba(15,23,42,0.04)' }}>
-      <div className="flex items-center justify-center w-10 h-10 rounded-xl flex-shrink-0"
-        style={{ background: `${color}15`, border: `1px solid ${color}25` }}>
-        <Icon size={18} style={{ color }} />
-      </div>
-      <div>
-        <p className="text-[22px] font-bold leading-none text-slate-800">{value}</p>
-        <p className="text-[12px] font-semibold text-slate-400 mt-0.5">{label}</p>
-      </div>
-    </div>
-  )
 }
 
 export default function TransactionsPage() {
@@ -172,7 +170,7 @@ export default function TransactionsPage() {
       f.id === failedId ? { ...f, status: 'processing', records: null, classified: null } : f
     ))
     try {
-      const res = await uploadTransactions(file, companyId, token)
+      const res = await uploadTransactions(file, companyId, token, sheetName)
       const p = res?.payload ?? {}
       const summary = p.fileClassifySummary ?? {}
       setLocalPending(prev => prev.map(f =>
@@ -203,30 +201,14 @@ export default function TransactionsPage() {
   // ─── Merged file list (local pending first, then API files) ───────────────
   const allFiles = [...localPending, ...files]
   const totalFiles = allFiles.length
-  const completedFiles = files.length
 
   return (
     <div className="py-8 animate-fade-in">
 
       {/* ── Page Header ── */}
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Transactions</h1>
-          <p className="mt-1 text-sm text-slate-400">Upload files and review classification output.</p>
-        </div>
-        <button onClick={fetchFiles}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl text-[13px] font-bold text-slate-500 transition-colors hover:bg-white/70"
-          style={{ border: '1px solid #E2E8F0' }}>
-          <RefreshCw size={13} />
-          Refresh
-        </button>
-      </div>
-
-      {/* ── Stats Row ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-        <StatCard icon={FileSpreadsheet} label="Total Files"      value={totalFiles}       color="#1A32D8" />
-        <StatCard icon={BarChart3}       label="Completed Files"  value={completedFiles}   color="#059669" />
-        <StatCard icon={Layers}          label="Processing"       value={localPending.length} color="#2563EB" />
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-800">Transactions</h1>
+        <p className="mt-1 text-sm text-slate-400">Upload files and review classification output.</p>
       </div>
 
       {/* ── Upload Zone ── */}
@@ -276,36 +258,34 @@ export default function TransactionsPage() {
         </div>
       )}
 
-      {/* ── Files Table ── */}
-      <div className="rounded-2xl overflow-hidden"
-        style={{ background: 'rgba(255,255,255,0.7)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.9)', boxShadow: '0 4px 16px rgba(15,23,42,0.06)' }}>
-
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+      {/* ── Files Table (shell matches Rules / Categories) ── */}
+      <div className="rounded-2xl overflow-hidden" style={FILES_TABLE_CARD}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid #F1F5F9', background: '#F8FAFC' }}>
           <div>
-            <h2 className="text-[14px] font-bold text-slate-800">All Files</h2>
-            <p className="text-[12px] text-slate-400 font-medium">{totalFiles} file{totalFiles !== 1 ? 's' : ''} total</p>
+            <h2 className="text-[14px] font-bold" style={{ color: '#0F172A' }}>All Files</h2>
+            <p className="text-[12px] font-medium mt-0.5" style={{ color: '#94A3B8' }}>{totalFiles} file{totalFiles !== 1 ? 's' : ''} total</p>
           </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-bold text-slate-500"
-            style={{ background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-            <FileSpreadsheet size={13} className="text-slate-400" />
-            OUTPUT
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold uppercase tracking-wider"
+            style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', color: '#94A3B8' }}>
+            <FileSpreadsheet size={13} style={{ color: '#CBD5E1' }} />
+            Output
           </div>
         </div>
 
         <div className="overflow-x-auto">
           {loadingFiles ? (
-            <div className="flex items-center justify-center gap-3 py-16 text-slate-400">
-              <Loader2 size={18} className="animate-spin text-[#1A32D8]" />
+            <div className="flex items-center justify-center gap-3 py-16" style={{ color: '#94A3B8' }}>
+              <Loader2 size={18} className="animate-spin" style={{ color: '#1A32D8' }} />
               <span className="text-[13px] font-semibold">Loading files…</span>
             </div>
           ) : allFiles.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+            <div className="flex flex-col items-center justify-center py-20" style={{ color: '#94A3B8' }}>
               <FileSpreadsheet size={36} className="mb-3 opacity-30" />
               <p className="text-[13px] font-semibold">No files uploaded yet</p>
               <p className="text-[12px] mt-1">Upload your first transaction file above</p>
             </div>
           ) : (
-            <table className="w-full text-left" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <Table className="table-fixed">
               <colgroup>
                 <col style={{ width: '50px' }} />
                 <col />
@@ -315,86 +295,69 @@ export default function TransactionsPage() {
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '140px' }} />
               </colgroup>
-              <thead>
-                <tr className="text-[12px] font-bold uppercase tracking-wider text-slate-500"
-                  style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
-                  <th className="px-4 py-3 text-center">#</th>
-                  <th className="px-4 py-3">File</th>
-                  <th className="px-4 py-3">Sheet</th>
-                  <th className="px-4 py-3 text-center">Uploaded</th>
-                  <th className="px-4 py-3">Classification</th>
-                  <th className="px-4 py-3 text-center">Status</th>
-                  <th className="px-4 py-3 text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody>
+              <TableHeader>
+                <TableRow className="border-b border-[#F1F5F9] bg-[#F8FAFC] hover:bg-[#F8FAFC]">
+                  <TableHead className="text-center w-12">#</TableHead>
+                  <TableHead>File</TableHead>
+                  <TableHead>Sheet</TableHead>
+                  <TableHead className="text-center">Uploaded</TableHead>
+                  <TableHead>Classification</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {allFiles.map((tx, idx) => {
                   const cfg = STATUS_CFG[tx.status] ?? STATUS_CFG.pending
                   const isProcessing = tx.status === 'processing'
                   return (
-                    <tr key={tx.id}
-                      className="group transition-colors hover:bg-slate-50/80"
-                      style={{ borderBottom: idx < allFiles.length - 1 ? '1px solid #F1F5F9' : 'none' }}>
-
-                      {/* Order */}
-                      <td className="px-4 py-4 text-center">
-                        <span className="text-[12px] font-bold text-slate-400">{idx + 1}</span>
-                      </td>
-
-                      {/* File Name */}
-                      <td className="px-4 py-4">
-                        <p className="text-[13px] font-bold text-slate-800 leading-none truncate">{tx.fileName}</p>
+                    <TableRow key={tx.id} className="group">
+                      <TableCell className="text-center whitespace-nowrap">
+                        <span className="text-[12px] font-semibold tabular-nums" style={{ color: '#64748B' }}>{idx + 1}</span>
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <p className="text-[13px] font-semibold truncate" style={{ color: '#0F172A' }}>{tx.fileName}</p>
                         {isProcessing && (
                           <p className="text-[11px] font-semibold text-blue-500 mt-0.5">Uploading & processing…</p>
                         )}
-                      </td>
-
-                      {/* Sheet Name */}
-                      <td className="px-4 py-4 text-[12px] font-medium text-slate-500">
+                      </TableCell>
+                      <TableCell className="text-[12px] font-medium whitespace-normal" style={{ color: '#64748B' }}>
                         {tx.sheetName ? (
-                          <span className="px-2 py-0.5 rounded-md text-slate-600 font-semibold truncate block max-w-full"
-                            style={{ background: '#F1F5F9' }}>{tx.sheetName}</span>
-                        ) : <span className="text-slate-300">—</span>}
-                      </td>
-
-                      {/* Uploaded */}
-                      <td className="px-4 py-4 text-[12px] font-medium text-slate-500 text-center">{tx.uploadedAt}</td>
-
-                      {/* Classification — fraction · bar · % on one line */}
-                      <td className="px-4 py-4">
+                          <span className="px-2 py-0.5 rounded-md font-semibold truncate block max-w-full"
+                            style={{ background: '#F1F5F9', color: '#475569' }}>{tx.sheetName}</span>
+                        ) : <span style={{ color: '#CBD5E1' }}>—</span>}
+                      </TableCell>
+                      <TableCell className="text-center text-[12px] font-medium whitespace-nowrap" style={{ color: '#64748B' }}>{tx.uploadedAt}</TableCell>
+                      <TableCell className="whitespace-normal">
                         {tx.records != null && tx.classified != null ? (
                           <div className="flex items-center gap-2">
-                            <span className="text-[12px] font-bold text-slate-600 whitespace-nowrap flex-shrink-0">
+                            <span className="text-[12px] font-bold whitespace-nowrap flex-shrink-0" style={{ color: '#475569' }}>
                               {tx.classified}/{tx.records}
                             </span>
-                            <div className="flex-1 h-1.5 rounded-full overflow-hidden bg-slate-100">
+                            <div className="flex-1 h-1.5 rounded-full overflow-hidden bg-slate-100 min-w-[48px]">
                               <div className="h-full rounded-full transition-all duration-500"
                                 style={{ width: `${Math.round((tx.classified / tx.records) * 100)}%`, background: Math.round((tx.classified / tx.records) * 100) === 100 ? '#059669' : '#1A32D8' }} />
                             </div>
-                            <span className="text-[11px] font-bold text-slate-400 flex-shrink-0">
+                            <span className="text-[11px] font-bold flex-shrink-0" style={{ color: '#94A3B8' }}>
                               {Math.round((tx.classified / tx.records) * 100)}%
                             </span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
-                            <span className="inline-block w-10 h-2 rounded-full animate-pulse" style={{ background: '#E2E8F0' }} />
-                            <span className="inline-block flex-1 h-1.5 rounded-full animate-pulse" style={{ background: '#E2E8F0' }} />
-                            <span className="inline-block w-6 h-2 rounded-full animate-pulse" style={{ background: '#E2E8F0' }} />
+                            <span className="inline-block w-10 h-2 rounded-full animate-pulse bg-slate-200" />
+                            <span className="inline-block flex-1 h-1.5 rounded-full animate-pulse bg-slate-200" />
+                            <span className="inline-block w-6 h-2 rounded-full animate-pulse bg-slate-200" />
                           </div>
                         )}
-                      </td>
-
-                      {/* Status */}
-                      <td className="px-4 py-4 text-center">
+                      </TableCell>
+                      <TableCell className="text-center">
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full"
                           style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>
                           <cfg.Icon size={10} className={isProcessing ? 'animate-spin' : ''} />
                           {cfg.label}
                         </span>
-                      </td>
-
-                      {/* Action */}
-                      <td className="px-4 py-4 text-center">
+                      </TableCell>
+                      <TableCell className="text-center">
                         {tx.status === 'completed' ? (
                           <Link
                             href={`/companies/${companyId}/transactions/${tx.id}`}
@@ -406,8 +369,9 @@ export default function TransactionsPage() {
                             View <ArrowUpRight size={12} />
                           </Link>
                         ) : tx.status === 'failed' ? (
-                          <div className="flex items-center justify-center gap-2">
+                          <div className="flex items-center justify-center gap-2 flex-wrap">
                             <button
+                              type="button"
                               onClick={() => reuploadRefs.current[tx.id]?.click()}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-bold transition-all"
                               style={{ background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.2)', color: '#DC2626' }}
@@ -417,8 +381,10 @@ export default function TransactionsPage() {
                               <RotateCcw size={12} /> Reupload
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleCancelFailed(tx.id)}
-                              className="inline-flex items-center justify-center p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all font-bold"
+                              className="inline-flex items-center justify-center p-1.5 rounded-xl transition-all font-bold"
+                              style={{ color: '#CBD5E1' }}
                               title="Cancel"
                             >
                               <X size={16} />
@@ -427,8 +393,8 @@ export default function TransactionsPage() {
                               type="file"
                               accept=".xlsx,.xls,.csv"
                               className="hidden"
-                              ref={el => { reuploadRefs.current[tx.id] = el }}
-                              onChange={e => {
+                              ref={(el) => { reuploadRefs.current[tx.id] = el }}
+                              onChange={(e) => {
                                 const f = e.target.files[0]
                                 if (f) processFileSelection(f, tx.id)
                                 e.target.value = ''
@@ -436,14 +402,14 @@ export default function TransactionsPage() {
                             />
                           </div>
                         ) : (
-                          <span className="text-[12px] font-semibold text-slate-300">—</span>
+                          <span className="text-[12px] font-semibold" style={{ color: '#CBD5E1' }}>—</span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
         </div>
       </div>

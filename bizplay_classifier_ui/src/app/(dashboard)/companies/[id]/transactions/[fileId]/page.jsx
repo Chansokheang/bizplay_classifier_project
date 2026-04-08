@@ -1,13 +1,22 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { X, Loader2, AlertCircle } from 'lucide-react'
-import { getFileTransactions } from '../../../../../../service/transactionService'
+import { X, Loader2, AlertCircle, FileSpreadsheet } from 'lucide-react'
+import { getFileTransactions, getOutputFiles } from '../../../../../../service/transactionService'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../../../../components/ui/table'
 
 const card = { background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
+const FILE_TX_COLS = 7
 
 function formatDate(value) {
   if (!value) return '—'
@@ -43,6 +52,10 @@ export default function TransactionTablePage() {
   })
   
   const [selectedRow, setSelectedRow] = useState(null)
+  const [fileMeta, setFileMeta] = useState({ fileName: null, sheetName: null })
+
+  const closeBtnRef = useRef(null)
+  const prevFocusRef = useRef(null)
 
   const fetchData = useCallback(async () => {
     if (!token) return
@@ -68,15 +81,83 @@ export default function TransactionTablePage() {
     fetchData()
   }, [fetchData])
 
-  const headers = ['No', '승인일자', '가맹점명', '가맹점업종명', '공급금액', '용도코드', '방법']
+  useEffect(() => {
+    if (!token || !companyId || !fileId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await getOutputFiles(companyId, token)
+        const payload = Array.isArray(res?.payload) ? res.payload : []
+        const match = payload.find(({ file: f }) => String(f?.fileId) === String(fileId))
+        if (!cancelled && match?.file) {
+          setFileMeta({
+            fileName: match.file.originalFileName ?? null,
+            sheetName: match.file.sheetName ?? null,
+          })
+        }
+      } catch {
+        if (!cancelled) setFileMeta({ fileName: null, sheetName: null })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [companyId, fileId, token])
+
+  const closeDetail = useCallback(() => {
+    setSelectedRow(null)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!selectedRow) {
+      if (prevFocusRef.current && typeof prevFocusRef.current.focus === 'function') {
+        try {
+          prevFocusRef.current.focus()
+        } catch {
+          /* ignore */
+        }
+      }
+      prevFocusRef.current = null
+      return
+    }
+    prevFocusRef.current = document.activeElement
+    const id = window.requestAnimationFrame(() => {
+      closeBtnRef.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [selectedRow])
+
+  useEffect(() => {
+    if (!selectedRow) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeDetail()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectedRow, closeDetail])
 
   return (
     <div className="py-8 animate-fade-in">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold" style={{ color: '#0F172A' }}>Transaction Data</h1>
-          <p className="mt-1 text-[13px] font-medium" style={{ color: '#94A3B8' }}>
-            {data.totalRows} records found in file
+          <p className="mt-1 text-sm font-medium" style={{ color: '#94A3B8' }}>
+            {data.totalRows.toLocaleString()} records
+            {fileMeta.fileName ? (
+              <>
+                {' · '}
+                <span className="inline-flex items-center gap-1.5 align-middle" title={fileMeta.fileName}>
+                  <FileSpreadsheet size={14} className="inline shrink-0 opacity-70" aria-hidden />
+                  <span className="truncate font-semibold text-slate-600 max-w-[min(100%,28rem)]">
+                    {fileMeta.fileName}
+                  </span>
+                </span>
+              </>
+            ) : null}
+            {fileMeta.sheetName ? (
+              <span className="text-slate-500">
+                {' · Sheet: '}
+                <span className="font-semibold text-slate-600">{fileMeta.sheetName}</span>
+              </span>
+            ) : null}
           </p>
         </div>
         <Link
@@ -93,14 +174,14 @@ export default function TransactionTablePage() {
         </div>
       )}
 
-      <div className="rounded-2xl overflow-hidden" style={card}>
-        <div className="overflow-x-auto min-h-[400px] relative">
+      <div className="rounded-2xl" style={card}>
+        <div className="min-h-[400px] relative">
           {loading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-[2px]">
               <Loader2 size={28} className="animate-spin text-[#1A32D8]" />
             </div>
           )}
-          <table className="w-full text-left" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <Table className="table-fixed">
             <colgroup>
               <col style={{ width: '60px' }} />
               <col style={{ width: '110px' }} />
@@ -110,52 +191,46 @@ export default function TransactionTablePage() {
               <col style={{ width: '160px' }} />
               <col style={{ width: '120px' }} />
             </colgroup>
-            <thead>
-              <tr className="text-[12px] font-bold uppercase tracking-wider text-slate-500" style={{ background: '#F8FAFC', borderBottom: '1px solid #F1F5F9' }}>
-                <th className="px-4 py-3 text-center">No</th>
-                <th className="px-4 py-3">승인일자</th>
-                <th className="px-4 py-3">가맹점명</th>
-                <th className="px-4 py-3">가맹점업종명</th>
-                <th className="px-4 py-3">공급금액</th>
-                <th className="px-4 py-3">용도코드</th>
-                <th className="px-4 py-3 text-center">방법</th>
-              </tr>
-            </thead>
-            <tbody className="text-[13px]">
+            <TableHeader className="sticky top-0 z-20 bg-[#F8FAFC] shadow-[inset_0_-1px_0_#F1F5F9]">
+              <TableRow className="bg-[#F8FAFC] hover:bg-[#F8FAFC] cursor-default border-b-0 [&_th]:bg-[#F8FAFC]">
+                <TableHead className="text-center w-14">#</TableHead>
+                <TableHead>승인일자</TableHead>
+                <TableHead>가맹점명</TableHead>
+                <TableHead>가맹점업종명</TableHead>
+                <TableHead className="text-right">공급금액</TableHead>
+                <TableHead>용도코드</TableHead>
+                <TableHead className="text-center">방법</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {data.items.length === 0 && !loading ? (
-                <tr>
-                  <td colSpan={headers.length} className="px-6 py-20 text-center text-slate-400">
-                    <p className="text-[14px] font-bold text-slate-500">No transactions found</p>
-                  </td>
-                </tr>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={FILE_TX_COLS} className="py-20 text-center" style={{ color: '#94A3B8' }}>
+                    <p className="text-[14px] font-semibold" style={{ color: '#64748B' }}>No transactions found</p>
+                  </TableCell>
+                </TableRow>
               ) : (
                 data.items.map((row, idx) => (
-                  <tr
+                  <TableRow
                     key={row.pk ?? idx}
-                    className="group cursor-pointer transition-colors hover:bg-slate-50/80"
-                    style={{ borderBottom: idx < data.items.length - 1 ? '1px solid #F1F5F9' : 'none' }}
+                    className="group cursor-pointer"
                     onClick={() => setSelectedRow(row)}
                   >
-                    {/* Index */}
-                    <td className="px-4 py-4 text-center font-bold text-slate-400">{row.row_index || (page - 1) * pageSize + idx + 1}</td>
-                    
-                    {/* 승인일자 */}
-                    <td className="px-4 py-4 font-medium text-slate-500">{formatDate(row['승인일자'])}</td>
-                    
-                    {/* 가맹점명 */}
-                    <td className="px-4 py-4 font-bold text-slate-800 truncate" title={row['가맹점명']}>{row['가맹점명'] ?? '—'}</td>
-                    
-                    {/* 가맹점업종명 */}
-                    <td className="px-4 py-4 font-semibold text-slate-500 truncate" title={row['가맹점업종명']}>{row['가맹점업종명'] ?? '—'}</td>
-                    
-                    {/* 공급금액 */}
-                    <td className="px-4 py-4 font-bold text-slate-700">{row['공급금액'] ? Number(row['공급금액']).toLocaleString() : '—'}</td>
-                    
-                    {/* 용도코드 */}
-                    <td className="px-4 py-4" style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.2 }}>
+                    <TableCell className="text-center whitespace-nowrap">
+                      <span className="text-[12px] font-semibold tabular-nums" style={{ color: '#64748B' }}>
+                        {row.row_index || (page - 1) * pageSize + idx + 1}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-medium whitespace-nowrap" style={{ color: '#64748B' }}>{formatDate(row['승인일자'])}</TableCell>
+                    <TableCell className="font-semibold truncate max-w-0" style={{ color: '#0F172A' }} title={row['가맹점명']}>{row['가맹점명'] ?? '—'}</TableCell>
+                    <TableCell className="font-medium truncate max-w-0" style={{ color: '#64748B' }} title={row['가맹점업종명']}>{row['가맹점업종명'] ?? '—'}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap" style={{ color: '#0F172A' }}>
+                      {row['공급금액'] ? Number(row['공급금액']).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell className="whitespace-normal align-middle" style={{ wordBreak: 'break-word', lineHeight: 1.2 }}>
                       {(() => {
                         const raw = row['용도코드']
-                        if (!raw) return <span className="text-slate-400 font-semibold">—</span>
+                        if (!raw) return <span className="font-semibold" style={{ color: '#CBD5E1' }}>—</span>
                         const parts = Array.isArray(raw) ? raw : String(raw).split(',').map((v) => v.trim()).filter(Boolean)
                         return parts.map((v, i) => (
                           <span
@@ -167,19 +242,17 @@ export default function TransactionTablePage() {
                           </span>
                         ))
                       })()}
-                    </td>
-                    
-                    {/* 방법 */}
-                    <td className="px-4 py-4 text-center">
+                    </TableCell>
+                    <TableCell className="text-center whitespace-nowrap">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200">
                         {row['방법'] ?? '—'}
                       </span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4" style={{ borderTop: '1px solid #F1F5F9', background: '#F8FAFC' }}>
           <p className="text-[12px] font-medium text-slate-500">
@@ -227,23 +300,30 @@ export default function TransactionTablePage() {
       {selectedRow && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-fade-in"
-          onClick={() => setSelectedRow(null)}
+          onClick={closeDetail}
+          role="presentation"
         >
           <div
-            className="bg-white w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="txn-detail-title"
+            className="bg-white w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden outline-none"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="px-6 py-4 flex items-start justify-between" style={{ borderBottom: '1px solid #E2E8F0', background: 'linear-gradient(135deg, #F8FAFC 0%, #FFFFFF 100%)' }}>
               <div>
-                <h2 className="text-[16px] font-bold text-slate-800">Transaction Details</h2>
+                <h2 id="txn-detail-title" className="text-[16px] font-bold text-slate-800">Transaction Details</h2>
                 <p className="text-[13px] font-semibold text-slate-500 mt-0.5 truncate max-w-xs">{selectedRow['가맹점명'] ?? '—'}</p>
               </div>
               <button
-                onClick={() => setSelectedRow(null)}
-                className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors focus:outline-none ml-4 mt-0.5 flex-shrink-0"
+                ref={closeBtnRef}
+                type="button"
+                onClick={closeDetail}
+                aria-label="Close transaction details"
+                className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1A32D8] focus-visible:ring-offset-2 ml-4 mt-0.5 flex-shrink-0"
               >
-                <X size={18} />
+                <X size={18} aria-hidden />
               </button>
             </div>
 

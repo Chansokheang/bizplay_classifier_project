@@ -1,14 +1,19 @@
-import { BASE_URL, buildHeaders } from './api'
+import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
 
 /**
- * GET /api/v1/rules — list rules for a company
+ * GET /api/v1/rules/{companyId} — list rules for a company (payload: rule array)
  */
 export async function getRulesByCompany(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/rules?companyId=${companyId}`, {
+  const res = await fetch(`${BASE_URL}/api/v1/rules/${companyId}`, {
     headers: buildHeaders(token),
   })
-  if (!res.ok) throw new Error(`Request failed (${res.status})`)
-  return res.json()
+  const body = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(parseApiErrorBody(body, res.status))
+  try {
+    return JSON.parse(body || '{}')
+  } catch {
+    throw new Error('Invalid response from server')
+  }
 }
 
 /**
@@ -21,8 +26,8 @@ export async function createRule({ companyId, name, conditionType, pattern, cate
     body: JSON.stringify({ companyId, name, conditionType, pattern, categoryId, priority }),
   })
   if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(parseApiErrorBody(body, res.status))
   }
   return res.json()
 }
@@ -37,8 +42,8 @@ export async function updateRule(ruleId, { name, conditionType, pattern, categor
     body: JSON.stringify({ name, conditionType, pattern, categoryId, priority, status }),
   })
   if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(parseApiErrorBody(body, res.status))
   }
   return res.json()
 }
@@ -51,24 +56,6 @@ export async function deleteRule(ruleId, token) {
     method: 'DELETE',
     headers: buildHeaders(token),
   })
-  if (!res.ok) throw new Error(`Request failed (${res.status})`)
-}
-
-/**
- * POST /api/v1/rules/train — upload Excel file to train rule-based classifier
- * @param {File} file
- */
-export async function trainRulesFromExcel(file, token) {
-  const formData = new FormData()
-  formData.append('file', file)
-  const res = await fetch(`${BASE_URL}/api/v1/rules/train`, {
-    method: 'POST',
-    headers: buildHeaders(token), // no Content-Type: browser sets multipart boundary automatically
-    body: formData,
-  })
-  if (!res.ok) {
-    const msg = await res.text().catch(() => '')
-    throw new Error(msg || `Request failed (${res.status})`)
-  }
-  return res.json()
+  const body = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(parseApiErrorBody(body, res.status))
 }

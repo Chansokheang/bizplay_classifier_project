@@ -1,4 +1,4 @@
-import { BASE_URL, buildHeaders } from './api'
+import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
 
 /**
  * POST /api/v1/transactions/upload — upload Excel file of transactions for classification
@@ -57,11 +57,16 @@ export async function getTransactionRows(fileId, token) {
  */
 export async function getOutputFiles(companyId, token) {
   const res = await fetch(
-    `${BASE_URL}/api/v1/storage/files/company/${companyId}/filter?fileType=OUTPUT`,
+    `${BASE_URL}/api/v1/storage/files/company/${encodeURIComponent(companyId)}/filter?fileType=OUTPUT`,
     { headers: buildHeaders(token) }
   )
-  if (!res.ok) throw new Error(`Request failed (${res.status})`)
-  return res.json()
+  const text = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(parseApiErrorBody(text, res.status))
+  try {
+    return text ? JSON.parse(text) : {}
+  } catch {
+    return {}
+  }
 }
 
 /**
