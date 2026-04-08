@@ -7,7 +7,7 @@ import { BASE_URL, buildHeaders } from './api'
  * @param {string} token
  */
 export async function saveBotConfig(companyId, config, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/bot-configs/${companyId}`, {
+  const res = await fetch(`${BASE_URL}/bot-configs/${companyId}`, {
     method: 'PUT',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
@@ -31,7 +31,7 @@ export async function saveBotConfig(companyId, config, token) {
  * @param {string} token
  */
 export async function getBotConfig(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/bot-configs/${companyId}`, {
+  const res = await fetch(`${BASE_URL}/bot-configs/${companyId}`, {
     method: 'GET',
     headers: buildHeaders(token),
   })
@@ -53,7 +53,7 @@ export async function getBotConfig(companyId, token) {
 export async function enhancePrompt(companyId, sampleRows = 500, token) {
   const params = new URLSearchParams({ companyId, sampleRows: String(sampleRows) })
   const res = await fetch(
-    `${BASE_URL}/api/v1/bot-configs/prompt-enhancement?${params.toString()}`,
+    `${BASE_URL}/bot-configs/prompt-enhancement?${params.toString()}`,
     {
       method: 'GET',
       headers: buildHeaders(token),

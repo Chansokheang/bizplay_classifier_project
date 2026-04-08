@@ -121,23 +121,41 @@ export default function Sidebar() {
                       const companyIdForLink = currentCompanyId ?? FIRST_COMPANY_ID
                       const fullHref = `/companies/${companyIdForLink}/${href}`
                       const active = isActive(fullHref)
+                      const isDisabled = !currentCompanyId
+
+                      const linkContent = (
+                        <>
+                          <Icon
+                            size={14}
+                            className={active ? 'text-[#1A32D8]' : isDisabled ? 'text-gray-300' : 'text-gray-400'}
+                          />
+                          <span className={active ? 'font-semibold' : 'font-medium'}>{label}</span>
+                        </>
+                      )
+
                       return (
                         <li key={href}>
-                          <Link
-                            href={fullHref}
-                            className="flex items-center gap-2 pl-3 pr-3 py-1.5 text-[13px] transition-all duration-200 hover:text-[#1A32D8] hover:bg-[rgba(26,50,216,0.08)]"
-                            style={
-                              active
-                                ? { background: 'rgba(26,50,216,0.08)', color: '#1A32D8', borderRadius: '8px' }
-                                : { color: '#6B7280' }
-                            }
-                          >
-                            <Icon
-                              size={14}
-                              className={active ? 'text-[#1A32D8]' : 'text-gray-400'}
-                            />
-                            <span className={active ? 'font-semibold' : 'font-medium'}>{label}</span>
-                          </Link>
+                          {isDisabled ? (
+                            <div
+                              className="flex items-center gap-2 pl-3 pr-3 py-1.5 text-[13px] cursor-not-allowed opacity-50"
+                              style={{ color: '#9CA3AF' }}
+                              title="Select a company first"
+                            >
+                              {linkContent}
+                            </div>
+                          ) : (
+                            <Link
+                              href={fullHref}
+                              className="flex items-center gap-2 pl-3 pr-3 py-1.5 text-[13px] transition-all duration-200 hover:text-[#1A32D8] hover:bg-[rgba(26,50,216,0.08)]"
+                              style={
+                                active
+                                  ? { background: 'rgba(26,50,216,0.08)', color: '#1A32D8', borderRadius: '8px' }
+                                  : { color: '#6B7280' }
+                              }
+                            >
+                              {linkContent}
+                            </Link>
+                          )}
                         </li>
                       )
                     })}

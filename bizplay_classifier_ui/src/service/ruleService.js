@@ -4,7 +4,7 @@ import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
  * GET /api/v1/rules/{companyId} — list rules for a company (payload: rule array)
  */
 export async function getRulesByCompany(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/rules/${companyId}`, {
+  const res = await fetch(`${BASE_URL}/rules/${companyId}`, {
     headers: buildHeaders(token),
   })
   const body = await res.text().catch(() => '')
@@ -20,7 +20,7 @@ export async function getRulesByCompany(companyId, token) {
  * POST /api/v1/rules/create
  */
 export async function createRule({ companyId, name, conditionType, pattern, categoryId, priority }, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/rules/create`, {
+  const res = await fetch(`${BASE_URL}/rules/create`, {
     method: 'POST',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ companyId, name, conditionType, pattern, categoryId, priority }),
@@ -36,7 +36,7 @@ export async function createRule({ companyId, name, conditionType, pattern, cate
  * PUT /api/v1/rules/{ruleId}
  */
 export async function updateRule(ruleId, { name, conditionType, pattern, categoryId, priority, status }, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/rules/${ruleId}`, {
+  const res = await fetch(`${BASE_URL}/rules/${ruleId}`, {
     method: 'PUT',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name, conditionType, pattern, categoryId, priority, status }),
@@ -52,7 +52,7 @@ export async function updateRule(ruleId, { name, conditionType, pattern, categor
  * DELETE /api/v1/rules/{ruleId}
  */
 export async function deleteRule(ruleId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/rules/${ruleId}`, {
+  const res = await fetch(`${BASE_URL}/rules/${ruleId}`, {
     method: 'DELETE',
     headers: buildHeaders(token),
   })

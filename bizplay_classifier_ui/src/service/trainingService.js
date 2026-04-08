@@ -9,11 +9,17 @@ import { BASE_URL, buildHeaders } from './api'
 export async function uploadTrainingFile(file, companyId, token) {
   const formData = new FormData()
   formData.append('file', file)
+
+  // For FormData, don't set Content-Type - let browser set it with boundary
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+
   const res = await fetch(
-    `${BASE_URL}/api/v1/storage/training-files/upload?companyId=${companyId}`,
+    `${BASE_URL}/storage/training-files/upload?companyId=${companyId}`,
     {
       method: 'POST',
-      headers: buildHeaders(token),
+      headers,
       body: formData,
     }
   )
@@ -36,9 +42,15 @@ export async function trainFromFile(file, companyId, sheetName, token) {
   formData.append('file', file)
   const params = new URLSearchParams({ companyId })
   if (sheetName) params.append('sheetName', sheetName)
-  const res = await fetch(`${BASE_URL}/api/v1/data/train?${params.toString()}`, {
+
+  // For FormData, don't set Content-Type - let browser set it with boundary
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+
+  const res = await fetch(`${BASE_URL}/data/train?${params.toString()}`, {
     method: 'POST',
-    headers: buildHeaders(token),
+    headers,
     body: formData,
   })
   if (!res.ok) {
@@ -54,7 +66,7 @@ export async function trainFromFile(file, companyId, sheetName, token) {
  * @param {string} token
  */
 export async function getTrainingFiles(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/storage/files/company/${companyId}`, {
+  const res = await fetch(`${BASE_URL}/storage/files/company/${companyId}`, {
     headers: buildHeaders(token),
   })
   if (!res.ok) throw new Error(`Request failed (${res.status})`)

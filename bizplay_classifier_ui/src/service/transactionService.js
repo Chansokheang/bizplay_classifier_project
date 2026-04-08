@@ -8,11 +8,20 @@ import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
 export async function uploadTransactions(file, companyId, token, sheetName = null) {
   const formData = new FormData()
   formData.append('file', file)
-  formData.append('companyId', companyId)
-  if (sheetName) formData.append('sheetName', sheetName)
-  const res = await fetch(`${BASE_URL}/api/v1/transactions/upload`, {
+
+  // Build URL with query parameters (backend expects them as query params, not in body)
+  const params = new URLSearchParams({ companyId })
+  if (sheetName) params.set('sheetName', sheetName)
+  const url = `${BASE_URL}/transactions/upload?${params.toString()}`
+
+  // For FormData, don't set Content-Type - let browser set it with boundary
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+
+  const res = await fetch(url, {
     method: 'POST',
-    headers: buildHeaders(token),
+    headers,
     body: formData,
   })
   if (!res.ok) {
@@ -33,7 +42,7 @@ export async function uploadTransactions(file, companyId, token, sheetName = nul
  * GET /api/v1/transactions — list transaction files for a company
  */
 export async function getTransactionsByCompany(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/transactions?companyId=${companyId}`, {
+  const res = await fetch(`${BASE_URL}/transactions?companyId=${companyId}`, {
     headers: buildHeaders(token),
   })
   if (!res.ok) throw new Error(`Request failed (${res.status})`)
@@ -44,7 +53,7 @@ export async function getTransactionsByCompany(companyId, token) {
  * GET /api/v1/transactions/{fileId}/rows — get rows for a specific uploaded file
  */
 export async function getTransactionRows(fileId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/transactions/${fileId}/rows`, {
+  const res = await fetch(`${BASE_URL}/transactions/${fileId}/rows`, {
     headers: buildHeaders(token),
   })
   if (!res.ok) throw new Error(`Request failed (${res.status})`)
@@ -57,7 +66,7 @@ export async function getTransactionRows(fileId, token) {
  */
 export async function getOutputFiles(companyId, token) {
   const res = await fetch(
-    `${BASE_URL}/api/v1/storage/files/company/${encodeURIComponent(companyId)}/filter?fileType=OUTPUT`,
+    `${BASE_URL}/storage/files/company/${encodeURIComponent(companyId)}/filter?fileType=OUTPUT`,
     { headers: buildHeaders(token) }
   )
   const text = await res.text().catch(() => '')
@@ -74,7 +83,7 @@ export async function getOutputFiles(companyId, token) {
  * Get paginated transactions for a specific file
  */
 export async function getFileTransactions(fileId, page = 1, limit = 100, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/transactions/files/${fileId}/transactions?page=${page}&limit=${limit}`, {
+  const res = await fetch(`${BASE_URL}/transactions/files/${fileId}/transactions?page=${page}&limit=${limit}`, {
     headers: buildHeaders(token),
   })
   if (!res.ok) throw new Error(`Request failed (${res.status})`)

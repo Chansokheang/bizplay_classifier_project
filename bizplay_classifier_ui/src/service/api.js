@@ -1,4 +1,5 @@
-export const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080'
+// Use Next.js API proxy to avoid CORS issues
+export const BASE_URL = '/api/proxy'
 
 /**
  * Parses API error response bodies (e.g. RFC 7807 Problem Details) into a single message for UI.

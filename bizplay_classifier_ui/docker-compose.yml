@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bizplay-classifier-ui
+    ports:
+      - "9009:9009"
+    environment:
+      - NODE_ENV=production
+      # Read from .env.production file
+      - BACKEND_URL=${BACKEND_URL}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_URL=${AUTH_URL}
+    env_file:
+      - .env.production
+    restart: unless-stopped
+    networks:
+      - bizplay-network
+
+networks:
+  bizplay-network:
+    driver: bridge

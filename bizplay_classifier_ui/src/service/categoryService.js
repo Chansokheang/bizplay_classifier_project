@@ -4,7 +4,7 @@ import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
  * GET /api/v1/categories/{companyId} — list categories for a company
  */
 export async function getCategoriesByCompany(companyId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/categories/${companyId}`, {
+  const res = await fetch(`${BASE_URL}/categories/${companyId}`, {
     headers: buildHeaders(token),
   })
   if (!res.ok) throw new Error(`Request failed (${res.status})`)
@@ -16,7 +16,7 @@ export async function getCategoriesByCompany(companyId, token) {
  * @param {{ companyId: string, code: string, category: string }} param0
  */
 export async function createCategory({ companyId, code, category }, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/categories/create`, {
+  const res = await fetch(`${BASE_URL}/categories/create`, {
     method: 'POST',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ companyId, code, category }),
@@ -38,12 +38,20 @@ export async function createCategory({ companyId, code, category }, token) {
 export async function uploadCategories(file, companyId, token, sheetName = null) {
   const form = new FormData()
   form.append('file', file)
-  const url = new URL(`${BASE_URL}/api/v1/categories/upload`)
-  url.searchParams.set('companyId', companyId)
-  if (sheetName) url.searchParams.set('sheetName', sheetName)
-  const res = await fetch(url.toString(), {
+
+  // Build URL with query parameters
+  const params = new URLSearchParams({ companyId })
+  if (sheetName) params.set('sheetName', sheetName)
+  const url = `${BASE_URL}/categories/upload?${params.toString()}`
+
+  // For FormData, don't set Content-Type - let browser set it with boundary
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+
+  const res = await fetch(url, {
     method: 'POST',
-    headers: buildHeaders(token),
+    headers,
     body: form,
   })
   if (!res.ok) {
@@ -57,7 +65,7 @@ export async function uploadCategories(file, companyId, token, sheetName = null)
  * PUT /api/v1/categories/{categoryId}
  */
 export async function updateCategory(categoryId, { code, category }, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/categories/${categoryId}`, {
+  const res = await fetch(`${BASE_URL}/categories/${categoryId}`, {
     method: 'PUT',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ code, category }),
@@ -73,7 +81,7 @@ export async function updateCategory(categoryId, { code, category }, token) {
  * DELETE /api/v1/categories/{categoryId}
  */
 export async function deleteCategory(categoryId, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/categories/${categoryId}`, {
+  const res = await fetch(`${BASE_URL}/categories/${categoryId}`, {
     method: 'DELETE',
     headers: buildHeaders(token),
   })

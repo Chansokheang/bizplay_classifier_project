@@ -4,7 +4,7 @@ import { BASE_URL, buildHeaders, parseApiErrorBody } from './api'
  * GET /api/v1/companies/allCompanies
  */
 export async function getAllCompanies(token) {
-  const res = await fetch(`${BASE_URL}/api/v1/companies/allCompanies`, {
+  const res = await fetch(`${BASE_URL}/companies/allCompanies`, {
     headers: buildHeaders(token),
   })
   const text = await res.text().catch(() => '')
@@ -21,7 +21,7 @@ export async function getAllCompanies(token) {
  * @param {{ companyName: string, businessNumber: string }} body
  */
 export async function createCompany({ companyName, businessNumber }, token) {
-  const res = await fetch(`${BASE_URL}/api/v1/companies/create`, {
+  const res = await fetch(`${BASE_URL}/companies/create`, {
     method: 'POST',
     headers: buildHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ companyName, businessNumber }),

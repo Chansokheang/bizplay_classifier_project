@@ -418,7 +418,7 @@ function MethodPicker({ onChoose, onClose }) {
           </button>
         </div>
         <div className="px-7 py-6 grid grid-cols-2 gap-3">
-          <button onClick={() => onChoose('manual')}
+          <button onClick={() => onChoose('create')}
             className="flex flex-col items-center gap-3 p-5 rounded-2xl cursor-pointer transition-all border border-slate-200 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-200">
             <div className="flex items-center justify-center w-11 h-11 rounded-2xl"
               style={{ background: 'rgba(26,50,216,0.08)', border: '1px solid rgba(26,50,216,0.1)' }}>

@@ -1,4 +1,4 @@
-export const AUTH_BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:8080/api/v1'
+export const AUTH_BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:8080'
 
 /**
  * POST /auths/login
