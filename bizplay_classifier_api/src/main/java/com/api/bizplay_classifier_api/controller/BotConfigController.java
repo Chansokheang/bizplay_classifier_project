@@ -21,12 +21,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/api/v1/bot-configs")
 @AllArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@CrossOrigin(origins = {"http://localhost:3000"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class BotConfigController {
 
     private final BotConfigService botConfigService;
@@ -72,10 +73,11 @@ public class BotConfigController {
     }
 
     @GetMapping("/prompt-enhancement")
-    public ResponseEntity<ApiResponse<?>> generatePromptEnhancementPreview(
+    public ResponseEntity<ApiResponse<PromptEnhancementResponse>> generatePromptEnhancementPreview(
             @RequestParam("companyId") UUID companyId,
             @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
+        // Call the synchronous version - it's already fast enough with the AI optimizations
         PromptEnhancementResponse result = botConfigService.generatePromptEnhancementPreview(companyId, sampleRows);
         return ResponseEntity.ok(
                 ApiResponse.<PromptEnhancementResponse>builder()

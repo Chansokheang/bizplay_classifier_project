@@ -1,20 +1,20 @@
 services:
-#  postgres:
-#    image: postgres:16
-#    container_name: bizplay-postgres
-#    environment:
-#      POSTGRES_DB: bizplay_classifier
-#      POSTGRES_USER: postgres
-#      POSTGRES_PASSWORD: 123
-#    ports:
-#      - "5432:5432"
-#    volumes:
-#      - postgres_data:/var/lib/postgresql/data
-#    healthcheck:
-#      test: ["CMD-SHELL", "pg_isready -U postgres -d bizplay_classifier"]
-#      interval: 10s
-#      timeout: 5s
-#      retries: 10
+  postgres:
+    image: postgres:16
+    container_name: bizplay-postgres
+    environment:
+      POSTGRES_DB: bizplay_classifier
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123
+    ports:
+      - "9005:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bizplay_classifier"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   minio:
     image: minio/minio:latest
@@ -24,35 +24,42 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9006:9000"
+      - "9007:9001"
     volumes:
       - minio_data:/data
 
-#  app:
-#    build:
-#      context: .
-#      dockerfile: Dockerfile
-#    container_name: bizplay-api
-#    depends_on:
-#      postgres:
-#        condition: service_healthy
-#      minio:
-#        condition: service_started
-#    ports:
-#      - "8080:8080"
-#    environment:
-#      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bizplay_classifier
-#      SPRING_DATASOURCE_USERNAME: postgres
-#      SPRING_DATASOURCE_PASSWORD: 123
-#      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
-#      APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
-#      APP_STORAGE_MINIO_SECRET_KEY: minioadmin
-#      APP_STORAGE_MINIO_BUCKET: bizplay-files
-#      APP_STORAGE_MINIO_REQUEST_FOLDER: request-files
-#      APP_STORAGE_MINIO_FAIL_FAST: false
-#      APP_STORAGE_PUBLIC_BASE_PATH: /api/v1/storage/files
-#      APP_JWT_BASE64_SECRET: ",A#s5i=1n0Q.EVLSH,A!9)(lxtuOU+R@i3?]ZM,%^1W="
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bizplay-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    ports:
+      - "9008:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bizplay_classifier
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 123
+      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
+      APP_STORAGE_MINIO_SECRET_KEY: minioadmin
+      APP_STORAGE_MINIO_BUCKET: bizplay-files
+      APP_STORAGE_MINIO_REQUEST_FOLDER: request-files
+      APP_STORAGE_MINIO_FAIL_FAST: false
+      APP_STORAGE_PUBLIC_BASE_PATH: /api/v1/storage/files
+      APP_JWT_BASE64_SECRET: ",A#s5i=1n0Q.EVLSH,A!9)(lxtuOU+R@i3?]ZM,%^1W="
+      APP_AI_FALLBACK_ENABLED: "true"
+      APP_AI_FALLBACK_URL: http://10.255.78.58:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions
+      APP_AI_FALLBACK_API_KEY: sk-d7a20eb034c847e8994e192b40c69a61
+      APP_AI_FALLBACK_CONNECT_TIMEOUT_MS: "10000"
+      APP_AI_FALLBACK_READ_TIMEOUT_MS: "180000"
+      SPRING_MVC_ASYNC_REQUEST_TIMEOUT: "300000"
+      SERVER_CONNECTION_TIMEOUT: "300000"
 
 volumes:
   postgres_data:

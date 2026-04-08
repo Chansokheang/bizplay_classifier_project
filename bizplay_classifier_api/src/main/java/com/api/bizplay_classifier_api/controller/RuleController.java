@@ -21,7 +21,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/rules")
 @AllArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@CrossOrigin(origins = {"http://localhost:3000"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class RuleController {
 
     private final RuleService ruleService;

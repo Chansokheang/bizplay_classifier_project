@@ -78,7 +78,7 @@ public interface RuleRepo {
         UPDATE rules
         SET usage_status = 'Y'
         WHERE company_id = #{companyId}
-          AND "가맹점업종코드" = #{merchantIndustryCode}
+          AND "媛留뱀젏?낆쥌肄붾뱶" = #{merchantIndustryCode}
           AND COALESCE(usage_status, '') <> 'Y'
     """)
     int markRulesAsUsedByCompanyIdAndIndustryCode(

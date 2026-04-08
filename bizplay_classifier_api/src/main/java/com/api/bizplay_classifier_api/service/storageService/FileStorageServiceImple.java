@@ -36,7 +36,7 @@ public class FileStorageServiceImple implements FileStorageService {
     private volatile boolean minioReady;
 
     public FileStorageServiceImple(
-            @Value("${app.storage.minio.endpoint:http://localhost:9000}") String endpoint,
+            @Value("${app.storage.minio.endpoint:http://203.255.78.89:9006}") String endpoint,
             @Value("${app.storage.minio.access-key:minioadmin}") String accessKey,
             @Value("${app.storage.minio.secret-key:minioadmin}") String secretKey,
             @Value("${app.storage.minio.bucket:bizplay-files}") String bucketName,

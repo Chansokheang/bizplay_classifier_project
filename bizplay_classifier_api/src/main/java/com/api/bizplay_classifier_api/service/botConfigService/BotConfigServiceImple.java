@@ -19,6 +19,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.core.io.Resource;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +32,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @AllArgsConstructor
@@ -42,7 +44,8 @@ public class BotConfigServiceImple implements BotConfigService {
     private final GetCurrentUser getCurrentUser;
     private final ObjectMapper objectMapper;
     private final AiFallbackService aiFallbackService;
-    private static final int MAX_SAMPLE_ROWS = 1000;
+    // AI model has 8192 token limit, 130 rows = ~8000 tokens (safe limit)
+    private static final int MAX_SAMPLE_ROWS = 130;
 
     @Override
     @Transactional
@@ -192,6 +195,18 @@ public class BotConfigServiceImple implements BotConfigService {
                 .prompt(promptBuild.prompt())
                 .source(promptBuild.source())
                 .build();
+    }
+
+    @Override
+    @Async("aiTaskExecutor")
+    @Transactional(readOnly = true)
+    public CompletableFuture<PromptEnhancementResponse> generatePromptEnhancementPreviewAsync(UUID companyId, Integer sampleRows) {
+        try {
+            PromptEnhancementResponse response = generatePromptEnhancementPreview(companyId, sampleRows);
+            return CompletableFuture.completedFuture(response);
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     private BotConfigDTO saveOrUpdateBotConfig(UUID companyId, BotConfigRequest request, String configJson) {
