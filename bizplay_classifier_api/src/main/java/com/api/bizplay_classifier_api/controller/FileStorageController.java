@@ -1,9 +1,14 @@
 package com.api.bizplay_classifier_api.controller;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
+import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
+import com.api.bizplay_classifier_api.model.enums.FileType;
+import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
+import com.api.bizplay_classifier_api.model.response.FileWithClassifySummaryResponse;
 import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
+import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import com.api.bizplay_classifier_api.utils.GetCurrentUser;
@@ -20,12 +25,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/storage")
@@ -36,6 +44,7 @@ public class FileStorageController {
 
     private final FileStorageService fileStorageService;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
+    private final FileClassifySummaryRepo fileClassifySummaryRepo;
     private final GetCurrentUser getCurrentUser;
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -46,6 +55,39 @@ public class FileStorageController {
                         .payload(payload)
                         .fileUrl(payload.getFileUrl())
                         .message("File uploaded successfully.")
+                        .status(HttpStatus.CREATED)
+                        .code(HttpStatus.CREATED.value())
+                        .build()
+        );
+    }
+
+    @PostMapping(value = "/training-files/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<?>> uploadTrainingFile(
+            @RequestPart("file") MultipartFile file,
+            @RequestParam("companyId") UUID companyId
+    ) {
+        UUID currentUserId = getCurrentUser.getCurrentUserId();
+        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        if (exists == 0) {
+            throw new CustomNotFoundException("Company was not found with Id: " + companyId);
+        }
+
+        FileStorageResponse stored = fileStorageService.storeFile(file, FileType.TRAINING);
+        FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
+                FileUploadHistoryRequest.builder()
+                        .companyId(companyId)
+                        .originalFileName(stored.getOriginalFileName())
+                        .storedFileName(stored.getStoredFileName())
+                        .fileUrl(stored.getFileUrl())
+                        .fileType(FileType.TRAINING)
+                        .build()
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<FileUploadHistoryDTO>builder()
+                        .payload(fileRecord)
+                        .fileUrl(stored.getFileUrl())
+                        .message("Training file uploaded successfully.")
                         .status(HttpStatus.CREATED)
                         .code(HttpStatus.CREATED.value())
                         .build()
@@ -77,17 +119,41 @@ public class FileStorageController {
 
     @GetMapping("/files/company/{companyId}")
     public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(@PathVariable UUID companyId) {
+        return getFilesByCompanyId(companyId, null);
+    }
+
+    @GetMapping("/files/company/{companyId}/filter")
+    public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(
+            @PathVariable UUID companyId,
+            @RequestParam(value = "fileType", required = false) FileType fileType
+    ) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }
 
-        List<FileUploadHistoryDTO> payload = fileUploadHistoryRepo.getFilesByCompanyId(companyId);
+        List<FileUploadHistoryDTO> files = fileType == null
+                ? fileUploadHistoryRepo.getFilesByCompanyId(companyId)
+                : fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(companyId, fileType);
+        Map<UUID, FileClassifySummaryDTO> summaryByFileId = fileClassifySummaryRepo.getAllByCompanyId(companyId).stream()
+                .collect(Collectors.toMap(
+                        FileClassifySummaryDTO::getFileId,
+                        s -> s,
+                        (existing, ignored) -> existing
+                ));
+        List<FileWithClassifySummaryResponse> payload = files.stream()
+                .map(file -> FileWithClassifySummaryResponse.builder()
+                        .file(file)
+                        .classifySummary(summaryByFileId.get(file.getFileId()))
+                        .build())
+                .toList();
         return ResponseEntity.ok(
-                ApiResponse.<List<FileUploadHistoryDTO>>builder()
+                ApiResponse.<List<FileWithClassifySummaryResponse>>builder()
                         .payload(payload)
-                        .message("Files were retrieved successfully.")
+                        .message(fileType == null
+                                ? "Files were retrieved successfully."
+                                : "Files were retrieved successfully by file type.")
                         .status(HttpStatus.OK)
                         .code(HttpStatus.OK.value())
                         .build()

@@ -184,6 +184,32 @@ CREATE INDEX idx_file_upload_history_company ON file_upload_history(company_id);
 CREATE INDEX idx_file_upload_history_created ON file_upload_history(created_date);
 
 -- ============================================
+-- 10-1. FILE_CLASSIFY_SUMMARY
+-- ============================================
+CREATE TABLE file_classify_summary (
+    summary_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_id             UUID NOT NULL REFERENCES file_upload_history(file_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    company_id          UUID NOT NULL REFERENCES companies(company_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    total_rows          INT NOT NULL DEFAULT 0,
+    processed_rows      INT NOT NULL DEFAULT 0,
+    skipped_rows        INT NOT NULL DEFAULT 0,
+    rule_matched_rows   INT NOT NULL DEFAULT 0,
+    ai_matched_rows     INT NOT NULL DEFAULT 0,
+    unmatched_rows      INT NOT NULL DEFAULT 0,
+    created_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_file_classify_summary UNIQUE (file_id, company_id),
+    CONSTRAINT ck_file_classify_non_negative CHECK (
+        total_rows >= 0 AND processed_rows >= 0 AND skipped_rows >= 0
+        AND rule_matched_rows >= 0 AND ai_matched_rows >= 0 AND unmatched_rows >= 0
+    )
+);
+
+CREATE INDEX idx_file_classify_summary_company ON file_classify_summary(company_id);
+CREATE INDEX idx_file_classify_summary_file ON file_classify_summary(file_id);
+CREATE INDEX idx_file_classify_summary_created ON file_classify_summary(created_date);
+
+-- ============================================
 -- 11. OTPS
 -- ============================================
 CREATE TABLE otps(
@@ -194,4 +220,3 @@ CREATE TABLE otps(
     expiration DATE NOT NULL,
     is_verified BOOLEAN NOT NULL default FALSE
 );
-

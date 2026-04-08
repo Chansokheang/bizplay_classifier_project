@@ -14,6 +14,8 @@ public interface RuleService {
 
     RuleDTO updateRuleByRuleId(UUID ruleId, RuleUpdateRequest ruleUpdateRequest);
 
+    void deleteRuleByRuleId(UUID ruleId);
+
     List<RuleDTO> getAllRulesByCompanyId(UUID companyId);
 
     DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, UUID companyId, String sheetName);

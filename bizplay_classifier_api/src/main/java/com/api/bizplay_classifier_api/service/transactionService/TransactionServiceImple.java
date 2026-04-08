@@ -2,17 +2,22 @@ package com.api.bizplay_classifier_api.service.transactionService;
 
 import com.api.bizplay_classifier_api.model.dto.RuleClassifierDTO;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
+import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
+import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
 import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
+import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
+import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.repository.BotConfigRepo;
+import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.companyService.CompanyService;
@@ -35,10 +40,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -48,6 +56,7 @@ public class TransactionServiceImple implements TransactionService {
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final RuleRepo ruleRepo;
     private final BotConfigRepo botConfigRepo;
+    private final FileClassifySummaryRepo fileClassifySummaryRepo;
     private final CategoryRepo categoryRepo;
     private final CompanyService companyService;
     private final FileStorageService fileStorageService;
@@ -63,7 +72,7 @@ public class TransactionServiceImple implements TransactionService {
             "approval_date",
             "approval_time",
             "merchant_name",
-            "merchant_business_registration_number"
+            "merchant_industry_code"
     );
 
     private static final List<String> ALL_HEADERS = List.of(
@@ -81,7 +90,30 @@ public class TransactionServiceImple implements TransactionService {
             "usage_name",
             "pk",
             "user_tx_id",
-            "writer_tx_id"
+            "writer_tx_id",
+            "hoi",
+            "method",
+            "description"
+    );
+
+    private static final Map<String, String> DISPLAY_HEADERS = Map.ofEntries(
+            Map.entry("hoi", "HOI"),
+            Map.entry("pk", "pk"),
+            Map.entry("approval_date", "승인일자"),
+            Map.entry("approval_time", "승인시간"),
+            Map.entry("merchant_name", "가맹점명"),
+            Map.entry("merchant_industry_code", "가맹점업종코드"),
+            Map.entry("merchant_industry_name", "가맹점업종명"),
+            Map.entry("merchant_business_registration_number", "가맹점사업자번호"),
+            Map.entry("supply_amount", "공급금액"),
+            Map.entry("vat_amount", "부가세액"),
+            Map.entry("tax_type", "과세유형"),
+            Map.entry("user_tx_id", "사용자id"),
+            Map.entry("writer_tx_id", "작성자id"),
+            Map.entry("field_name1", "용도코드"),
+            Map.entry("usage_name", "용도명"),
+            Map.entry("method", "방법"),
+            Map.entry("description", "Reason")
     );
 
     private static final Map<String, String> HEADER_ALIASES = Map.ofEntries(
@@ -132,8 +164,12 @@ public class TransactionServiceImple implements TransactionService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
-        try (InputStream inputStream = file.getInputStream()) {
-            return createTransactionsByExcel(inputStream, defaultCompanyId, sheetName);
+        try {
+            byte[] fileBytes = file.getBytes();
+            String originalFileName = file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
+                    ? "transactions_input.xlsx"
+                    : file.getOriginalFilename();
+            return createTransactionsByExcel(fileBytes, defaultCompanyId, sheetName, originalFileName);
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to read Excel file.", e);
         }
@@ -145,19 +181,37 @@ public class TransactionServiceImple implements TransactionService {
         if (fileBytes == null || fileBytes.length == 0) {
             throw new IllegalArgumentException("Excel file bytes are required.");
         }
-        try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
-            return createTransactionsByExcel(inputStream, defaultCompanyId, sheetName);
+        try {
+            return createTransactionsByExcel(fileBytes, defaultCompanyId, sheetName, "transactions_input.xlsx");
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to read Excel file bytes.", e);
         }
     }
 
-    private TransactionUploadSummaryResponse createTransactionsByExcel(InputStream inputStream, UUID defaultCompanyId, String sheetName) throws IOException {
+    private TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, UUID defaultCompanyId, String sheetName, String originalFileName) throws IOException {
         if (defaultCompanyId != null) {
             companyService.getCompanyByCompanyId(defaultCompanyId);
         }
 
-        try (Workbook workbook = WorkbookFactory.create(inputStream)) {
+        FileStorageResponse inputFile = fileStorageService.storeBytes(
+                fileBytes,
+                originalFileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                com.api.bizplay_classifier_api.model.enums.FileType.INPUT
+        );
+        fileUploadHistoryRepo.createFileRecord(
+                FileUploadHistoryRequest.builder()
+                        .companyId(defaultCompanyId)
+                        .originalFileName(inputFile.getOriginalFileName())
+                        .storedFileName(inputFile.getStoredFileName())
+                        .fileUrl(inputFile.getFileUrl())
+                        .sheetName(sheetName)
+                        .fileType(com.api.bizplay_classifier_api.model.enums.FileType.INPUT)
+                        .build()
+        );
+
+        try (InputStream inputStream = new ByteArrayInputStream(fileBytes);
+             Workbook workbook = WorkbookFactory.create(inputStream)) {
             Sheet sheet;
             if (sheetName != null && !sheetName.isBlank()) {
                 sheet = workbook.getSheet(sheetName);
@@ -182,6 +236,7 @@ public class TransactionServiceImple implements TransactionService {
             Map<UUID, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
             Map<UUID, String> promptTemplateCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Set<String> usedRuleKeys = new HashSet<>();
             UUID fileCompanyId = defaultCompanyId;
             int totalRows = 0;
             int skippedRows = 0;
@@ -189,6 +244,7 @@ public class TransactionServiceImple implements TransactionService {
             int ruleMatchedRows = 0;
             int aiMatchedRows = 0;
             int ruleUnmatchedRows = 0;
+            int processedSingleLabelRows = 0;
             List<String> unmatchedMerchantSamples = new ArrayList<>();
 
             for (int rowIndex = headerParseResult.headerRowIndex() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
@@ -201,10 +257,19 @@ public class TransactionServiceImple implements TransactionService {
 
                 UUID companyId = resolveCompanyId(row, headerMap, formatter, rowIndex, defaultCompanyId);
                 fileCompanyId = mergeFileCompanyId(fileCompanyId, companyId);
-                UsageValue usageValue = resolveUsageValueByMerchantName(row, headerMap, formatter, companyId, rulesCache);
+                UsageValue usageValue = resolveUsageValueByMerchantName(
+                        row,
+                        headerMap,
+                        formatter,
+                        companyId,
+                        rulesCache,
+                        usedRuleKeys
+                );
+                boolean disambiguateMultiCode = hasMultiLabel(usageValue.usageCode());
                 boolean shouldCallAi = !usageValue.matchedByRule()
                         || usageValue.usageCode() == null || usageValue.usageCode().isBlank()
-                        || usageValue.usageName() == null || usageValue.usageName().isBlank();
+                        || usageValue.usageName() == null || usageValue.usageName().isBlank()
+                        || disambiguateMultiCode;
                 if (shouldCallAi) {
                     UsageValue aiUsageValue = resolveUsageValueByAi(
                             row,
@@ -214,7 +279,8 @@ public class TransactionServiceImple implements TransactionService {
                             rulesCache,
                             promptTemplateCache,
                             aiResultCache,
-                            usageValue
+                            usageValue,
+                            disambiguateMultiCode
                     );
                     if (aiUsageValue != null) {
                         usageValue = aiUsageValue;
@@ -223,14 +289,16 @@ public class TransactionServiceImple implements TransactionService {
                 applyUsageValueToSheet(row, headerMap, usageValue);
                 upsertRuleCategoryFromRow(
                         companyId,
-                        getCellValue(row, headerMap, formatter, "merchant_name"),
+                        getCellValue(row, headerMap, formatter, "merchant_industry_code"),
                         getCellValue(row, headerMap, formatter, "merchant_industry_name"),
                         usageValue.usageCode(),
                         usageValue.usageName()
                 );
-                if (usageValue.matchedByAi()) {
+                if (usageValue.matchedByAi() && !usageValue.matchedByRule()) {
+                    // Pure AI fallback (rule did not match)
                     aiMatchedRows++;
                 } else if (usageValue.matchedByRule()) {
+                    // Rule-based match (includes Rule+AI disambiguation)
                     ruleMatchedRows++;
                 } else {
                     ruleUnmatchedRows++;
@@ -242,19 +310,41 @@ public class TransactionServiceImple implements TransactionService {
                     }
                 }
 
+                // processed_rows should count only single-label outputs (exclude multi-label codes like A1003,A1007)
+                if (usageValue.usageCode() != null
+                        && !usageValue.usageCode().isBlank()
+                        && !hasMultiLabel(usageValue.usageCode())) {
+                    processedSingleLabelRows++;
+                }
+
                 // Transaction table is not used anymore.
                 // Keep enrichment + file output only.
             }
 
-            FileStorageResponse enrichedFile = storeEnrichedWorkbook(workbook, sheetName);
+            FileStorageResponse enrichedFile = storeEnrichedWorkbook(workbook, sheetName, originalFileName);
             com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
                     FileUploadHistoryRequest.builder()
                             .companyId(fileCompanyId)
-                            .originalFileName("transactions_enriched.xlsx")
+                            .originalFileName(originalFileName)
                             .storedFileName(enrichedFile.getStoredFileName())
                             .fileUrl(enrichedFile.getFileUrl())
                             .sheetName(sheetName)
+                            .fileType(com.api.bizplay_classifier_api.model.enums.FileType.OUTPUT)
                             .build()
+            );
+
+            if (fileCompanyId == null) {
+                throw new IllegalArgumentException("Unable to determine companyId for file classify summary.");
+            }
+            FileClassifySummaryDTO savedSummary = fileClassifySummaryRepo.createSummary(
+                    fileRecord.getFileId(),
+                    fileCompanyId,
+                    totalRows,
+                    processedSingleLabelRows,
+                    skippedRows,
+                    ruleMatchedRows,
+                    aiMatchedRows,
+                    ruleUnmatchedRows
             );
 
             return TransactionUploadSummaryResponse.builder()
@@ -269,7 +359,85 @@ public class TransactionServiceImple implements TransactionService {
                     .aiMatchedRows(aiMatchedRows)
                     .ruleUnmatchedRows(ruleUnmatchedRows)
                     .unmatchedMerchantSamples(unmatchedMerchantSamples)
+                    .fileClassifySummary(savedSummary)
                     .build();
+        }
+    }
+
+    @Override
+    public List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(UUID companyId) {
+        companyService.getCompanyByCompanyId(companyId);
+        return fileClassifySummaryRepo.getAllByCompanyId(companyId);
+    }
+
+    @Override
+    public FileTransactionsPageResponse getTransactionsByFileId(UUID fileId, int page, int limit) {
+        if (page < 1) {
+            throw new IllegalArgumentException("page must be >= 1.");
+        }
+        if (limit < 1 || limit > 1000) {
+            throw new IllegalArgumentException("limit must be between 1 and 1000.");
+        }
+
+        com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.getFileById(fileId);
+        if (fileRecord == null) {
+            throw new IllegalArgumentException("File not found: " + fileId);
+        }
+
+        try (InputStream inputStream = fileStorageService.loadAsResource(fileRecord.getStoredFileName()).getInputStream();
+             Workbook workbook = WorkbookFactory.create(inputStream)) {
+            Sheet sheet = resolveSheet(workbook, fileRecord.getSheetName());
+            DataFormatter formatter = new DataFormatter();
+            HeaderParseResult header = findHeaderMap(sheet, formatter);
+            Map<String, Integer> headerMap = header.headerMap();
+
+            List<Map<String, String>> allRows = new ArrayList<>();
+            List<Map.Entry<String, Integer>> orderedHeaders = headerMap.entrySet().stream()
+                    .sorted(Map.Entry.comparingByValue())
+                    .toList();
+            int dataRowCounter = 0;
+            for (int rowIndex = header.headerRowIndex() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+                Row row = sheet.getRow(rowIndex);
+                if (isRowEmpty(row, formatter)) {
+                    continue;
+                }
+                dataRowCounter++;
+                Map<String, String> rowData = new LinkedHashMap<>();
+                rowData.put("row_index", String.valueOf(dataRowCounter));
+                for (Map.Entry<String, Integer> h : orderedHeaders) {
+                    String value = getCellValue(row, headerMap, formatter, h.getKey());
+                    String displayKey = DISPLAY_HEADERS.getOrDefault(h.getKey(), h.getKey());
+                    rowData.put(displayKey, value == null ? "" : value);
+                }
+                allRows.add(rowData);
+            }
+
+            int totalRows = allRows.size();
+            int totalPages = totalRows == 0 ? 0 : (int) Math.ceil((double) totalRows / limit);
+            int from = (page - 1) * limit;
+            if (from >= totalRows) {
+                return FileTransactionsPageResponse.builder()
+                        .fileId(fileId)
+                        .page(page)
+                        .limit(limit)
+                        .totalRows(totalRows)
+                        .totalPages(totalPages)
+                        .items(List.of())
+                        .build();
+            }
+            int to = Math.min(from + limit, totalRows);
+            List<Map<String, String>> items = allRows.subList(from, to);
+
+            return FileTransactionsPageResponse.builder()
+                    .fileId(fileId)
+                    .page(page)
+                    .limit(limit)
+                    .totalRows(totalRows)
+                    .totalPages(totalPages)
+                    .items(items)
+                    .build();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Unable to read transactions from file: " + fileId, e);
         }
     }
 
@@ -306,10 +474,28 @@ public class TransactionServiceImple implements TransactionService {
         }
 
         if (bestHeaderRowIndex < 0 || bestHeaderMap.isEmpty()) {
-            throw new IllegalArgumentException("Could not detect Excel header row.");
+            throw new IllegalArgumentException(
+                    "Wrong file header format. Required headers: "
+                            + "승인일자, 승인시간, 가맹점명, 가맹점업종코드"
+                            + ". Detected mapped headers: []"
+            );
         }
 
         return new HeaderParseResult(bestHeaderRowIndex, bestHeaderMap);
+    }
+
+    private Sheet resolveSheet(Workbook workbook, String sheetName) {
+        if (sheetName != null && !sheetName.isBlank()) {
+            Sheet named = workbook.getSheet(sheetName);
+            if (named != null) {
+                return named;
+            }
+        }
+        Sheet first = workbook.getSheetAt(0);
+        if (first == null) {
+            throw new IllegalArgumentException("Sheet not found in uploaded file.");
+        }
+        return first;
     }
 
     private Map<String, Integer> parseHeaderMap(Row headerRow, DataFormatter formatter) {
@@ -334,6 +520,9 @@ public class TransactionServiceImple implements TransactionService {
     private String resolveHeaderSafe(String rawHeader) {
         String normalized = normalizeHeader(rawHeader);
 
+        if (normalized.equals("hoi")) {
+            return "hoi";
+        }
         if (containsAny(normalized, "가맹점명")) {
             return "merchant_name";
         }
@@ -442,13 +631,22 @@ public class TransactionServiceImple implements TransactionService {
     }
 
     private void validateRequiredHeaders(Map<String, Integer> headerMap, UUID defaultCompanyId) {
-        for (String requiredHeader : REQUIRED_HEADERS) {
-            if (!headerMap.containsKey(requiredHeader)) {
-                throw new IllegalArgumentException("Missing required header: " + requiredHeader);
-            }
-        }
+        List<String> missing = new ArrayList<>();
+        if (!headerMap.containsKey("approval_date")) missing.add("승인일자");
+        if (!headerMap.containsKey("approval_time")) missing.add("승인시간");
+        if (!headerMap.containsKey("merchant_name")) missing.add("가맹점명");
+        if (!headerMap.containsKey("merchant_industry_code")) missing.add("가맹점업종코드");
         if (defaultCompanyId == null && !headerMap.containsKey("company_id")) {
-            throw new IllegalArgumentException("Missing required header: company_id (or provide companyId parameter).");
+            missing.add("이용기관ID(company_id) 또는 companyId 파라미터");
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Wrong file header format. Required headers: "
+                            + "승인일자, 승인시간, 가맹점명, 가맹점업종코드"
+                            + (defaultCompanyId == null ? ", 이용기관ID(company_id)" : "")
+                            + ". Missing: " + String.join(", ", missing)
+                            + ". Detected mapped headers: " + headerMap.keySet()
+            );
         }
     }
 
@@ -487,13 +685,12 @@ public class TransactionServiceImple implements TransactionService {
     }
 
     private UsageValue resolveUsageValueByMerchantName(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
-                                                       Map<UUID, List<RuleClassifierDTO>> rulesCache) {
+                                                       Map<UUID, List<RuleClassifierDTO>> rulesCache,
+                                                       Set<String> usedRuleKeys) {
         String usageCode = getCellValue(row, headerMap, formatter, USAGE_CODE_HEADER);
         String usageName = getCellValue(row, headerMap, formatter, USAGE_NAME_HEADER);
-        String merchantName = getCellValue(row, headerMap, formatter, "merchant_name");
-        String merchantIndustryName = getCellValue(row, headerMap, formatter, "merchant_industry_name");
-        if ((merchantName == null || merchantName.isBlank())
-                && (merchantIndustryName == null || merchantIndustryName.isBlank())) {
+        String merchantIndustryCode = getCellValue(row, headerMap, formatter, "merchant_industry_code");
+        if (merchantIndustryCode == null || merchantIndustryCode.isBlank()) {
             return UsageValue.unmatched(usageCode, usageName);
         }
 
@@ -501,18 +698,21 @@ public class TransactionServiceImple implements TransactionService {
                 companyId, ruleRepo::getRuleClassifiersByCompanyId
         );
         if (classifiers == null || classifiers.isEmpty()) {
-            return UsageValue.unmatched(usageCode, usageName);
+            throw new IllegalArgumentException(
+                    "No rules configured for company: " + companyId +
+                    ". Please configure classification rules before uploading transactions.");
         }
 
-        String merchantNormalized = normalizeMatcherText(merchantName);
-        String industryNormalized = normalizeMatcherText(merchantIndustryName);
+        String industryCodeNormalized = merchantIndustryCode.trim().toUpperCase();
         List<RuleClassifierDTO> matched = classifiers.stream()
-                .filter(c -> isRuleMatched(merchantNormalized, industryNormalized, c))
+                .filter(c -> isRuleMatched(industryCodeNormalized, c))
                 .toList();
 
         if (matched.isEmpty()) {
             return UsageValue.unmatched(usageCode, usageName);
         }
+
+        markRuleAsUsed(companyId, industryCodeNormalized, usedRuleKeys);
 
         List<String> matchedCodes = matched.stream()
                 .map(RuleClassifierDTO::getCode)
@@ -531,11 +731,25 @@ public class TransactionServiceImple implements TransactionService {
         return UsageValue.ruleMatched(finalUsageCode, finalUsageName);
     }
 
+    private void markRuleAsUsed(UUID companyId, String industryCodeNormalized, Set<String> usedRuleKeys) {
+        if (companyId == null || industryCodeNormalized == null || industryCodeNormalized.isBlank()) {
+            return;
+        }
+
+        String ruleKey = companyId + "::" + industryCodeNormalized;
+        if (usedRuleKeys != null && !usedRuleKeys.add(ruleKey)) {
+            return;
+        }
+
+        ruleRepo.markRulesAsUsedByCompanyIdAndIndustryCode(companyId, industryCodeNormalized);
+    }
+
     private UsageValue resolveUsageValueByAi(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
                                              Map<UUID, List<RuleClassifierDTO>> rulesCache,
                                              Map<UUID, String> promptTemplateCache,
                                              Map<String, AiFallbackService.AiFallbackResult> aiResultCache,
-                                             UsageValue current) {
+                                             UsageValue current,
+                                             boolean disambiguateMultiCode) {
         Map<String, String> rowSnapshot = extractRowSnapshot(row, headerMap, formatter);
         if (rowSnapshot.isEmpty()) {
             return null;
@@ -561,10 +775,28 @@ public class TransactionServiceImple implements TransactionService {
             return null;
         }
 
+        // When disambiguating a rule-matched multi-label result, constrain AI context to only the
+        // specific candidate classifiers whose codes appear in the multi-label output. This gives
+        // the AI a focused view: "here are the N codes rule-based found — pick 1 or 2."
+        if (disambiguateMultiCode && current.matchedByRule()) {
+            List<String> candidateCodes = splitMultiValue(current.usageCode());
+            if (!candidateCodes.isEmpty()) {
+                List<RuleClassifierDTO> disambiguationContexts = classifiers.stream()
+                        .filter(c -> c != null
+                                && c.getCode() != null
+                                && !c.getCode().isBlank()
+                                && candidateCodes.contains(c.getCode().trim()))
+                        .toList();
+                if (!disambiguationContexts.isEmpty()) {
+                    aiContexts = disambiguationContexts;
+                }
+            }
+        }
+
         String cacheKey = buildAiCacheKey(companyId, rowSnapshot);
         if (aiResultCache.containsKey(cacheKey)) {
             AiFallbackService.AiFallbackResult cached = aiResultCache.get(cacheKey);
-            return toAiUsageValue(current, cached);
+            return toAiUsageValue(current, cached, disambiguateMultiCode);
         }
 
         String promptTemplate = resolvePromptTemplate(companyId, promptTemplateCache);
@@ -574,24 +806,22 @@ public class TransactionServiceImple implements TransactionService {
         }
 
         aiResultCache.put(cacheKey, aiResult);
-        return toAiUsageValue(current, aiResult);
+        return toAiUsageValue(current, aiResult, disambiguateMultiCode);
     }
 
     private UsageValue inferUsageValueFromContexts(UsageValue current, Map<String, String> rowSnapshot, List<RuleClassifierDTO> contexts) {
         if (contexts == null || contexts.isEmpty()) {
             return null;
         }
-        String merchant = normalizeMatcherText(rowSnapshot.get("merchant_name"));
-        String industry = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
+        String industryCode = rowSnapshot.getOrDefault("merchant_industry_code", "").trim().toUpperCase();
 
         RuleClassifierDTO best = contexts.stream()
                 .filter(c -> c != null)
                 .filter(c -> c.getCode() != null && !c.getCode().isBlank())
                 .filter(c -> c.getCategory() != null && !c.getCategory().isBlank())
-                .filter(c -> textMatched(merchant, normalizeMatcherText(c.getMerchantName()))
-                        || textMatched(industry, normalizeMatcherText(c.getMerchantIndustryName()))
-                        || textMatched(merchant, normalizeMatcherText(c.getRuleName()))
-                        || textMatched(industry, normalizeMatcherText(c.getRuleName())))
+                .filter(c -> !industryCode.isBlank()
+                        && c.getMerchantIndustryCode() != null
+                        && industryCode.equalsIgnoreCase(c.getMerchantIndustryCode().trim()))
                 .findFirst()
                 .orElseGet(() -> contexts.stream()
                         .filter(c -> c != null)
@@ -608,9 +838,25 @@ public class TransactionServiceImple implements TransactionService {
         return UsageValue.aiMatched(mergedCode, mergedName, "AI response empty; filled from nearest rule context.");
     }
 
-    private UsageValue toAiUsageValue(UsageValue current, AiFallbackService.AiFallbackResult aiResult) {
+    private UsageValue toAiUsageValue(UsageValue current, AiFallbackService.AiFallbackResult aiResult, boolean disambiguateMultiCode) {
         if (aiResult == null) {
             return null;
+        }
+        if (disambiguateMultiCode) {
+            List<String> aiCodes = splitMultiValue(aiResult.usageCode());
+            List<String> aiNames = splitMultiValue(aiResult.usageName());
+            String resolvedCode = joinLimited(aiCodes, 2);
+            String resolvedName = joinLimited(aiNames, 2);
+            if (resolvedCode == null) {
+                resolvedCode = joinLimited(splitMultiValue(current.usageCode()), 2);
+            }
+            if (resolvedName == null) {
+                resolvedName = joinLimited(splitMultiValue(current.usageName()), 2);
+            }
+            String reason = aiResult.reason() == null ? "Rule-based matched; AI narrowed down multi-label codes." : aiResult.reason();
+            return current.matchedByRule()
+                    ? UsageValue.ruleAiDisambiguated(resolvedCode, resolvedName, reason)
+                    : UsageValue.aiMatched(resolvedCode, resolvedName, reason);
         }
         String mergedCode = mergeMultiValue(current.usageCode(), splitMultiValue(aiResult.usageCode()));
         String mergedName = mergeMultiValue(current.usageName(), splitMultiValue(aiResult.usageName()));
@@ -620,30 +866,21 @@ public class TransactionServiceImple implements TransactionService {
 
     private String buildAiCacheKey(UUID companyId, Map<String, String> rowSnapshot) {
         String merchant = normalizeMatcherText(rowSnapshot.get("merchant_name"));
-        String industry = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
+        String industryCode = rowSnapshot.getOrDefault("merchant_industry_code", "").trim().toUpperCase();
         String taxType = normalizeMatcherText(rowSnapshot.get("tax_type"));
         String amountBucket = amountBucket(rowSnapshot.get("supply_amount"));
-        return companyId + "::" + merchant + "::" + industry + "::" + taxType + "::" + amountBucket;
+        return companyId + "::" + merchant + "::" + industryCode + "::" + taxType + "::" + amountBucket;
     }
 
     private List<RuleClassifierDTO> filterClassifiersForAi(Map<String, String> rowSnapshot, List<RuleClassifierDTO> classifiers) {
-        String merchantNormalized = normalizeMatcherText(rowSnapshot.get("merchant_name"));
-        String industryNormalized = normalizeMatcherText(rowSnapshot.get("merchant_industry_name"));
-        List<RuleClassifierDTO> strictMatches = classifiers.stream()
-                .filter(c -> c != null)
-                .filter(c -> textMatched(merchantNormalized, normalizeMatcherText(c.getMerchantName()))
-                        || textMatched(industryNormalized, normalizeMatcherText(c.getMerchantIndustryName())))
-                .toList();
-        if (!strictMatches.isEmpty()) {
-            return strictMatches;
+        String industryCode = rowSnapshot.getOrDefault("merchant_industry_code", "").trim().toUpperCase();
+        if (industryCode.isBlank()) {
+            return List.of();
         }
-
-        // Fallback: still avoid all-rules context, but allow rule_name-based narrowing when
-        // dedicated merchant columns are sparse/legacy.
         return classifiers.stream()
-                .filter(c -> c != null)
-                .filter(c -> textMatched(merchantNormalized, normalizeMatcherText(c.getRuleName()))
-                        || textMatched(industryNormalized, normalizeMatcherText(c.getRuleName())))
+                .filter(c -> c != null
+                        && c.getMerchantIndustryCode() != null
+                        && industryCode.equalsIgnoreCase(c.getMerchantIndustryCode().trim()))
                 .toList();
     }
 
@@ -730,19 +967,16 @@ public class TransactionServiceImple implements TransactionService {
                 || normalized.matches("(?i)^[A-Z]+\\d+:[A-Z]+\\d+$");
     }
 
-    private boolean isRuleMatched(String merchantNormalized, String industryNormalized, RuleClassifierDTO classifier) {
-        String ruleNameNormalized = normalizeMatcherText(classifier.getRuleName());
-        String ruleIndustryNormalized = normalizeMatcherText(classifier.getMerchantIndustryName());
-        String ruleMerchantNormalized = normalizeMatcherText(classifier.getMerchantName());
-        if (ruleNameNormalized.isBlank() && ruleIndustryNormalized.isBlank()) {
+    // Pattern Detection using Rule-based on column: 가맹점업종코드 (exact CHAR(5) match)
+    private boolean isRuleMatched(String industryCodeNormalized, RuleClassifierDTO classifier) {
+        if (industryCodeNormalized == null || industryCodeNormalized.isBlank()) {
             return false;
         }
-        return textMatched(merchantNormalized, ruleNameNormalized)
-                || textMatched(merchantNormalized, ruleMerchantNormalized)
-                || textMatched(merchantNormalized, ruleIndustryNormalized)
-                || textMatched(industryNormalized, ruleNameNormalized)
-                || textMatched(industryNormalized, ruleMerchantNormalized)
-                || textMatched(industryNormalized, ruleIndustryNormalized);
+        String ruleCode = classifier.getMerchantIndustryCode();
+        if (ruleCode == null || ruleCode.isBlank()) {
+            return false;
+        }
+        return industryCodeNormalized.equalsIgnoreCase(ruleCode.trim());
     }
 
     private boolean textMatched(String left, String right) {
@@ -782,8 +1016,29 @@ public class TransactionServiceImple implements TransactionService {
         return String.join(",", merged);
     }
 
-    private void upsertRuleCategoryFromRow(UUID companyId, String merchantName, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {
-        if (companyId == null || merchantName == null || merchantName.isBlank()) {
+    private boolean hasMultiLabel(String value) {
+        return splitMultiValue(value).size() > 1;
+    }
+
+    private String joinLimited(List<String> values, int limit) {
+        if (values == null || values.isEmpty() || limit <= 0) {
+            return null;
+        }
+        List<String> limited = values.stream()
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .distinct()
+                .limit(limit)
+                .toList();
+        if (limited.isEmpty()) {
+            return null;
+        }
+        return String.join(",", limited);
+    }
+
+    private void upsertRuleCategoryFromRow(UUID companyId, String merchantIndustryCode, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {
+
+        if (companyId == null || merchantIndustryCode == null || merchantIndustryCode.isBlank()) {
             return;
         }
         if (usageCodeRaw == null || usageCodeRaw.isBlank() || usageNameRaw == null || usageNameRaw.isBlank()) {
@@ -796,23 +1051,19 @@ public class TransactionServiceImple implements TransactionService {
             return;
         }
 
-        String normalizedMerchantIndustryName = merchantIndustryName == null ? null : merchantIndustryName.trim();
-        if (normalizedMerchantIndustryName != null && normalizedMerchantIndustryName.isBlank()) {
-            normalizedMerchantIndustryName = null;
+        String normalizedCode = merchantIndustryCode.trim().toUpperCase();
+        String normalizedName = merchantIndustryName == null ? normalizedCode : merchantIndustryName.trim();
+        if (normalizedName.isBlank()) {
+            normalizedName = normalizedCode;
         }
 
-        RuleDTO rule = ruleRepo.findByCompanyIdAndMerchantNameAndMerchantIndustryName(
-                companyId,
-                merchantName.trim(),
-                normalizedMerchantIndustryName
-        );
+        RuleDTO rule = ruleRepo.findByCompanyIdAndIndustryCode(companyId, normalizedCode);
         if (rule == null) {
             rule = ruleRepo.createRule(
                     RuleRequest.builder()
                             .companyId(companyId)
-                            .ruleName(merchantName.trim())
-                            .merchantName(merchantName.trim())
-                            .merchantIndustryName(normalizedMerchantIndustryName)
+                            .merchantIndustryCode(normalizedCode)
+                            .merchantIndustryName(normalizedName)
                             .categoryIds(Collections.emptyList())
                             .description("auto-trained-from-upload")
                             .build()
@@ -906,10 +1157,10 @@ public class TransactionServiceImple implements TransactionService {
         if (usageNameCol != null && usageValue.usageName() != null) {
             row.createCell(usageNameCol).setCellValue(usageValue.usageName());
         }
-        if (methodCol != null) {
+        if (methodCol != null && usageValue.method() != null && !usageValue.method().isBlank()) {
             row.createCell(methodCol).setCellValue(usageValue.method());
         }
-        if (descriptionCol != null) {
+        if (descriptionCol != null && usageValue.description() != null && !usageValue.description().isBlank()) {
             row.createCell(descriptionCol).setCellValue(usageValue.description());
         }
     }
@@ -968,15 +1219,17 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private FileStorageResponse storeEnrichedWorkbook(Workbook workbook, String sheetName) {
+    private FileStorageResponse storeEnrichedWorkbook(Workbook workbook, String sheetName, String originalFileName) {
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             workbook.write(outputStream);
-            String safeSheet = (sheetName == null || sheetName.isBlank()) ? "sheet1" : sheetName.replaceAll("[^0-9a-zA-Z_-]", "_");
-            String fileName = "transactions_enriched_" + safeSheet + ".xlsx";
+            String fileName = (originalFileName == null || originalFileName.isBlank())
+                    ? "transactions.xlsx"
+                    : originalFileName;
             return fileStorageService.storeBytes(
                     outputStream.toByteArray(),
                     fileName,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    com.api.bizplay_classifier_api.model.enums.FileType.OUTPUT
             );
         } catch (IOException e) {
             throw new IllegalStateException("Unable to store enriched Excel file.", e);
@@ -1054,8 +1307,128 @@ public class TransactionServiceImple implements TransactionService {
             String message = (reason == null || reason.isBlank()) ? "AI fallback classification succeeded." : reason;
             return new UsageValue(usageCode, usageName, false, true, "AI", message);
         }
+
+        private static UsageValue ruleAiDisambiguated(String usageCode, String usageName, String reason) {
+            String message = (reason == null || reason.isBlank()) ? "Rule-based matched; AI narrowed down multi-label codes." : reason;
+            return new UsageValue(usageCode, usageName, true, true, "Rule+AI", message);
+        }
     }
 
     private record Pair(String code, String name) {
+    }
+
+    // -------------------------------------------------------------------------
+    // Manual row-level patch (UI verify / correct 용도코드)
+    // -------------------------------------------------------------------------
+
+    @Override
+    public FileRowPatchResponse patchFileRows(UUID fileId, FileRowPatchRequest request) {
+        com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord =
+                fileUploadHistoryRepo.getFileById(fileId);
+        if (fileRecord == null) {
+            throw new IllegalArgumentException("File not found: " + fileId);
+        }
+
+        UUID companyId = request.getCompanyId();
+
+        byte[] originalBytes;
+        try {
+            org.springframework.core.io.Resource resource =
+                    fileStorageService.loadAsResource(fileRecord.getStoredFileName());
+            originalBytes = resource.getInputStream().readAllBytes();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to load stored file.", e);
+        }
+
+        try (java.io.InputStream inputStream = new ByteArrayInputStream(originalBytes);
+             Workbook workbook = WorkbookFactory.create(inputStream)) {
+
+            // Resolve sheet
+            String sheetName = fileRecord.getSheetName();
+            Sheet sheet;
+            if (sheetName != null && !sheetName.isBlank()) {
+                sheet = workbook.getSheet(sheetName);
+                if (sheet == null) {
+                    throw new IllegalArgumentException("Sheet not found: " + sheetName);
+                }
+            } else {
+                sheet = workbook.getSheetAt(0);
+            }
+
+            DataFormatter formatter = new DataFormatter();
+            HeaderParseResult headerParseResult = findHeaderMap(sheet, formatter);
+            Map<String, Integer> headerMap = headerParseResult.headerMap();
+            int headerRowIndex = headerParseResult.headerRowIndex();
+
+            // Ensure output columns exist (safe — no-op if already present)
+            ensureUsageAndMethodColumnsSafe(sheet.getRow(headerRowIndex), headerMap);
+
+            Integer usageCodeCol  = headerMap.get(USAGE_CODE_HEADER);
+            Integer usageNameCol  = headerMap.get(USAGE_NAME_HEADER);
+            Integer methodCol     = headerMap.get(METHOD_HEADER);
+            Integer descriptionCol = headerMap.get(DESCRIPTION_HEADER);
+
+            int updatedCount = 0;
+            List<Integer> skippedRows = new ArrayList<>();
+
+            for (com.api.bizplay_classifier_api.model.request.RowCellUpdateRequest update : request.getUpdates()) {
+                // rowIndex is 1-based; translate to absolute Excel row index
+                int excelRowIndex = headerRowIndex + update.getRowIndex();
+                Row row = sheet.getRow(excelRowIndex);
+                if (row == null) {
+                    skippedRows.add(update.getRowIndex());
+                    continue;
+                }
+
+                String newCode = update.getUsageCode().trim();
+                com.api.bizplay_classifier_api.model.dto.CategoryDTO category =
+                        categoryRepo.findByCompanyIdAndCode(companyId, newCode);
+                if (category == null) {
+                    // Code not found in this company's chart of accounts — skip
+                    skippedRows.add(update.getRowIndex());
+                    continue;
+                }
+
+                // 용도코드
+                if (usageCodeCol != null) {
+                    row.createCell(usageCodeCol).setCellValue(newCode);
+                }
+                // 용도명 — aligned from category master
+                if (usageNameCol != null) {
+                    row.createCell(usageNameCol).setCellValue(category.getCategory());
+                }
+                // 방법 → "Updated"
+                if (methodCol != null) {
+                    row.createCell(methodCol).setCellValue("Updated");
+                }
+                // Reason → cleared
+                if (descriptionCol != null) {
+                    row.createCell(descriptionCol).setCellValue("");
+                }
+
+                updatedCount++;
+            }
+
+            // Write back to bytes and overwrite the same object in MinIO
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            workbook.write(out);
+            fileStorageService.replaceBytes(
+                    fileRecord.getStoredFileName(),
+                    out.toByteArray(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+
+            return FileRowPatchResponse.builder()
+                    .fileId(fileId)
+                    .totalRequested(request.getUpdates().size())
+                    .updatedRows(updatedCount)
+                    .skippedRows(skippedRows)
+                    .enrichedFileUrl(fileRecord.getFileUrl())
+                    .storedFileName(fileRecord.getStoredFileName())
+                    .build();
+
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to patch file rows.", e);
+        }
     }
 }

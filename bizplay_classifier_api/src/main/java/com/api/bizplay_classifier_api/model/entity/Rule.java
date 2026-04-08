@@ -15,9 +15,8 @@ import java.util.UUID;
 public class Rule {
     private UUID ruleId;
     private UUID companyId;
-    private String ruleName;
-    private String merchantName;
     private String merchantIndustryName;
+    private String merchantIndustryCode;
     private String usageStatus;
     private Integer minAmount;
     private Integer maxAmount;

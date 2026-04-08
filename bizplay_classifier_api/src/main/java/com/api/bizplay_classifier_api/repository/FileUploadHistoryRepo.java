@@ -24,14 +24,16 @@ public interface FileUploadHistoryRepo {
             original_file_name,
             stored_file_name,
             file_url,
-            sheet_name
+            sheet_name,
+            file_type
         )
         VALUES (
             #{file.companyId},
             #{file.originalFileName},
             #{file.storedFileName},
             #{file.fileUrl},
-            #{file.sheetName}
+            #{file.sheetName},
+            #{file.fileType}
         )
         RETURNING *
     """)
@@ -42,6 +44,7 @@ public interface FileUploadHistoryRepo {
             @Result(property = "storedFileName", column = "stored_file_name"),
             @Result(property = "fileUrl", column = "file_url"),
             @Result(property = "sheetName", column = "sheet_name"),
+            @Result(property = "fileType", column = "file_type", javaType = com.api.bizplay_classifier_api.model.enums.FileType.class),
             @Result(property = "createdDate", column = "created_date")
     })
     FileUploadHistoryDTO createFileRecord(@Param("file") FileUploadHistoryRequest fileUploadHistoryRequest);
@@ -60,6 +63,40 @@ public interface FileUploadHistoryRepo {
     """)
     @ResultMap("fileUploadHistoryMap")
     List<FileUploadHistoryDTO> getFilesByCompanyId(@Param("companyId") UUID companyId);
+
+    @Select("""
+        SELECT *
+        FROM file_upload_history
+        WHERE company_id = #{companyId}
+          AND file_type = #{fileType}
+        ORDER BY created_date ASC
+    """)
+    @ResultMap("fileUploadHistoryMap")
+    List<FileUploadHistoryDTO> getFilesByCompanyIdAndFileType(
+            @Param("companyId") UUID companyId,
+            @Param("fileType") com.api.bizplay_classifier_api.model.enums.FileType fileType
+    );
+
+    @Select("""
+        SELECT *
+        FROM file_upload_history
+        WHERE company_id = #{companyId}
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    @ResultMap("fileUploadHistoryMap")
+    FileUploadHistoryDTO getLatestFileByCompanyId(@Param("companyId") UUID companyId);
+
+    @Select("""
+        SELECT *
+        FROM file_upload_history
+        WHERE company_id = #{companyId}
+          AND file_type = 'TRAINING'
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    @ResultMap("fileUploadHistoryMap")
+    FileUploadHistoryDTO getLatestTrainingFileByCompanyId(@Param("companyId") UUID companyId);
 
     @Select("""
         SELECT COUNT(1)

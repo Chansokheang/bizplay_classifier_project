@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.service.ruleService;
 
+import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
@@ -65,6 +66,16 @@ public class RuleServiceImple implements RuleService {
     }
 
     @Override
+    @Transactional
+    public void deleteRuleByRuleId(UUID ruleId) {
+        ruleRepo.deleteRuleCategoryMappings(ruleId);
+        Integer deletedCount = ruleRepo.deleteRuleByRuleId(ruleId);
+        if (deletedCount == null || deletedCount == 0) {
+            throw new CustomNotFoundException("Rule was not found with Id: " + ruleId);
+        }
+    }
+
+    @Override
     public List<RuleDTO> getAllRulesByCompanyId(UUID companyId) {
         companyService.getCompanyByCompanyId(companyId);
         return ruleRepo.getAllRulesByCompanyId(companyId);
@@ -99,7 +110,7 @@ public class RuleServiceImple implements RuleService {
             DataFormatter formatter = new DataFormatter();
             HeaderParseResult headerResult = findHeaderMap(sheet, formatter);
             Map<String, Integer> headerMap = headerResult.headerMap();
-            validateRequiredHeadersForRuleTraining(headerMap);
+            validateRequiredHeadersForRuleTrainingV3(headerMap);
 
             int totalRows = 0;
             int trainedRows = 0;
@@ -107,6 +118,9 @@ public class RuleServiceImple implements RuleService {
             int createdRules = 0;
             int createdCategories = 0;
             int createdMappings = 0;
+            int skippedMissingRequired = 0;
+            int skippedInvalidUsageCode = 0;
+            int skippedInvalidIndustryCode = 0;
 
             for (int rowIndex = headerResult.headerRowIndex() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
                 Row row = sheet.getRow(rowIndex);
@@ -117,27 +131,36 @@ public class RuleServiceImple implements RuleService {
                     continue;
                 }
 
-                String merchantName = getCellValue(row, headerMap, formatter, "merchant_name");
+                String merchantIndustryCode = getCellValue(row, headerMap, formatter, "merchant_industry_code");
                 String merchantIndustryName = getCellValue(row, headerMap, formatter, "merchant_industry_name");
                 String code = getCellValue(row, headerMap, formatter, "usage_code");
                 String categoryName = getCellValue(row, headerMap, formatter, "usage_name");
 
-                if (merchantName == null || merchantName.isBlank()
+                if (merchantIndustryCode == null || merchantIndustryCode.isBlank()
                         || merchantIndustryName == null || merchantIndustryName.isBlank()
                         || code == null || code.isBlank()
                         || categoryName == null || categoryName.isBlank()) {
                     skippedRows++;
+                    skippedMissingRequired++;
                     continue;
                 }
 
                 String normalizedCode = code.trim();
                 if (!normalizedCode.matches("^[A-Za-z0-9]{5}$")) {
                     skippedRows++;
+                    skippedInvalidUsageCode++;
                     continue;
                 }
-                String normalizedMerchantName = merchantName.trim();
-                String normalizedMerchantIndustryName = merchantIndustryName.trim();
-                String ruleName = normalizedMerchantName + "_" + normalizedMerchantIndustryName;
+                String normalizedIndustryCode = merchantIndustryCode.trim().toUpperCase();
+                // Industry code in source files is not always fixed-length (often not 5 chars).
+                // Keep only alphanumeric characters for stable matching/storage.
+                normalizedIndustryCode = normalizedIndustryCode.replaceAll("[^A-Za-z0-9]", "");
+                if (normalizedIndustryCode.isBlank()) {
+                    skippedRows++;
+                    skippedInvalidIndustryCode++;
+                    continue;
+                }
+                String normalizedIndustryName = merchantIndustryName.trim();
 
                 CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, categoryName.trim());
                 CategoryDTO category = categoryUpsert.category();
@@ -145,18 +168,13 @@ public class RuleServiceImple implements RuleService {
                     createdCategories++;
                 }
 
-                RuleDTO rule = ruleRepo.findByCompanyIdAndMerchantNameAndMerchantIndustryName(
-                        companyId,
-                        normalizedMerchantName,
-                        normalizedMerchantIndustryName
-                );
+                RuleDTO rule = ruleRepo.findByCompanyIdAndIndustryCode(companyId, normalizedIndustryCode);
                 if (rule == null) {
                     rule = ruleRepo.createRule(
                             RuleRequest.builder()
                                     .companyId(companyId)
-                                    .ruleName(ruleName)
-                                    .merchantName(normalizedMerchantName)
-                                    .merchantIndustryName(normalizedMerchantIndustryName)
+                                    .merchantIndustryCode(normalizedIndustryCode)
+                                    .merchantIndustryName(normalizedIndustryName)
                                     .description("trained-from-data")
                                     .build()
                     );
@@ -171,6 +189,12 @@ public class RuleServiceImple implements RuleService {
                 categoryRepo.markCategoryAsUsed(category.getCategoryId());
                 trainedRows++;
             }
+
+            log.info(
+                    "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}",
+                    companyId, totalRows, trainedRows, skippedRows, createdRules, createdCategories, createdMappings,
+                    skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode
+            );
 
             return DataTrainSummaryResponse.builder()
                     .totalRows(totalRows)
@@ -225,7 +249,10 @@ public class RuleServiceImple implements RuleService {
         }
 
         if (bestHeaderRowIndex < 0 || bestHeaderMap.isEmpty()) {
-            throw new IllegalArgumentException("Could not detect Excel header row.");
+            throw new IllegalArgumentException(
+                    "Wrong file header format. Required headers: 가맹점업종코드, 가맹점업종명, 용도코드, 용도명. "
+                            + "Detected mapped headers: []"
+            );
         }
         return new HeaderParseResult(bestHeaderRowIndex, bestHeaderMap);
     }
@@ -240,7 +267,7 @@ public class RuleServiceImple implements RuleService {
             if (rawHeader.isEmpty()) {
                 continue;
             }
-            String canonical = resolveHeaderForRuleTraining(rawHeader);
+            String canonical = resolveHeaderForRuleTrainingV2(rawHeader);
             if (canonical != null) {
                 headerMap.put(canonical, i);
             }
@@ -248,15 +275,69 @@ public class RuleServiceImple implements RuleService {
         return headerMap;
     }
 
-    private String resolveHeaderForRuleTraining(String rawHeader) {
+    private String resolveHeaderForRuleTrainingV2(String rawHeader) {
         String normalized = normalizeHeader(rawHeader);
-        if (containsAny(normalized, "가맹점명", "merchantname", "merchant_name")) {
-            return "merchant_name";
+        // Keep specific headers first to avoid substring collisions (e.g., "code").
+        if (containsAny(normalized, "가맹점업종코드", "merchantindustrycode", "merchant_industry_code")) {
+            return "merchant_industry_code";
         }
         if (containsAny(normalized, "가맹점업종명", "merchantindustryname", "merchant_industry_name")) {
             return "merchant_industry_name";
         }
-        if (containsAny(normalized, "용도코드", "usagecode", "fieldname1", "code")) {
+        if (containsAny(normalized, "가맹점명", "merchantname", "merchant_name")) {
+            return "merchant_name";
+        }
+        if (containsAny(normalized, "용도코드", "usagecode", "fieldname1", "usage_code")) {
+            return "usage_code";
+        }
+        if (containsAny(normalized, "용도명", "usagename", "category", "purpose", "usage_name")) {
+            return "usage_name";
+        }
+        return null;
+    }
+
+    private void validateRequiredHeadersForRuleTrainingV3(Map<String, Integer> headerMap) {
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        if (!headerMap.containsKey("merchant_industry_code")) missing.add("가맹점업종코드");
+        if (!headerMap.containsKey("merchant_industry_name")) missing.add("가맹점업종명");
+        if (!headerMap.containsKey("usage_code")) missing.add("용도코드");
+        if (!headerMap.containsKey("usage_name")) missing.add("용도명");
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Wrong file header format. Required headers: 가맹점업종코드, 가맹점업종명, 용도코드, 용도명. "
+                            + "Missing: " + String.join(", ", missing)
+                            + ". Detected mapped headers: " + headerMap.keySet()
+            );
+        }
+    }
+
+    private void validateRequiredHeadersForRuleTrainingV2(Map<String, Integer> headerMap) {
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        if (!headerMap.containsKey("merchant_industry_code")) missing.add("가맹점업종코드");
+        if (!headerMap.containsKey("merchant_industry_name")) missing.add("가맹점업종명");
+        if (!headerMap.containsKey("usage_code")) missing.add("용도코드");
+        if (!headerMap.containsKey("usage_name")) missing.add("용도명");
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Missing required headers: " + String.join(", ", missing) +
+                            ". Detected headers: " + headerMap.keySet()
+            );
+        }
+    }
+
+    private String resolveHeaderForRuleTraining(String rawHeader) {
+        String normalized = normalizeHeader(rawHeader);
+        // merchant_industry_code must be checked before usage_code to avoid "코드" substring collision
+        if (containsAny(normalized, "가맹점업종코드", "merchantindustrycode")) {
+            return "merchant_industry_code";
+        }
+        if (containsAny(normalized, "가맹점업종명", "merchantindustryname")) {
+            return "merchant_industry_name";
+        }
+        if (containsAny(normalized, "가맹점명", "merchantname")) {
+            return "merchant_name";
+        }
+        if (containsAny(normalized, "용도코드", "usagecode", "fieldname1")) {
             return "usage_code";
         }
         if (containsAny(normalized, "용도명", "usagename", "category", "purpose")) {
@@ -266,12 +347,15 @@ public class RuleServiceImple implements RuleService {
     }
 
     private void validateRequiredHeadersForRuleTraining(Map<String, Integer> headerMap) {
-        if (!headerMap.containsKey("merchant_name")
-                || !headerMap.containsKey("merchant_industry_name")
-                || !headerMap.containsKey("usage_code")
-                || !headerMap.containsKey("usage_name")) {
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        if (!headerMap.containsKey("merchant_industry_code")) missing.add("가맹점업종코드");
+        if (!headerMap.containsKey("merchant_industry_name")) missing.add("가맹점업종명");
+        if (!headerMap.containsKey("usage_code"))             missing.add("용도코드");
+        if (!headerMap.containsKey("usage_name"))             missing.add("용도명");
+        if (!missing.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Missing required headers. Required: merchant_name(가맹점명), merchant_industry_name(가맹점업종명), usage_code(용도코드), usage_name(용도명)"
+                    "Missing required headers: " + String.join(", ", missing) +
+                    ". Detected headers: " + headerMap.keySet()
             );
         }
     }
@@ -292,8 +376,7 @@ public class RuleServiceImple implements RuleService {
 
     private String normalizeHeader(String rawHeader) {
         return rawHeader
-                .replace("\uFEFF", "")
-                .replaceAll("[\\s_\\-]+", "")
+                .replaceAll("[^0-9a-zA-Z\\uAC00-\\uD7A3]+", "")
                 .toLowerCase();
     }
 

@@ -6,22 +6,22 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.sql.Timestamp;
-import java.util.List;
 import java.util.UUID;
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
-public class RuleDTO {
-    private UUID ruleId;
+public class FileClassifySummaryDTO {
+    private UUID summaryId;
+    private UUID fileId;
     private UUID companyId;
-    private String merchantIndustryName;
-    private String merchantIndustryCode;
-    private String usageStatus;
-    private Integer minAmount;
-    private Integer maxAmount;
-    private String description;
+    private Integer totalRows;
+    private Integer processedRows;
+    private Integer skippedRows;
+    private Integer ruleMatchedRows;
+    private Integer aiMatchedRows;
+    private Integer unmatchedRows;
     private Timestamp createdDate;
-    private List<CategoryDTO> categoryDTOList;
+    private Timestamp updatedDate;
 }

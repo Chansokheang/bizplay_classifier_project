@@ -15,89 +15,86 @@ import java.util.UUID;
 public interface RuleRepo {
 
     @Select("""
-        INSERT INTO rules (company_id, rule_name, "가맹점명", "가맹점업종명", min_amount, max_amount, description)
-        VALUES (#{rule.companyId}, #{rule.ruleName}, #{rule.merchantName}, #{rule.merchantIndustryName}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
+        INSERT INTO rules (company_id, "가맹점업종명", "가맹점업종코드", min_amount, max_amount, description)
+        VALUES (#{rule.companyId}, #{rule.merchantIndustryName}, #{rule.merchantIndustryCode}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
         RETURNING *
     """)
     @Results(id = "ruleMap", value = {
-            @Result(property = "ruleId", column = "rule_id",   jdbcType = JdbcType.OTHER,   typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_id",   jdbcType = JdbcType.OTHER,   typeHandler = UUIDTypeHandler.class),
-            @Result(property = "ruleName", column = "rule_name"),
-            @Result(property = "merchantName", column = "가맹점명"),
-            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
-            @Result(property = "usageStatus", column = "usage_status"),
-            @Result(property = "minAmount", column = "min_amount"),
-            @Result(property = "maxAmount", column = "max_amount"),
-            @Result(property = "description", column = "description"),
-            @Result(property = "createdDate", column = "created_date"),
-            @Result(property = "categoryDTOList", column = "rule_id", many = @Many(select = "com.api.bizplay_classifier_api.repository.CategoryRepo.getAllCategoriesByRuleId"))
+            @Result(property = "ruleId",              column = "rule_id",        jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId",           column = "company_id",     jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "merchantIndustryName",column = "가맹점업종명"),
+            @Result(property = "merchantIndustryCode",column = "가맹점업종코드"),
+            @Result(property = "usageStatus",         column = "usage_status"),
+            @Result(property = "minAmount",           column = "min_amount"),
+            @Result(property = "maxAmount",           column = "max_amount"),
+            @Result(property = "description",         column = "description"),
+            @Result(property = "createdDate",         column = "created_date"),
+            @Result(property = "categoryDTOList",     column = "rule_id",
+                    many = @Many(select = "com.api.bizplay_classifier_api.repository.CategoryRepo.getAllCategoriesByRuleId"))
     })
-    RuleDTO createRule(@Param("rule")RuleRequest ruleRequest);
+    RuleDTO createRule(@Param("rule") RuleRequest ruleRequest);
 
     @Select("""
         SELECT * FROM rules WHERE company_id = #{companyId}
     """)
     @ResultMap("ruleMap")
-    List<RuleDTO> getAllRulesByCompanyId(@Param("companyId")UUID companyId);
+    List<RuleDTO> getAllRulesByCompanyId(@Param("companyId") UUID companyId);
 
     @Select("""
         SELECT *
         FROM rules
         WHERE company_id = #{companyId}
-          AND rule_name = #{ruleName}
+          AND "가맹점업종코드" = #{merchantIndustryCode}
         LIMIT 1
     """)
     @ResultMap("ruleMap")
-    RuleDTO findByCompanyIdAndRuleName(@Param("companyId") UUID companyId, @Param("ruleName") String ruleName);
-
-    @Select("""
-        SELECT *
-        FROM rules
-        WHERE company_id = #{companyId}
-          AND "가맹점명" = #{merchantName}
-          AND "가맹점업종명" IS NOT DISTINCT FROM #{merchantIndustryName}
-        LIMIT 1
-    """)
-    @ResultMap("ruleMap")
-    RuleDTO findByCompanyIdAndMerchantNameAndMerchantIndustryName(
+    RuleDTO findByCompanyIdAndIndustryCode(
             @Param("companyId") UUID companyId,
-            @Param("merchantName") String merchantName,
-            @Param("merchantIndustryName") String merchantIndustryName
+            @Param("merchantIndustryCode") String merchantIndustryCode
     );
 
     @Select("""
         SELECT
-            r.rule_name AS rule_name,
-            r."가맹점명" AS merchant_name,
-            r."가맹점업종명" AS merchant_industry_name,
-            r.description AS description,
-            c.code AS code,
-            c.category AS category
+            r."가맹점업종명"   AS merchant_industry_name,
+            r."가맹점업종코드" AS merchant_industry_code,
+            r.description      AS description,
+            c.code             AS code,
+            c.category         AS category
         FROM rules r
         JOIN rule_category_map rcm ON rcm.rule_id = r.rule_id
         JOIN categories c ON c.category_id = rcm.category_id
         WHERE r.company_id = #{companyId}
     """)
     @Results(id = "ruleClassifierMap", value = {
-            @Result(property = "ruleName", column = "rule_name"),
-            @Result(property = "merchantName", column = "merchant_name"),
             @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
-            @Result(property = "description", column = "description"),
-            @Result(property = "code", column = "code"),
-            @Result(property = "category", column = "category")
+            @Result(property = "merchantIndustryCode", column = "merchant_industry_code"),
+            @Result(property = "description",          column = "description"),
+            @Result(property = "code",                 column = "code"),
+            @Result(property = "category",             column = "category")
     })
     List<RuleClassifierDTO> getRuleClassifiersByCompanyId(@Param("companyId") UUID companyId);
+
+    @Update("""
+        UPDATE rules
+        SET usage_status = 'Y'
+        WHERE company_id = #{companyId}
+          AND "媛留뱀젏?낆쥌肄붾뱶" = #{merchantIndustryCode}
+          AND COALESCE(usage_status, '') <> 'Y'
+    """)
+    int markRulesAsUsedByCompanyIdAndIndustryCode(
+            @Param("companyId") UUID companyId,
+            @Param("merchantIndustryCode") String merchantIndustryCode
+    );
 
     @Select("""
         UPDATE rules
         SET
-            rule_name = #{rule.ruleName},
-            "가맹점명" = #{rule.merchantName},
-            "가맹점업종명" = #{rule.merchantIndustryName},
-            usage_status = COALESCE(#{rule.usageStatus}, usage_status),
-            min_amount = #{rule.minAmount},
-            max_amount = #{rule.maxAmount},
-            description = #{rule.description}
+            "가맹점업종명"  = #{rule.merchantIndustryName},
+            "가맹점업종코드" = #{rule.merchantIndustryCode},
+            usage_status     = COALESCE(#{rule.usageStatus}, usage_status),
+            min_amount       = #{rule.minAmount},
+            max_amount       = #{rule.maxAmount},
+            description      = #{rule.description}
         WHERE rule_id = #{ruleId}
         RETURNING *
     """)
@@ -118,6 +115,11 @@ public interface RuleRepo {
         DELETE FROM rule_category_map WHERE rule_id = #{ruleId}
     """)
     Integer deleteRuleCategoryMappings(@Param("ruleId") UUID ruleId);
+
+    @Delete("""
+        DELETE FROM rules WHERE rule_id = #{ruleId}
+    """)
+    Integer deleteRuleByRuleId(@Param("ruleId") UUID ruleId);
 
     @Insert("""
         INSERT INTO rule_category_map (rule_id, category_id)

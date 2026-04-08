@@ -73,9 +73,9 @@ public class AiFallbackServiceImple implements AiFallbackService {
 
     public AiFallbackServiceImple(
             ObjectMapper objectMapper,
-            @Value("${app.ai.fallback.url:}") String aiUrl,
-            @Value("${app.ai.fallback.api-key:}") String apiKey,
-            @Value("${app.ai.fallback.enabled:false}") boolean enabled,
+            @Value("${app.ai.fallback.url:http://gpu-local.sovanreach.com:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions}") String aiUrl,
+            @Value("${app.ai.fallback.api-key:sk-d7a20eb034c847e8994e192b40c69a61}") String apiKey,
+            @Value("${app.ai.fallback.enabled:true}") boolean enabled,
             @Value("${app.ai.fallback.connect-timeout-ms:3000}") int connectTimeoutMs,
             @Value("${app.ai.fallback.read-timeout-ms:8000}") int readTimeoutMs
     ) {
@@ -106,8 +106,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 .filter(c -> c.getCategory() != null && !c.getCategory().isBlank())
                 .map(c -> {
                     Map<String, String> context = new LinkedHashMap<>();
-                    context.put("ruleName", safe(c.getRuleName()));
-                    context.put("merchantName", safe(c.getMerchantName()));
+                    context.put("merchantIndustryCode", safe(c.getMerchantIndustryCode()));
                     context.put("merchantIndustryName", safe(c.getMerchantIndustryName()));
                     context.put("description", safe(c.getDescription()));
                     context.put("code", c.getCode().trim());
@@ -185,6 +184,75 @@ public class AiFallbackServiceImple implements AiFallbackService {
         }
     }
 
+    @Override
+    public String generatePrompt(List<Map<String, String>> trainingRows) {
+        if (!enabled || aiUrl == null || aiUrl.isBlank() || apiKey == null || apiKey.isBlank()) {
+            return null;
+        }
+        if (trainingRows == null || trainingRows.isEmpty()) {
+            return null;
+        }
+
+        String trainingData = trainingRows.stream()
+                .map(row -> "- 가맹점명: %s | 가맹점업종코드: %s | 가맹점업종명: %s | 공급금액: %s | 부가세액: %s | 용도코드: %s | 용도명: %s"
+                        .formatted(
+                                row.getOrDefault("merchant_name", ""),
+                                row.getOrDefault("merchant_industry_code", ""),
+                                row.getOrDefault("merchant_industry_name", ""),
+                                row.getOrDefault("supply_amount", ""),
+                                row.getOrDefault("vat_amount", ""),
+                                row.getOrDefault("usage_code", ""),
+                                row.getOrDefault("usage_name", "")
+                        ))
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        String systemMessage = """
+                당신은 기업 회계 분류 AI 시스템의 프롬프트 생성 전문가입니다.
+                아래 학습 데이터를 분석하여, 거래 내역을 계정과목으로 자동 분류하는 시스템 프롬프트를 생성하세요.
+
+                ## 요구사항
+                1. 학습 데이터의 패턴(가맹점명, 가맹점업종명, 공급금액, 부가세액 등)을 분석하여 분류 규칙과 힌트를 도출하세요.
+                2. 생성할 프롬프트는 AI가 거래 내역을 입력받아 용도코드와 용도명을 예측하는 데 사용됩니다.
+                3. 반드시 다음 두 플레이스홀더를 정확히 이 형식 그대로 포함하세요:
+                   - {{accounts_list}}: 이 위치에 회사 계정과목 목록이 삽입됩니다
+                   - {{examples}}: 이 위치에 규칙 기반 예시가 삽입됩니다
+                4. 한국어로 작성하세요.
+                5. 시스템 프롬프트 텍스트만 출력하고 다른 설명이나 마크다운 코드블록은 추가하지 마세요.
+                """;
+
+        String userMessage = "## 학습 데이터 (%d건)\n".formatted(trainingRows.size())
+                + trainingData
+                + "\n\n위 학습 데이터를 기반으로 시스템 프롬프트를 생성하세요.";
+
+        Map<String, Object> requestBody = Map.of(
+                "stream", false,
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemMessage),
+                        Map.of("role", "user", "content", userMessage)
+                )
+        );
+
+        try {
+            byte[] rawResponseBytes = restClient.post()
+                    .uri(aiUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, MediaType.TEXT_PLAIN)
+                    .header("x-api-key", apiKey)
+                    .body(requestBody)
+                    .retrieve()
+                    .body(byte[].class);
+            String rawResponse = decodeResponseBody(rawResponseBytes);
+            String content = extractMessageContent(rawResponse);
+            if (content == null || content.isBlank()) {
+                return null;
+            }
+            return content.trim();
+        } catch (Exception e) {
+            log.warn("AI prompt generation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private String decodeResponseBody(byte[] body) {
         if (body == null || body.length == 0) {
             return null;
@@ -243,14 +311,13 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private String buildExamples(List<Map<String, String>> contexts) {
         List<String> lines = contexts.stream()
                 .map(c -> {
-                    String ruleName = c.getOrDefault("ruleName", "");
-                    String merchantName = c.getOrDefault("merchantName", "");
+                    String merchantIndustryCode = c.getOrDefault("merchantIndustryCode", "");
                     String merchantIndustryName = c.getOrDefault("merchantIndustryName", "");
                     String description = c.getOrDefault("description", "");
                     String code = c.getOrDefault("code", "");
                     String category = c.getOrDefault("category", "");
-                    return "- 규칙명: %s | 가맹점명: %s | 가맹점업종명: %s | 설명: %s | 추천: %s %s"
-                            .formatted(ruleName, merchantName, merchantIndustryName, description, code, category);
+                    return "- 가맹점업종코드: %s | 가맹점업종명: %s | 설명: %s | 추천: %s %s"
+                            .formatted(merchantIndustryCode, merchantIndustryName, description, code, category);
                 })
                 .toList();
         if (lines.isEmpty()) {

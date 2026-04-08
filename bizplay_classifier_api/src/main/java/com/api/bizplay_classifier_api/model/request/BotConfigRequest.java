@@ -37,6 +37,8 @@ public class BotConfigRequest {
         @DecimalMax(value = "2.0", message = "Temperature must be <= 2.0.")
         private Double temperature;
 
+        private String apiKey;
+
         @NotBlank(message = "System prompt can not be blank.")
         private String systemPrompt;
     }

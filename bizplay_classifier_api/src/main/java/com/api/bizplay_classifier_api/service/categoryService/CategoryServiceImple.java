@@ -197,7 +197,8 @@ public class CategoryServiceImple implements CategoryService {
 
         if (bestHeaderRowIndex < 0 || bestHeaderMap.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Wrong column names. Required columns: code(용도코드), category(용도명)."
+                    "Wrong file header format. Required headers: 용도코드(code), 용도명(category). "
+                            + "Detected mapped headers: []"
             );
         }
 
@@ -258,10 +259,14 @@ public class CategoryServiceImple implements CategoryService {
         boolean hasCode = headerMap.containsKey(HEADER_CODE);
         boolean hasCategory = headerMap.containsKey(HEADER_CATEGORY);
         if (!hasCode || !hasCategory) {
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            if (!hasCode) missing.add("용도코드(code)");
+            if (!hasCategory) missing.add("용도명(category)");
             throw new IllegalArgumentException(
-                    "Wrong column names. Required columns: code(용도코드), category(용도명). "
-                            + "Optional: is_used(사용여부). "
-                            + "Detected mapped columns: " + headerMap.keySet()
+                    "Wrong file header format. Required headers: 용도코드(code), 용도명(category). "
+                            + "Missing: " + String.join(", ", missing) + ". "
+                            + "Optional: 사용여부(is_used). "
+                            + "Detected mapped headers: " + headerMap.keySet()
             );
         }
     }

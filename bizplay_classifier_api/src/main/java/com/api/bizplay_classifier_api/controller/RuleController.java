@@ -50,6 +50,19 @@ public class RuleController {
         );
     }
 
+    @DeleteMapping("/{ruleId}")
+    public ResponseEntity<ApiResponse<?>> deleteRuleByRuleId(@PathVariable UUID ruleId) {
+        ruleService.deleteRuleByRuleId(ruleId);
+        return ResponseEntity.ok(
+                ApiResponse.<Object>builder()
+                        .payload(null)
+                        .message("Rule was deleted successfully.")
+                        .code(200)
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
     @GetMapping("/{companyId}")
     public ResponseEntity<ApiResponse<?>> getAllRulesByCompanyId(@PathVariable UUID companyId) {
         return ResponseEntity.ok(

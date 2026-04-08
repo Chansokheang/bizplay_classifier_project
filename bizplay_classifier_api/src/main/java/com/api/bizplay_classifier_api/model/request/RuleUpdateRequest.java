@@ -21,16 +21,16 @@ public class RuleUpdateRequest {
     @NotEmpty(message = "Category Id list can not be empty.")
     private List<UUID> categoryIds;
 
-    @NotBlank(message = "Rule name can not be blank.")
-    private String ruleName;
-
-    @NotBlank(message = "Merchant name can not be blank.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uBA85")
-    @JsonAlias("merchantName")
-    private String merchantName;
+    @NotBlank(message = "가맹점업종명 can not be blank.")
     @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
     @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
     private String merchantIndustryName;
+
+    @NotBlank(message = "가맹점업종코드 can not be blank.")
+    @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "가맹점업종코드 must be exactly 5 alphanumeric characters.")
+    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\ucf54\ub4dc")
+    @JsonAlias("merchantIndustryCode")
+    private String merchantIndustryCode;
 
     @Pattern(regexp = "^[YN]$", message = "Usage status must be Y or N.")
     private String usageStatus;

@@ -1,8 +1,14 @@
 package com.api.bizplay_classifier_api.controller;
 
+import com.api.bizplay_classifier_api.model.enums.FileType;
+import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
+import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
+import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
+import com.api.bizplay_classifier_api.service.botConfigService.BotConfigService;
 import com.api.bizplay_classifier_api.service.ruleService.RuleService;
+import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -24,16 +30,36 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000"})
 public class DataController {
-
     private final RuleService ruleService;
+    private final FileStorageService fileStorageService;
+    private final FileUploadHistoryRepo fileUploadHistoryRepo;
+    private final BotConfigService botConfigService;
 
     @PostMapping(value = "/train", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> trainRulesFromFile(
             @RequestPart("file") MultipartFile file,
             @RequestParam("companyId") UUID companyId,
-            @RequestParam(value = "sheetName", required = false) String sheetName
+            @RequestParam(value = "sheetName", required = false) String sheetName,
+            @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
         DataTrainSummaryResponse payload = ruleService.trainRulesFromExcel(file, companyId, sheetName);
+
+        FileStorageResponse stored = fileStorageService.storeFile(file, FileType.TRAINING);
+        fileUploadHistoryRepo.createFileRecord(
+                FileUploadHistoryRequest.builder()
+                        .companyId(companyId)
+                        .originalFileName(stored.getOriginalFileName())
+                        .storedFileName(stored.getStoredFileName())
+                        .fileUrl(stored.getFileUrl())
+                        .sheetName(sheetName)
+                        .fileType(FileType.TRAINING)
+                        .build()
+        );
+
+        // Auto-generate and persist enhanced prompt after training.
+        // sampleRows=null -> use all valid rows.
+        botConfigService.updatePromptFromLatestTrainingData(companyId, sampleRows);
+
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<DataTrainSummaryResponse>builder()
                         .payload(payload)
@@ -44,4 +70,3 @@ public class DataController {
         );
     }
 }
-

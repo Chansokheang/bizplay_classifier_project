@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.response;
 
+import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,4 +24,5 @@ public class TransactionUploadSummaryResponse {
     private Integer aiMatchedRows;
     private Integer ruleUnmatchedRows;
     private List<String> unmatchedMerchantSamples;
+    private FileClassifySummaryDTO fileClassifySummary;
 }

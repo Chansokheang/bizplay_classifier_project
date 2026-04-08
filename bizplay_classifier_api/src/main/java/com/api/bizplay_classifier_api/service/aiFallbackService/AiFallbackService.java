@@ -8,6 +8,8 @@ import java.util.Map;
 public interface AiFallbackService {
     AiFallbackResult classify(Map<String, String> rowData, List<RuleClassifierDTO> classifiers, String promptTemplate);
 
+    String generatePrompt(List<Map<String, String>> trainingRows);
+
     record AiFallbackResult(String usageCode, String usageName, String reason) {
     }
 }

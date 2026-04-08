@@ -6,6 +6,7 @@ import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.ResultMap;
 import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.type.JdbcType;
@@ -29,6 +30,24 @@ public interface BotConfigRepo {
     BotConfigDTO createBotConfig(@Param("bot") BotConfigRequest botConfigRequest, @Param("configJson") String configJson);
 
     @Select("""
+        SELECT bot_id
+        FROM bot_config
+        WHERE company_id = #{companyId}
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    UUID findLatestBotIdByCompanyId(@Param("companyId") UUID companyId);
+
+    @Select("""
+        UPDATE bot_config
+        SET config = CAST(#{configJson} AS json)
+        WHERE bot_id = #{botId}
+        RETURNING *
+    """)
+    @ResultMap("botConfigMap")
+    BotConfigDTO updateBotConfigByBotId(@Param("botId") UUID botId, @Param("configJson") String configJson);
+
+    @Select("""
         SELECT COUNT(1)
         FROM companies
         WHERE company_id = #{companyId}
@@ -44,4 +63,23 @@ public interface BotConfigRepo {
         LIMIT 1
     """)
     String getLatestSystemPromptByCompanyId(@Param("companyId") UUID companyId);
+
+    @Select("""
+        SELECT config::text
+        FROM bot_config
+        WHERE company_id = #{companyId}
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    String getLatestConfigJsonByCompanyId(@Param("companyId") UUID companyId);
+
+    @Select("""
+        SELECT *
+        FROM bot_config
+        WHERE company_id = #{companyId}
+        ORDER BY created_date DESC
+        LIMIT 1
+    """)
+    @ResultMap("botConfigMap")
+    BotConfigDTO getLatestBotConfigByCompanyId(@Param("companyId") UUID companyId);
 }

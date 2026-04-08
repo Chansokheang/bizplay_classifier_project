@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.service.storageService;
 
+import com.api.bizplay_classifier_api.model.enums.FileType;
 import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
@@ -22,6 +23,10 @@ import java.util.UUID;
 @Service
 @Slf4j
 public class FileStorageServiceImple implements FileStorageService {
+
+    private static final String TRAINING_FOLDER = "training-files";
+    private static final String INPUT_FOLDER = "input-files";
+    private static final String OUTPUT_FOLDER = "output-files";
 
     private final MinioClient minioClient;
     private final String bucketName;
@@ -92,6 +97,44 @@ public class FileStorageServiceImple implements FileStorageService {
     }
 
     @Override
+    public FileStorageResponse storeFile(MultipartFile file, FileType fileType) {
+        ensureMinioReady();
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("File is required.");
+        }
+
+        String originalFileName = StringUtils.cleanPath(file.getOriginalFilename() == null ? "file" : file.getOriginalFilename());
+        if (originalFileName.contains("..")) {
+            throw new IllegalArgumentException("Invalid file name.");
+        }
+
+        String extension = "";
+        int lastDot = originalFileName.lastIndexOf('.');
+        if (lastDot >= 0) {
+            extension = originalFileName.substring(lastDot);
+        }
+
+        String storedFileName = buildObjectName(extension, folderFor(fileType));
+
+        try (InputStream inputStream = file.getInputStream()) {
+            putObject(storedFileName, inputStream, file.getSize(), file.getContentType());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to store file.", e);
+        }
+
+        String fileUrl = publicBasePath + "/" + storedFileName;
+        log.info("Stored {} file '{}' as '{}'", fileType, originalFileName, storedFileName);
+
+        return FileStorageResponse.builder()
+                .originalFileName(originalFileName)
+                .storedFileName(storedFileName)
+                .fileUrl(fileUrl)
+                .size(file.getSize())
+                .contentType(file.getContentType())
+                .build();
+    }
+
+    @Override
     public FileStorageResponse storeBytes(byte[] bytes, String originalFileName, String contentType) {
         ensureMinioReady();
         if (bytes == null || bytes.length == 0) {
@@ -127,6 +170,53 @@ public class FileStorageServiceImple implements FileStorageService {
                 .build();
     }
 
+    @Override
+    public FileStorageResponse storeBytes(byte[] bytes, String originalFileName, String contentType, FileType fileType) {
+        ensureMinioReady();
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("File bytes are required.");
+        }
+        String cleanedOriginal = StringUtils.cleanPath(
+                originalFileName == null || originalFileName.isBlank() ? "file.xlsx" : originalFileName
+        );
+        if (cleanedOriginal.contains("..")) {
+            throw new IllegalArgumentException("Invalid file name.");
+        }
+
+        String extension = "";
+        int lastDot = cleanedOriginal.lastIndexOf('.');
+        if (lastDot >= 0) {
+            extension = cleanedOriginal.substring(lastDot);
+        }
+
+        String storedFileName = buildObjectName(extension, folderFor(fileType));
+        try (InputStream inputStream = new java.io.ByteArrayInputStream(bytes)) {
+            putObject(storedFileName, inputStream, bytes.length, contentType);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to store file bytes.", e);
+        }
+
+        String fileUrl = publicBasePath + "/" + storedFileName;
+        return FileStorageResponse.builder()
+                .originalFileName(cleanedOriginal)
+                .storedFileName(storedFileName)
+                .fileUrl(fileUrl)
+                .size((long) bytes.length)
+                .contentType(contentType)
+                .build();
+    }
+
+    private String folderFor(FileType fileType) {
+        if (fileType == null) {
+            return requestFolder;
+        }
+        return switch (fileType) {
+            case TRAINING -> TRAINING_FOLDER;
+            case INPUT -> INPUT_FOLDER;
+            case OUTPUT -> OUTPUT_FOLDER;
+        };
+    }
+
     private void putObject(String storedFileName, InputStream inputStream, long size, String contentType) throws Exception {
         minioClient.putObject(
                 PutObjectArgs.builder()
@@ -139,11 +229,15 @@ public class FileStorageServiceImple implements FileStorageService {
     }
 
     private String buildObjectName(String extension) {
+        return buildObjectName(extension, requestFolder);
+    }
+
+    private String buildObjectName(String extension, String folder) {
         String fileName = UUID.randomUUID() + extension;
-        if (requestFolder.isBlank()) {
+        if (folder == null || folder.isBlank()) {
             return fileName;
         }
-        return requestFolder + "/" + fileName;
+        return folder + "/" + fileName;
     }
 
     private String normalizeFolder(String folder) {
@@ -206,6 +300,24 @@ public class FileStorageServiceImple implements FileStorageService {
             log.info("Deleted stored file '{}'", cleaned);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to delete file: " + storedFileName, e);
+        }
+    }
+
+    @Override
+    public void replaceBytes(String storedFileName, byte[] bytes, String contentType) {
+        ensureMinioReady();
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("File bytes are required.");
+        }
+        String cleaned = StringUtils.cleanPath(storedFileName);
+        if (cleaned.contains("..")) {
+            throw new IllegalArgumentException("Invalid file name.");
+        }
+        try (java.io.InputStream inputStream = new java.io.ByteArrayInputStream(bytes)) {
+            putObject(cleaned, inputStream, bytes.length, contentType);
+            log.info("Replaced stored file '{}'", cleaned);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to replace file: " + storedFileName, e);
         }
     }
 
