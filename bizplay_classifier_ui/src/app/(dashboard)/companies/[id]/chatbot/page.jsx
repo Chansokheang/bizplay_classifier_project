@@ -180,7 +180,7 @@ export default function ChatbotPage() {
     temperature: 0.3,
     systemPrompt: DEFAULT_PROMPT.replace('{company}', company?.name ?? 'your company'),
   })
-  const [sampleRows, setSampleRows] = useState(500)
+  const [sampleRows, setSampleRows] = useState(100)
 
   // Fetch standard config on mount
   useEffect(() => {
@@ -304,7 +304,7 @@ export default function ChatbotPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: '#0F172A' }}>Chatbot Configuration</h1>
+          <h1 className="text-2xl font-bold" style={{ color: '#0F172A' }}>Settings Configuration</h1>
           <p className="mt-1 text-sm" style={{ color: '#94A3B8' }}>
             Configure the AI model and system prompt used to classify transactions.
           </p>

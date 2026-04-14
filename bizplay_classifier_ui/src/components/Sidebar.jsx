@@ -23,10 +23,10 @@ import { COMPANIES } from '../lib/mock-data'
 const FIRST_COMPANY_ID = COMPANIES[0]?.id ?? '1'
 
 const PROJECT_LINKS = [
-  { href: 'transactions', label: 'Transactions', icon: FileSpreadsheet },
   { href: 'categories', label: 'Categories', icon: Layers },
   { href: 'rules', label: 'Rules', icon: ShieldCheck },
-  { href: 'chatbot', label: 'Chatbot', icon: MessageSquare },
+  { href: 'transactions', label: 'Transactions', icon: FileSpreadsheet },
+  { href: 'chatbot', label: 'Settings', icon: Settings },
 ]
 
 export default function Sidebar() {

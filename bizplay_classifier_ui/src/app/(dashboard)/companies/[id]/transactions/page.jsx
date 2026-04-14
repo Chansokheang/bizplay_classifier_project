@@ -237,11 +237,15 @@ export default function TransactionsPage() {
           Drag & drop or click to browse · <span className="text-slate-500">.xlsx, .xls, .csv</span>
         </p>
         <button
-          className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-bold transition-all"
-          style={{ background: 'linear-gradient(180deg, #1A32D8 0%, #1529AB 100%)', color: '#fff', boxShadow: '0 2px 8px rgba(26,50,216,0.2)' }}
+          className="mt-4 flex items-center gap-2 pl-2 pr-4 py-2 rounded-xl text-sm font-semibold cursor-pointer transition-all"
+          style={{ background: '#1A32D8', color: '#fff', boxShadow: '0 4px 12px rgba(26,50,216,0.35)' }}
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click() }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#1529AB'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,50,216,0.5)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = '#1A32D8'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.35)' }}
         >
-          <Upload size={14} />
+          <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/25 font-bold text-sm select-none">
+            <Upload size={15} strokeWidth={3} />
+          </div>
           Choose File
         </button>
         <input

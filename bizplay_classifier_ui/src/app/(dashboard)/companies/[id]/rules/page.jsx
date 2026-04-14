@@ -376,18 +376,19 @@ export default function RulesPage() {
             {loading ? 'Loading…' : `${rules.length} rules · ${rules.filter((r) => r.status === 'active').length} active`}
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button
-            type="button"
-            onClick={() => setTrainOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold cursor-pointer"
-            style={{ background: PRIMARY, color: '#fff', border: `1px solid ${PRIMARY}` }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = PRIMARY_HOVER }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = PRIMARY }}
-          >
-            <Upload size={15} />Train from labelled file
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setTrainOpen(true)}
+          className="flex items-center gap-2 pl-2 pr-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
+          style={{ background: PRIMARY, color: '#fff', boxShadow: '0 4px 12px rgba(26,50,216,0.35)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = PRIMARY_HOVER; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,50,216,0.5)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = PRIMARY; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.35)' }}
+        >
+          <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/25 font-bold text-sm select-none">
+            <Upload size={15} strokeWidth={3} />
+          </div>
+          Train from labelled file
+        </button>
       </div>
 
       {loadError && (

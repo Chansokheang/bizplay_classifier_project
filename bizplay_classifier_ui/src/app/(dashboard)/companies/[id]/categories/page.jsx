@@ -571,7 +571,7 @@ export default function CategoriesPage() {
         </div>
         <button
           onClick={() => openModal('picker')}
-          className="flex items-center gap-2 pl-2 pr-4 py-2 rounded-xl text-sm font-bold cursor-pointer"
+          className="flex items-center gap-2 pl-2 pr-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
           style={{ background: '#1A32D8', color: '#fff', boxShadow: '0 4px 12px rgba(26,50,216,0.35)' }}
           onMouseEnter={(e) => { e.currentTarget.style.background = '#1529AB'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,50,216,0.5)' }}
           onMouseLeave={(e) => { e.currentTarget.style.background = '#1A32D8'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.35)' }}>

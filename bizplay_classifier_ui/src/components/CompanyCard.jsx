@@ -64,7 +64,7 @@ export default function CompanyCard({ company, onEdit, onDelete }) {
       onClick={() => {
         if (isRouting) return
         setIsRouting(true)
-        router.push(`/companies/${company.id}/transactions`)
+        router.push(`/companies/${company.id}/categories`)
       }}
     >
       <div className="p-5 flex-1 flex flex-col">
