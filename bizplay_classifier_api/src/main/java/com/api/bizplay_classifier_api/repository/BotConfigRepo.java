@@ -24,7 +24,7 @@ public interface BotConfigRepo {
     @Results(id = "botConfigMap", value = {
             @Result(property = "botId", column = "bot_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
             @Result(property = "companyId", column = "company_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "config", column = "config"),
+            @Result(property = "rawConfig", column = "config"),
             @Result(property = "createdDate", column = "created_date")
     })
     BotConfigDTO createBotConfig(@Param("bot") BotConfigRequest botConfigRequest, @Param("configJson") String configJson);

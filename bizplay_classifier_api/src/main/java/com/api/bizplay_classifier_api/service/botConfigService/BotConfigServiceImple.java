@@ -3,6 +3,7 @@ package com.api.bizplay_classifier_api.service.botConfigService;
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
+import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.request.PromptEnhancementRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
@@ -37,7 +38,6 @@ import java.util.concurrent.CompletableFuture;
 @Service
 @AllArgsConstructor
 public class BotConfigServiceImple implements BotConfigService {
-
     private final BotConfigRepo botConfigRepo;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileStorageService fileStorageService;
@@ -93,9 +93,12 @@ public class BotConfigServiceImple implements BotConfigService {
 
         BotConfigDTO latest = botConfigRepo.getLatestBotConfigByCompanyId(companyId);
         if (latest == null) {
-            throw new CustomNotFoundException("Bot config was not found for company Id: " + companyId);
+            return BotConfigDTO.builder()
+                    .companyId(companyId)
+                    .config(buildDefaultConfig())
+                    .build();
         }
-        return latest;
+        return withParsedConfig(latest);
     }
 
     @Override
@@ -132,9 +135,21 @@ public class BotConfigServiceImple implements BotConfigService {
             throw new CustomNotFoundException("No uploaded training file found for company: " + companyId);
         }
 
-        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(latestFile, effectiveSampleRows);
-        String enhancedPrompt = promptBuild.prompt();
         BotConfigRequest.Config baseConfig = resolveBaseConfig(companyId);
+        AiProvider provider = request != null && request.getProvider() != null ? request.getProvider() : baseConfig.getProvider();
+        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(
+                latestFile,
+                effectiveSampleRows,
+                BotConfigRequest.Config.builder()
+                        .provider(provider)
+                        .modelName(firstNonBlank(request == null ? null : request.getModelName(), baseConfig.getModelName()))
+                        .temperature(request != null && request.getTemperature() != null ? request.getTemperature() : baseConfig.getTemperature())
+                        .apiKey(firstNonBlank(request == null ? null : request.getApiKey(), baseConfig.getApiKey()))
+                        .systemPrompt(baseConfig.getSystemPrompt())
+                        .build()
+        );
+        String enhancedPrompt = promptBuild.prompt();
+        provider = request != null && request.getProvider() != null ? request.getProvider() : baseConfig.getProvider();
         String modelName = firstNonBlank(request == null ? null : request.getModelName(), baseConfig.getModelName());
         Double temperature = request != null && request.getTemperature() != null ? request.getTemperature() : baseConfig.getTemperature();
         String apiKey = firstNonBlank(request == null ? null : request.getApiKey(), baseConfig.getApiKey());
@@ -142,6 +157,7 @@ public class BotConfigServiceImple implements BotConfigService {
         String configJson = toConfigJson(BotConfigRequest.builder()
                 .companyId(companyId)
                 .config(BotConfigRequest.Config.builder()
+                        .provider(provider)
                         .modelName(modelName)
                         .temperature(temperature)
                         .apiKey(apiKey)
@@ -154,6 +170,7 @@ public class BotConfigServiceImple implements BotConfigService {
                 BotConfigRequest.builder()
                         .companyId(companyId)
                         .config(BotConfigRequest.Config.builder()
+                                .provider(provider)
                                 .modelName(modelName)
                                 .temperature(temperature)
                                 .apiKey(apiKey)
@@ -190,7 +207,7 @@ public class BotConfigServiceImple implements BotConfigService {
             throw new CustomNotFoundException("No uploaded training file found for company: " + companyId);
         }
 
-        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(latestFile, effectiveSampleRows);
+        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(latestFile, effectiveSampleRows, resolveBaseConfig(companyId));
         return PromptEnhancementResponse.builder()
                 .prompt(promptBuild.prompt())
                 .source(promptBuild.source())
@@ -212,9 +229,9 @@ public class BotConfigServiceImple implements BotConfigService {
     private BotConfigDTO saveOrUpdateBotConfig(UUID companyId, BotConfigRequest request, String configJson) {
         UUID latestBotId = botConfigRepo.findLatestBotIdByCompanyId(companyId);
         if (latestBotId != null) {
-            return botConfigRepo.updateBotConfigByBotId(latestBotId, configJson);
+            return withParsedConfig(botConfigRepo.updateBotConfigByBotId(latestBotId, configJson));
         }
-        return botConfigRepo.createBotConfig(request, configJson);
+        return withParsedConfig(botConfigRepo.createBotConfig(request, configJson));
     }
 
     private String toConfigJson(BotConfigRequest request) {
@@ -225,34 +242,54 @@ public class BotConfigServiceImple implements BotConfigService {
         }
     }
 
+    private BotConfigDTO withParsedConfig(BotConfigDTO dto) {
+        if (dto == null) {
+            return null;
+        }
+        if (dto.getConfig() != null) {
+            return dto;
+        }
+
+        BotConfigRequest.Config parsedConfig = buildDefaultConfig();
+        String rawConfig = dto.getRawConfig();
+        if (rawConfig != null && !rawConfig.isBlank()) {
+            try {
+                BotConfigRequest.Config parsed = objectMapper.readValue(rawConfig, BotConfigRequest.Config.class);
+                parsedConfig = mergeWithDefaults(parsed, buildDefaultConfig());
+            } catch (Exception ignored) {
+                parsedConfig = buildDefaultConfig();
+            }
+        }
+
+        dto.setConfig(parsedConfig);
+        return dto;
+    }
+
     private BotConfigRequest.Config resolveBaseConfig(UUID companyId) {
         String latestConfigJson = botConfigRepo.getLatestConfigJsonByCompanyId(companyId);
         if (latestConfigJson == null || latestConfigJson.isBlank()) {
-            return BotConfigRequest.Config.builder()
-                    .modelName("exaone-3.5")
-                    .temperature(0.2)
-                    .apiKey(null)
-                    .systemPrompt("")
-                    .build();
+            return buildDefaultConfig();
         }
         try {
             BotConfigRequest.Config parsed = objectMapper.readValue(latestConfigJson, BotConfigRequest.Config.class);
-            String model = parsed.getModelName() == null || parsed.getModelName().isBlank() ? "exaone-3.5" : parsed.getModelName();
-            Double temperature = parsed.getTemperature() == null ? 0.2 : parsed.getTemperature();
-            return BotConfigRequest.Config.builder()
-                    .modelName(model)
-                    .temperature(temperature)
-                    .apiKey(parsed.getApiKey())
-                    .systemPrompt(parsed.getSystemPrompt() == null ? "" : parsed.getSystemPrompt())
-                    .build();
+            return mergeWithDefaults(parsed, buildDefaultConfig());
         } catch (Exception e) {
-            return BotConfigRequest.Config.builder()
-                    .modelName("exaone-3.5")
-                    .temperature(0.2)
-                    .apiKey(null)
-                    .systemPrompt("")
-                    .build();
+            return buildDefaultConfig();
         }
+    }
+
+    private BotConfigRequest.Config buildDefaultConfig() {
+        return BotConfigDefaults.defaultConfig();
+    }
+
+    private BotConfigRequest.Config mergeWithDefaults(BotConfigRequest.Config parsed, BotConfigRequest.Config defaults) {
+        return BotConfigRequest.Config.builder()
+                .provider(parsed.getProvider() == null ? defaults.getProvider() : parsed.getProvider())
+                .modelName(firstNonBlank(parsed.getModelName(), defaults.getModelName()))
+                .temperature(parsed.getTemperature() == null ? defaults.getTemperature() : parsed.getTemperature())
+                .apiKey(firstNonBlank(parsed.getApiKey(), defaults.getApiKey()))
+                .systemPrompt(firstNonBlank(parsed.getSystemPrompt(), defaults.getSystemPrompt()))
+                .build();
     }
 
     private String firstNonBlank(String preferred, String fallback) {
@@ -262,7 +299,11 @@ public class BotConfigServiceImple implements BotConfigService {
         return fallback;
     }
 
-    private PromptBuildResult buildEnhancedPromptFromFile(FileUploadHistoryDTO latestFile, Integer sampleRows) {
+    private PromptBuildResult buildEnhancedPromptFromFile(
+            FileUploadHistoryDTO latestFile,
+            Integer sampleRows,
+            BotConfigRequest.Config aiConfig
+    ) {
         Resource resource = fileStorageService.loadAsResource(latestFile.getStoredFileName());
         try (InputStream inputStream = resource.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -307,7 +348,7 @@ public class BotConfigServiceImple implements BotConfigService {
                 throw new IllegalArgumentException("No valid training rows found in latest uploaded file.");
             }
 
-            String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows);
+            String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows, aiConfig);
             if (aiGeneratedPrompt != null && !aiGeneratedPrompt.isBlank()) {
                 String normalized = ensurePromptHasDynamicPlaceholders(stripDynamicPlaceholders(aiGeneratedPrompt));
                 if (!looksLikeRowDumpPrompt(normalized)) {

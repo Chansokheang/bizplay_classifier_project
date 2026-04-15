@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import lombok.AllArgsConstructor;
@@ -12,6 +13,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @Builder
 public class PromptEnhancementRequest {
+    private AiProvider provider;
+
     private String modelName;
 
     private String apiKey;

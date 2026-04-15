@@ -4,6 +4,7 @@ import com.api.bizplay_classifier_api.model.dto.RuleClassifierDTO;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
+import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
@@ -20,8 +21,10 @@ import com.api.bizplay_classifier_api.repository.BotConfigRepo;
 import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
+import com.api.bizplay_classifier_api.service.botConfigService.BotConfigDefaults;
 import com.api.bizplay_classifier_api.service.companyService.CompanyService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -61,6 +64,7 @@ public class TransactionServiceImple implements TransactionService {
     private final CompanyService companyService;
     private final FileStorageService fileStorageService;
     private final AiFallbackService aiFallbackService;
+    private final ObjectMapper objectMapper;
     private static final int EXCEL_BATCH_SIZE = 500;
     private static final int AI_FALLBACK_CONTEXT_LIMIT = 30;
     private static final String USAGE_CODE_HEADER = "field_name1";
@@ -234,7 +238,7 @@ public class TransactionServiceImple implements TransactionService {
             ensureUsageAndMethodColumnsSafe(sheet.getRow(headerParseResult.headerRowIndex()), headerMap);
 
             Map<UUID, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
-            Map<UUID, String> promptTemplateCache = new HashMap<>();
+            Map<UUID, BotConfigRequest.Config> botConfigCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
             Set<String> usedRuleKeys = new HashSet<>();
             UUID fileCompanyId = defaultCompanyId;
@@ -277,7 +281,7 @@ public class TransactionServiceImple implements TransactionService {
                             formatter,
                             companyId,
                             rulesCache,
-                            promptTemplateCache,
+                            botConfigCache,
                             aiResultCache,
                             usageValue,
                             disambiguateMultiCode
@@ -746,7 +750,7 @@ public class TransactionServiceImple implements TransactionService {
 
     private UsageValue resolveUsageValueByAi(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
                                              Map<UUID, List<RuleClassifierDTO>> rulesCache,
-                                             Map<UUID, String> promptTemplateCache,
+                                             Map<UUID, BotConfigRequest.Config> botConfigCache,
                                              Map<String, AiFallbackService.AiFallbackResult> aiResultCache,
                                              UsageValue current,
                                              boolean disambiguateMultiCode) {
@@ -799,8 +803,9 @@ public class TransactionServiceImple implements TransactionService {
             return toAiUsageValue(current, cached, disambiguateMultiCode);
         }
 
-        String promptTemplate = resolvePromptTemplate(companyId, promptTemplateCache);
-        AiFallbackService.AiFallbackResult aiResult = aiFallbackService.classify(rowSnapshot, aiContexts, promptTemplate);
+        BotConfigRequest.Config botConfig = resolveBotConfig(companyId, botConfigCache);
+        String promptTemplate = botConfig.getSystemPrompt();
+        AiFallbackService.AiFallbackResult aiResult = aiFallbackService.classify(rowSnapshot, aiContexts, promptTemplate, botConfig);
         if (aiResult == null) {
             return inferUsageValueFromContexts(current, rowSnapshot, aiContexts);
         }
@@ -917,14 +922,38 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private String resolvePromptTemplate(UUID companyId, Map<UUID, String> promptTemplateCache) {
-        if (promptTemplateCache.containsKey(companyId)) {
-            String cached = promptTemplateCache.get(companyId);
-            return cached == null || cached.isBlank() ? null : cached;
+    private BotConfigRequest.Config resolveBotConfig(UUID companyId, Map<UUID, BotConfigRequest.Config> botConfigCache) {
+        if (botConfigCache.containsKey(companyId)) {
+            return botConfigCache.get(companyId);
         }
-        String prompt = botConfigRepo.getLatestSystemPromptByCompanyId(companyId);
-        promptTemplateCache.put(companyId, prompt);
-        return prompt == null || prompt.isBlank() ? null : prompt;
+
+        BotConfigRequest.Config resolved = BotConfigDefaults.defaultConfig();
+        String latestConfigJson = botConfigRepo.getLatestConfigJsonByCompanyId(companyId);
+        if (latestConfigJson != null && !latestConfigJson.isBlank()) {
+            try {
+                BotConfigRequest.Config parsed = objectMapper.readValue(latestConfigJson, BotConfigRequest.Config.class);
+                BotConfigRequest.Config defaults = BotConfigDefaults.defaultConfig();
+                resolved = BotConfigRequest.Config.builder()
+                        .provider(parsed.getProvider() == null ? defaults.getProvider() : parsed.getProvider())
+                        .modelName(firstNonBlank(parsed.getModelName(), defaults.getModelName()))
+                        .temperature(parsed.getTemperature() == null ? defaults.getTemperature() : parsed.getTemperature())
+                        .apiKey(firstNonBlank(parsed.getApiKey(), defaults.getApiKey()))
+                        .systemPrompt(firstNonBlank(parsed.getSystemPrompt(), defaults.getSystemPrompt()))
+                        .build();
+            } catch (Exception ignored) {
+                resolved = BotConfigDefaults.defaultConfig();
+            }
+        }
+
+        botConfigCache.put(companyId, resolved);
+        return resolved;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        return fallback;
     }
 
     private static final List<String> AI_SNAPSHOT_HEADERS = List.of(
