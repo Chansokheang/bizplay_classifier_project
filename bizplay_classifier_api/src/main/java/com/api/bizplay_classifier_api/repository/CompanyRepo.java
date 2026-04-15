@@ -19,7 +19,9 @@ public interface CompanyRepo {
     List<CompanyDTO> getAllCompanyByUserId(@Param("userId") UUID userId);
 
     @Select("""
-        INSERT INTO companies (user_id, company_name, business_number) VALUES (#{userId}, #{company.companyName}, #{company.businessNumber}) RETURNING *
+        INSERT INTO companies (user_id, company_name, business_number, types)
+        VALUES (#{userId}, #{company.companyName}, #{company.businessNumber}, #{company.types})
+        RETURNING *
     """)
     @ResultMap("companyMap")
     CompanyDTO createCompany(@Param("company") CompanyRequest companyRequest, @Param("userId") UUID userId);
@@ -32,6 +34,7 @@ public interface CompanyRepo {
             @Result(property = "userId",    column = "user_id",   jdbcType = JdbcType.OTHER,   typeHandler = UUIDTypeHandler.class),
             @Result(property = "companyName",    column = "company_name"),
             @Result(property = "businessNumber",    column = "business_number"),
+            @Result(property = "types",    column = "types"),
             @Result(property = "createdDate",    column = "created_date"),
             @Result(property = "ruleDTOList", column = "company_id", many = @Many(select = "com.api.bizplay_classifier_api.repository.RuleRepo.getAllRulesByCompanyId"))
     })

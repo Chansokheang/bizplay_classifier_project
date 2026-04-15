@@ -33,14 +33,24 @@ public class BotConfigRequest {
     @Builder
     @Schema(name = "BotConfig")
     public static class Config {
-        @NotNull(message = "Provider can not be null.")
-        @Schema(example = "OPENAI_COMPATIBLE", defaultValue = "OPENAI_COMPATIBLE")
+        @Schema(
+                example = "EXAONE",
+                defaultValue = "EXAONE",
+                allowableValues = {"EXAONE", "OPENAI", "GEMINI", "CLAUDE"},
+                accessMode = Schema.AccessMode.READ_ONLY
+        )
         private AiProvider provider;
 
-        @NotBlank(message = "Model name can not be blank.")
         @Schema(
                 example = "EXAONE-3.5-7.8B-Instruct-AWQ",
-                defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ"
+                defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                allowableValues = {
+                        "EXAONE-3.5-7.8B-Instruct-AWQ",
+                        "gpt-4o-mini",
+                        "gemini-1.5-flash",
+                        "claude-3-5-sonnet-latest"
+                },
+                accessMode = Schema.AccessMode.READ_ONLY
         )
         private String modelName;
 

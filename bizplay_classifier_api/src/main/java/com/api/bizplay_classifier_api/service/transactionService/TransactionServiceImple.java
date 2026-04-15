@@ -31,6 +31,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -160,6 +161,29 @@ public class TransactionServiceImple implements TransactionService {
     @Transactional
     public TransactionResponse createTransaction(TransactionRequest transactionRequest) {
         throw new IllegalArgumentException("Transaction table persistence is disabled. Use /api/v1/transactions/upload for file processing only.");
+    }
+
+    @Override
+    @Transactional
+    public TransactionUploadSummaryResponse createSingleTransactionForTesting(TransactionRequest transactionRequest) {
+        if (transactionRequest == null) {
+            throw new IllegalArgumentException("Transaction request is required.");
+        }
+        if (transactionRequest.getCompanyId() == null) {
+            throw new IllegalArgumentException("Company id is required.");
+        }
+
+        try {
+            byte[] workbookBytes = buildSingleTransactionWorkbook(transactionRequest);
+            return createTransactionsByExcel(
+                    workbookBytes,
+                    transactionRequest.getCompanyId(),
+                    "Transactions",
+                    "single_transaction_test.xlsx"
+            );
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to build single transaction workbook.", e);
+        }
     }
 
     @Override
@@ -1262,6 +1286,64 @@ public class TransactionServiceImple implements TransactionService {
             );
         } catch (IOException e) {
             throw new IllegalStateException("Unable to store enriched Excel file.", e);
+        }
+    }
+
+    private byte[] buildSingleTransactionWorkbook(TransactionRequest request) throws IOException {
+        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("Transactions");
+            Row headerRow = sheet.createRow(0);
+            List<String> headers = List.of(
+                    "company_id",
+                    "approval_date",
+                    "approval_time",
+                    "merchant_name",
+                    "merchant_industry_code",
+                    "merchant_industry_name",
+                    "merchant_business_registration_number",
+                    "supply_amount",
+                    "vat_amount",
+                    "tax_type",
+                    "field_name1",
+                    "pk",
+                    "user_tx_id",
+                    "writer_tx_id"
+            );
+
+            for (int i = 0; i < headers.size(); i++) {
+                headerRow.createCell(i).setCellValue(headers.get(i));
+            }
+
+            Row dataRow = sheet.createRow(1);
+            writeCell(dataRow, 0, request.getCompanyId() == null ? null : request.getCompanyId().toString());
+            writeCell(dataRow, 1, request.getApprovalDate());
+            writeCell(dataRow, 2, request.getApprovalTime());
+            writeCell(dataRow, 3, request.getMerchantName());
+            writeCell(dataRow, 4, request.getMerchantIndustryCode());
+            writeCell(dataRow, 5, request.getMerchantIndustryName());
+            writeCell(dataRow, 6, request.getMerchantBusinessRegistrationNumber());
+            writeCell(dataRow, 7, request.getSupplyAmount());
+            writeCell(dataRow, 8, request.getVatAmount());
+            writeCell(dataRow, 9, request.getTaxType());
+            writeCell(dataRow, 10, request.getFieldName1());
+            writeCell(dataRow, 11, request.getPk());
+            writeCell(dataRow, 12, request.getUserTxId());
+            writeCell(dataRow, 13, request.getWriterTxId());
+
+            workbook.write(outputStream);
+            return outputStream.toByteArray();
+        }
+    }
+
+    private void writeCell(Row row, int columnIndex, String value) {
+        if (value != null) {
+            row.createCell(columnIndex).setCellValue(value);
+        }
+    }
+
+    private void writeCell(Row row, int columnIndex, Integer value) {
+        if (value != null) {
+            row.createCell(columnIndex).setCellValue(value);
         }
     }
 

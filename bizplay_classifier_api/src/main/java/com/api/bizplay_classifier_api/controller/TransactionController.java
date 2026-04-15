@@ -45,18 +45,21 @@ public class TransactionController {
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final GetCurrentUser getCurrentUser;
 
-//    @PostMapping("/create")
-//    public ResponseEntity<ApiResponse<?>> createTransaction(@Valid @RequestBody TransactionRequest transactionRequest) {
-//        return ResponseEntity.status(HttpStatus.CREATED).body(
-//                ApiResponse.<TransactionResponse>builder()
-//                        .payload(transactionService.
-//                        (transactionRequest))
-//                        .message("Transaction was created successfully.")
-//                        .code(HttpStatus.CREATED.value())
-//                        .status(HttpStatus.CREATED)
-//                        .build()
-//        );
-//    }
+    @PostMapping("/test-single-transaction/create")
+    public ResponseEntity<ApiResponse<?>> createSingleTransactionForTesting(
+            @Valid @RequestBody TransactionRequest transactionRequest
+    ) {
+        TransactionUploadSummaryResponse payload =
+                transactionService.createSingleTransactionForTesting(transactionRequest);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<TransactionUploadSummaryResponse>builder()
+                        .payload(payload)
+                        .message("Single transaction was processed successfully.")
+                        .code(HttpStatus.CREATED.value())
+                        .status(HttpStatus.CREATED)
+                        .build()
+        );
+    }
 
     @PutMapping("/files/{fileId}/rows")
     public ResponseEntity<ApiResponse<?>> patchFileRows(

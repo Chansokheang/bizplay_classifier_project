@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.dto;
 
+import com.api.bizplay_classifier_api.model.enums.CompanyType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -18,6 +19,7 @@ public class CompanyDTO {
     private UUID userId;
     private String companyName;
     private String businessNumber;
+    private CompanyType types;
     private Timestamp createdDate;
     private List<RuleDTO> ruleDTOList;
 }

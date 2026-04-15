@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.entity;
 
+import com.api.bizplay_classifier_api.model.enums.CompanyType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,5 +18,6 @@ public class Company {
     private UUID userId;
     private String companyName;
     private String businessNumber;
+    private CompanyType types;
     private Timestamp createdDate;
 }

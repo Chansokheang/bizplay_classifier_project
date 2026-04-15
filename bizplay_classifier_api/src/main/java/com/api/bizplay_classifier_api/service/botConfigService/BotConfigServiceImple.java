@@ -49,27 +49,34 @@ public class BotConfigServiceImple implements BotConfigService {
 
     @Override
     @Transactional
-    public BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest) {
+    public BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest, AiProvider provider, String modelName) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(botConfigRequest.getCompanyId(), currentUserId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + botConfigRequest.getCompanyId());
         }
 
-        String configJson = toConfigJson(botConfigRequest);
+        BotConfigRequest.Config configWithProvider = withProvider(
+                botConfigRequest.getConfig(),
+                provider,
+                modelName
+        );
+        BotConfigRequest requestWithProvider = BotConfigRequest.builder()
+                .companyId(botConfigRequest.getCompanyId())
+                .config(configWithProvider)
+                .build();
+
+        String configJson = toConfigJson(requestWithProvider);
         return saveOrUpdateBotConfig(
                 botConfigRequest.getCompanyId(),
-                BotConfigRequest.builder()
-                        .companyId(botConfigRequest.getCompanyId())
-                        .config(botConfigRequest.getConfig())
-                        .build(),
+                requestWithProvider,
                 configJson
         );
     }
 
     @Override
     @Transactional
-    public BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config) {
+    public BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config, AiProvider provider, String modelName) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
@@ -77,7 +84,7 @@ public class BotConfigServiceImple implements BotConfigService {
         }
         BotConfigRequest request = BotConfigRequest.builder()
                 .companyId(companyId)
-                .config(config)
+                .config(withProvider(config, provider, modelName))
                 .build();
         String configJson = toConfigJson(request);
         return saveOrUpdateBotConfig(companyId, request, configJson);
@@ -280,6 +287,19 @@ public class BotConfigServiceImple implements BotConfigService {
 
     private BotConfigRequest.Config buildDefaultConfig() {
         return BotConfigDefaults.defaultConfig();
+    }
+
+    private BotConfigRequest.Config withProvider(BotConfigRequest.Config config, AiProvider provider, String modelName) {
+        BotConfigRequest.Config source = config == null ? buildDefaultConfig() : config;
+        AiProvider resolvedProvider = provider == null ? BotConfigDefaults.DEFAULT_PROVIDER : provider;
+        String resolvedModelName = firstNonBlank(modelName, buildDefaultConfig().getModelName());
+        return BotConfigRequest.Config.builder()
+                .provider(resolvedProvider)
+                .modelName(resolvedModelName)
+                .temperature(source.getTemperature())
+                .apiKey(source.getApiKey())
+                .systemPrompt(source.getSystemPrompt())
+                .build();
     }
 
     private BotConfigRequest.Config mergeWithDefaults(BotConfigRequest.Config parsed, BotConfigRequest.Config defaults) {

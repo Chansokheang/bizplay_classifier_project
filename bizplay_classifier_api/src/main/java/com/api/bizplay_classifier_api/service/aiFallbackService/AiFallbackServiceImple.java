@@ -74,6 +74,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private final String openAiCompatibleUrl;
     private final String openAiUrl;
     private final String geminiUrlTemplate;
+    private final String claudeUrl;
     private final String fallbackApiKey;
     private final boolean enabled;
 
@@ -82,6 +83,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
             @Value("${app.ai.fallback.url:http://gpu-local.sovanreach.com:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions}") String openAiCompatibleUrl,
             @Value("${app.ai.fallback.openai.url:https://api.openai.com/v1/chat/completions}") String openAiUrl,
             @Value("${app.ai.fallback.gemini.url-template:https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent}") String geminiUrlTemplate,
+            @Value("${app.ai.fallback.claude.url:https://api.anthropic.com/v1/messages}") String claudeUrl,
             @Value("${app.ai.fallback.api-key:sk-d7a20eb034c847e8994e192b40c69a61}") String apiKey,
             @Value("${app.ai.fallback.enabled:true}") boolean enabled,
             @Value("${app.ai.fallback.connect-timeout-ms:3000}") int connectTimeoutMs,
@@ -91,6 +93,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
         this.openAiCompatibleUrl = openAiCompatibleUrl;
         this.openAiUrl = openAiUrl;
         this.geminiUrlTemplate = geminiUrlTemplate;
+        this.claudeUrl = claudeUrl;
         this.fallbackApiKey = apiKey;
         this.enabled = enabled;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -262,7 +265,10 @@ public class AiFallbackServiceImple implements AiFallbackService {
             case GEMINI -> geminiUrlTemplate == null || geminiUrlTemplate.isBlank()
                     ? null
                     : new ResolvedAiConfig(provider, buildGeminiUrl(modelName, apiKey), modelName, temperature, apiKey);
-            case OPENAI_COMPATIBLE -> openAiCompatibleUrl == null || openAiCompatibleUrl.isBlank()
+            case CLAUDE -> claudeUrl == null || claudeUrl.isBlank()
+                    ? null
+                    : new ResolvedAiConfig(provider, claudeUrl, modelName, temperature, apiKey);
+            case EXAONE -> openAiCompatibleUrl == null || openAiCompatibleUrl.isBlank()
                     ? null
                     : new ResolvedAiConfig(provider, openAiCompatibleUrl, modelName, temperature, apiKey);
         };
@@ -285,7 +291,11 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private void applyHeaders(org.springframework.http.HttpHeaders headers, ResolvedAiConfig config) {
         switch (config.provider()) {
             case OPENAI -> headers.setBearerAuth(config.apiKey());
-            case OPENAI_COMPATIBLE -> headers.set("x-api-key", config.apiKey());
+            case EXAONE -> headers.set("x-api-key", config.apiKey());
+            case CLAUDE -> {
+                headers.set("x-api-key", config.apiKey());
+                headers.set("anthropic-version", "2023-06-01");
+            }
             case GEMINI -> {
             }
         }
@@ -293,8 +303,9 @@ public class AiFallbackServiceImple implements AiFallbackService {
 
     private Map<String, Object> buildRequestBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {
         return switch (config.provider()) {
-            case OPENAI, OPENAI_COMPATIBLE -> buildOpenAiStyleBody(systemPrompt, userPrompt, config);
+            case OPENAI, EXAONE -> buildOpenAiStyleBody(systemPrompt, userPrompt, config);
             case GEMINI -> buildGeminiBody(systemPrompt, userPrompt, config);
+            case CLAUDE -> buildClaudeBody(systemPrompt, userPrompt, config);
         };
     }
 
@@ -327,6 +338,18 @@ public class AiFallbackServiceImple implements AiFallbackService {
         return body;
     }
 
+    private Map<String, Object> buildClaudeBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", config.modelName());
+        body.put("temperature", config.temperature());
+        body.put("max_tokens", 1024);
+        body.put("system", systemPrompt);
+        body.put("messages", List.of(
+                Map.of("role", "user", "content", userPrompt)
+        ));
+        return body;
+    }
+
     private String buildGeminiUrl(String modelName, String apiKey) {
         String encodedModel = URLEncoder.encode(modelName, StandardCharsets.UTF_8);
         String encodedApiKey = URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
@@ -336,9 +359,11 @@ public class AiFallbackServiceImple implements AiFallbackService {
     }
 
     private String extractProviderMessageContent(String rawResponse, AiProvider provider) {
-        return provider == AiProvider.GEMINI
-                ? extractGeminiMessageContent(rawResponse)
-                : extractOpenAiMessageContent(rawResponse);
+        return switch (provider) {
+            case GEMINI -> extractGeminiMessageContent(rawResponse);
+            case CLAUDE -> extractClaudeMessageContent(rawResponse);
+            case OPENAI, EXAONE -> extractOpenAiMessageContent(rawResponse);
+        };
     }
 
     private String decodeResponseBody(byte[] body) {
@@ -479,6 +504,27 @@ public class AiFallbackServiceImple implements AiFallbackService {
         StringBuilder sb = new StringBuilder();
         for (JsonNode part : parts) {
             if (part != null && part.has("text") && !part.get("text").isNull()) {
+                sb.append(part.get("text").asText());
+            }
+        }
+        String content = sb.toString().trim();
+        return content.isEmpty() ? null : content;
+    }
+
+    private String extractClaudeMessageContent(String rawResponse) {
+        if (rawResponse == null || rawResponse.isBlank()) {
+            return null;
+        }
+
+        JsonNode root = parseJsonObject(rawResponse);
+        if (root == null || !root.has("content") || !root.get("content").isArray() || root.get("content").isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode part : root.get("content")) {
+            if (part != null && part.has("type") && "text".equals(part.get("type").asText())
+                    && part.has("text") && !part.get("text").isNull()) {
                 sb.append(part.get("text").asText());
             }
         }

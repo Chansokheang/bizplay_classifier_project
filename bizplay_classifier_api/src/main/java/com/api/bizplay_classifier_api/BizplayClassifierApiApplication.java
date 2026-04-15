@@ -11,7 +11,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import java.time.ZoneId;
 import java.util.TimeZone;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.api")
 @MapperScan("com.api.bizplay_classifier_api.repository")
 @SecurityScheme(
 		name = "bearerAuth",

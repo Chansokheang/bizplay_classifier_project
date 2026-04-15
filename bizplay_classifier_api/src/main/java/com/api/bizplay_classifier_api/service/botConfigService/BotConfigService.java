@@ -1,6 +1,7 @@
 package com.api.bizplay_classifier_api.service.botConfigService;
 
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
+import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.request.PromptEnhancementRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
@@ -9,9 +10,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public interface BotConfigService {
-    BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest);
+    BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest, AiProvider provider, String modelName);
 
-    BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config);
+    BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config, AiProvider provider, String modelName);
 
     String updatePromptFromLatestTrainingData(UUID companyId, Integer sampleRows);
 

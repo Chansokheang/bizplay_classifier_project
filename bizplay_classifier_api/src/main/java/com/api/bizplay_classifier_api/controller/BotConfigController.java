@@ -1,10 +1,14 @@
 package com.api.bizplay_classifier_api.controller;
 
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
+import com.api.bizplay_classifier_api.model.enums.AiModel;
+import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.service.botConfigService.BotConfigService;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -33,10 +37,24 @@ public class BotConfigController {
     private final BotConfigService botConfigService;
 
     @PostMapping("/create")
-    public ResponseEntity<ApiResponse<?>> createBotConfig(@Valid @RequestBody BotConfigRequest botConfigRequest) {
+    public ResponseEntity<ApiResponse<?>> createBotConfig(
+            @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
+//            @Parameter(schema = @Schema(
+//                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+//                    allowableValues = {
+//                            "EXAONE-3.5-7.8B-Instruct-AWQ",
+//                            "gpt-4o-mini",
+//                            "gemini-1.5-flash",
+//                            "claude-3-5-sonnet-latest"
+//                    }
+//            ))
+
+            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") AiModel modelName,
+            @Valid @RequestBody BotConfigRequest botConfigRequest
+    ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<BotConfigDTO>builder()
-                        .payload(botConfigService.createBotConfig(botConfigRequest))
+                        .payload(botConfigService.createBotConfig(botConfigRequest, provider, String.valueOf(modelName.getModelName())))
                         .message("Bot config was created successfully.")
                         .status(HttpStatus.CREATED)
                         .code(HttpStatus.CREATED.value())
@@ -59,9 +77,20 @@ public class BotConfigController {
     @PutMapping("/{companyId}")
     public ResponseEntity<ApiResponse<?>> upsertBotConfig(
             @PathVariable UUID companyId,
+            @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
+            @Parameter(schema = @Schema(
+                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                    allowableValues = {
+                            "EXAONE-3.5-7.8B-Instruct-AWQ",
+                            "gpt-4o-mini",
+                            "gemini-1.5-flash",
+                            "claude-3-5-sonnet-latest"
+                    }
+            ))
+            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
             @RequestBody @Valid BotConfigRequest.Config config
     ) {
-        BotConfigDTO payload = botConfigService.upsertBotConfig(companyId, config);
+        BotConfigDTO payload = botConfigService.upsertBotConfig(companyId, config, provider, modelName);
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()
                         .payload(payload)

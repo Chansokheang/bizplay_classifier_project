@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.service.companyService;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.CompanyDTO;
+import com.api.bizplay_classifier_api.model.enums.CompanyType;
 import com.api.bizplay_classifier_api.model.request.CompanyRequest;
 import com.api.bizplay_classifier_api.model.response.CompanyResponse;
 import com.api.bizplay_classifier_api.repository.CompanyRepo;
@@ -38,9 +39,10 @@ public class CompanyServiceImple implements CompanyService {
 
     @Override
     @Transactional
-    public CompanyResponse createCompany(CompanyRequest companyRequest) throws UsernameNotFoundException {
+    public CompanyResponse createCompany(CompanyRequest companyRequest, CompanyType companyType) throws UsernameNotFoundException {
         UUID userId = getCurrentUser.getCurrentUserId();
         companyRequest.setBusinessNumber(normalizeBusinessNumber(companyRequest.getBusinessNumber()));
+        companyRequest.setTypes(companyType);
         CompanyDTO companyDTO = companyRepo.createCompany(companyRequest, userId);
         return modelMapper.map(companyDTO, CompanyResponse.class);
     }
