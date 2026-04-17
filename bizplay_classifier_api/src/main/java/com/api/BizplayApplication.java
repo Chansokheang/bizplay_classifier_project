@@ -1,4 +1,4 @@
-package com.api.bizplay_classifier_api;
+package com.api;
 
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
@@ -11,23 +11,24 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import java.time.ZoneId;
 import java.util.TimeZone;
 
-@SpringBootApplication(scanBasePackages = "com.api")
+@SpringBootApplication
 @MapperScan("com.api.bizplay_classifier_api.repository")
+//@MapperScan("com.api.bizplay_compliance.repository")
 @SecurityScheme(
-		name = "bearerAuth",
-		type = SecuritySchemeType.HTTP,
-		scheme = "bearer",
-		in = SecuritySchemeIn.HEADER
+        name = "bearerAuth",
+        type = SecuritySchemeType.HTTP,
+        scheme = "bearer",
+        in = SecuritySchemeIn.HEADER
 )
-public class BizplayClassifierApiApplication {
+public class BizplayApplication {
 
-	public static void main(String[] args) {
-		SpringApplication.run(BizplayClassifierApiApplication.class, args);
-	}
+    public static void main(String[] args) {
+        SpringApplication.run(BizplayApplication.class, args);
+    }
 
-	@PostConstruct
-	public void init() {
-		// Set default time zone to Cambodia
-		TimeZone.setDefault(TimeZone.getTimeZone(ZoneId.of("Asia/Seoul")));
-	}
+    @PostConstruct
+    public void init() {
+        TimeZone.setDefault(TimeZone.getTimeZone(ZoneId.of("Asia/Seoul")));
+    }
 }
+t
