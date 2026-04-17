@@ -31,4 +31,3 @@ public class BizplayApplication {
         TimeZone.setDefault(TimeZone.getTimeZone(ZoneId.of("Asia/Seoul")));
     }
 }
-t
