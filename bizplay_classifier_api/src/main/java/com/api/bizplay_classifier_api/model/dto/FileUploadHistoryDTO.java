@@ -15,7 +15,7 @@ import java.util.UUID;
 @Builder
 public class FileUploadHistoryDTO {
     private UUID fileId;
-    private UUID companyId;
+    private String companyId;
     private String originalFileName;
     private String storedFileName;
     private String fileUrl;

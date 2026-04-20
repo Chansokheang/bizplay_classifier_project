@@ -14,7 +14,7 @@ import java.util.UUID;
 @Builder
 public class Rule {
     private UUID ruleId;
-    private UUID companyId;
+    private String companyId;
     private String merchantIndustryName;
     private String merchantIndustryCode;
     private String usageStatus;

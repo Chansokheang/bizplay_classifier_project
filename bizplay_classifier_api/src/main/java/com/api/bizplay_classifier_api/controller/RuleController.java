@@ -64,7 +64,7 @@ public class RuleController {
     }
 
     @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getAllRulesByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getAllRulesByCompanyId(@PathVariable String companyId) {
         return ResponseEntity.ok(
                 ApiResponse.<List<RuleDTO>>builder()
                         .payload(ruleService.getAllRulesByCompanyId(companyId))
@@ -75,3 +75,4 @@ public class RuleController {
         );
     }
 }
+

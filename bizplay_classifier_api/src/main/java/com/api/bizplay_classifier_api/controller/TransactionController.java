@@ -80,7 +80,7 @@ public class TransactionController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadTransactionsByExcel(
             @RequestPart("file") MultipartFile file,
-            @RequestParam(value = "companyId", required = false) UUID companyId,
+            @RequestParam(value = "companyId", required = false) String companyId,
             @RequestParam(value = "sheetName", required = false) String sheetName
     ) {
         TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(file, companyId, sheetName);
@@ -95,7 +95,7 @@ public class TransactionController {
     }
 
     @GetMapping("/files/company/{companyId}/classify-summaries")
-    public ResponseEntity<ApiResponse<?>> getAllClassifySummariesByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getAllClassifySummariesByCompanyId(@PathVariable String companyId) {
         List<FileClassifySummaryDTO> payload = transactionService.getAllFileClassifySummariesByCompanyId(companyId);
         return ResponseEntity.ok(
                 ApiResponse.<List<FileClassifySummaryDTO>>builder()
@@ -140,7 +140,7 @@ public class TransactionController {
 //    @PostMapping(value = "/upload", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
 //    public ResponseEntity<ApiResponse<?>> uploadTransactionsByExcelRaw(
 //            @RequestBody byte[] fileBytes,
-//            @RequestParam(value = "companyId", required = false) UUID companyId,
+//            @RequestParam(value = "companyId", required = false) String companyId,
 //            @RequestParam(value = "sheetName", required = false) String sheetName
 //    ) {
 //        TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(fileBytes, companyId, sheetName);
@@ -154,3 +154,4 @@ public class TransactionController {
 //        );
 //    }
 }
+

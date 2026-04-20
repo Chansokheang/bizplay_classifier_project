@@ -21,7 +21,7 @@ import java.util.UUID;
 public class BotConfigRequest {
     @NotNull(message = "Company Id can not be null.")
     @Schema(example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
-    private UUID companyId;
+    private String companyId;
 
     @NotNull(message = "Config can not be null.")
     @Valid

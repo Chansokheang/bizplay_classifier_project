@@ -63,7 +63,7 @@ public class BotConfigController {
     }
 
     @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getLatestBotConfigByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getLatestBotConfigByCompanyId(@PathVariable String companyId) {
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()
                         .payload(botConfigService.getLatestBotConfigByCompanyId(companyId))
@@ -76,7 +76,7 @@ public class BotConfigController {
 
     @PutMapping("/{companyId}")
     public ResponseEntity<ApiResponse<?>> upsertBotConfig(
-            @PathVariable UUID companyId,
+            @PathVariable String companyId,
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
                     defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
@@ -103,7 +103,7 @@ public class BotConfigController {
 
     @GetMapping("/prompt-enhancement")
     public ResponseEntity<ApiResponse<PromptEnhancementResponse>> generatePromptEnhancementPreview(
-            @RequestParam("companyId") UUID companyId,
+            @RequestParam("companyId") String companyId,
             @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
         // Call the synchronous version - it's already fast enough with the AI optimizations
@@ -118,3 +118,4 @@ public class BotConfigController {
         );
     }
 }
+

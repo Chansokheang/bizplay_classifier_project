@@ -16,10 +16,10 @@ import java.util.UUID;
 @Builder
 public class CategoryRequest {
     @NotNull(message = "Company Id can not be null.")
-    private UUID companyId;
+    private String companyId;
 
     @NotBlank(message = "Code can not be blank.")
-    @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "Code must be exactly 5 alphanumeric characters.")
+    @Pattern(regexp = "^[A-Za-z0-9]{1,50}$", message = "Code must be 1 to 50 alphanumeric characters.")
     private String code;
 
     @NotBlank(message = "Category can not be blank.")

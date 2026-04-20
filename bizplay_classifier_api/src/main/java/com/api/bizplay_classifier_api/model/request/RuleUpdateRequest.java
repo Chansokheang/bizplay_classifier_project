@@ -11,24 +11,24 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.UUID;
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
 public class RuleUpdateRequest {
-    @NotEmpty(message = "Category Id list can not be empty.")
-    private List<UUID> categoryIds;
+    @NotEmpty(message = "Category code list can not be empty.")
+    @JsonAlias("categoryIds")
+    private List<String> categoryCodes;
 
     @NotBlank(message = "가맹점업종명 can not be blank.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
+    @JsonProperty("가맹점업종명")
     @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
     private String merchantIndustryName;
 
     @NotBlank(message = "가맹점업종코드 can not be blank.")
     @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "가맹점업종코드 must be exactly 5 alphanumeric characters.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\ucf54\ub4dc")
+    @JsonProperty("가맹점업종코드")
     @JsonAlias("merchantIndustryCode")
     private String merchantIndustryCode;
 

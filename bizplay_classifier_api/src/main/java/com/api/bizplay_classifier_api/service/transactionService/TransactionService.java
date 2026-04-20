@@ -16,9 +16,9 @@ public interface TransactionService {
 
     TransactionUploadSummaryResponse createSingleTransactionForTesting(TransactionRequest transactionRequest);
 
-    TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, UUID defaultCompanyId, String sheetName);
+    TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, String defaultCompanyId, String sheetName);
 
-    TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, UUID defaultCompanyId, String sheetName);
+    TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, String defaultCompanyId, String sheetName);
 
     /**
      * Apply manual row-level corrections to an already-enriched Excel file stored in MinIO.
@@ -27,7 +27,7 @@ public interface TransactionService {
      */
     FileRowPatchResponse patchFileRows(UUID fileId, FileRowPatchRequest request);
 
-    java.util.List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(UUID companyId);
+    java.util.List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(String companyId);
 
     FileTransactionsPageResponse getTransactionsByFileId(UUID fileId, int page, int limit);
 }

@@ -64,14 +64,14 @@ public class CategoryServiceImple implements CategoryService {
     }
 
     @Override
-    public List<CategoryDTO> getAllCategoriesByCompanyId(UUID companyId) {
+    public List<CategoryDTO> getAllCategoriesByCompanyId(String companyId) {
         companyService.getCompanyByCompanyId(companyId);
         return categoryRepo.getAllCategoriesByCompanyId(companyId);
     }
 
     @Override
     @Transactional
-    public CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, UUID companyId, String sheetName) {
+    public CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String companyId, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
@@ -111,9 +111,9 @@ public class CategoryServiceImple implements CategoryService {
                 }
 
                 String normalizedCode = code.trim();
-                if (!normalizedCode.matches("^[A-Za-z0-9]{5}$")) {
+                if (!normalizedCode.matches("^[A-Za-z0-9]{1,50}$")) {
                     throw new IllegalArgumentException(
-                            "Row " + (rowIndex + 1) + ": code must be exactly 5 alphanumeric characters."
+                            "Row " + (rowIndex + 1) + ": code must be 1 to 50 alphanumeric characters."
                     );
                 }
 
@@ -151,7 +151,7 @@ public class CategoryServiceImple implements CategoryService {
         }
     }
 
-    private void ensureCompanyOwnership(UUID companyId) {
+    private void ensureCompanyOwnership(String companyId) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = categoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {

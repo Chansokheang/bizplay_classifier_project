@@ -13,13 +13,13 @@ import java.util.UUID;
 public interface CategoryRepo {
 
     @Select("""
-        INSERT INTO categories (company_id, code, category)
+        INSERT INTO categories (company_business_number, code, category)
         VALUES (#{category.companyId}, #{category.code}, #{category.category})
         RETURNING *
     """)
     @Results(id = "categoryMap", value = {
             @Result(property = "categoryId", column = "category_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId", column = "company_business_number"),
             @Result(property = "code", column = "code"),
             @Result(property = "category", column = "category"),
             @Result(property = "isUsed", column = "사용여부")
@@ -34,21 +34,35 @@ public interface CategoryRepo {
 
     @Select("""
         SELECT * FROM categories
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
         ORDER BY category
     """)
     @ResultMap("categoryMap")
-    List<CategoryDTO> getAllCategoriesByCompanyId(@Param("companyId") UUID companyId);
+    List<CategoryDTO> getAllCategoriesByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT *
         FROM categories
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND code = #{code}
         LIMIT 1
     """)
     @ResultMap("categoryMap")
-    CategoryDTO findByCompanyIdAndCode(@Param("companyId") UUID companyId, @Param("code") String code);
+    CategoryDTO findByCompanyIdAndCode(@Param("companyId") String companyId, @Param("code") String code);
+
+    @Select({
+            "<script>",
+            "SELECT *",
+            "FROM categories",
+            "WHERE company_business_number = #{companyId}",
+            "  AND code IN",
+            "  <foreach collection='codes' item='code' open='(' separator=',' close=')'>",
+            "    #{code}",
+            "  </foreach>",
+            "</script>"
+    })
+    @ResultMap("categoryMap")
+    List<CategoryDTO> findByCompanyIdAndCodes(@Param("companyId") String companyId, @Param("codes") List<String> codes);
 
     @Select("""
         SELECT c.*
@@ -61,20 +75,20 @@ public interface CategoryRepo {
     @Select("""
         SELECT *
         FROM categories
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND category = #{category}
         LIMIT 1
     """)
     @ResultMap("categoryMap")
-    CategoryDTO findByCompanyIdAndCategory(@Param("companyId") UUID companyId, @Param("category") String category);
+    CategoryDTO findByCompanyIdAndCategory(@Param("companyId") String companyId, @Param("category") String category);
 
     @Select("""
         SELECT COUNT(1)
         FROM companies
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND user_id = #{userId}
     """)
-    int existsCompanyByIdAndUserId(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+    int existsCompanyByIdAndUserId(@Param("companyId") String companyId, @Param("userId") UUID userId);
 
     @Update("""
         UPDATE categories

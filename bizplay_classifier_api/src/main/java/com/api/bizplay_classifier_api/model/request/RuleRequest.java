@@ -12,7 +12,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.UUID;
 
 @Data
 @AllArgsConstructor
@@ -20,10 +19,11 @@ import java.util.UUID;
 @Builder
 public class RuleRequest {
     @NotNull(message = "Company Id can not be null.")
-    private UUID companyId;
+    private String companyId;
 
-    @NotEmpty(message = "Category Id list can not be empty.")
-    private List<UUID> categoryIds;
+    @NotEmpty(message = "Category code list can not be empty.")
+    @JsonAlias("categoryIds")
+    private List<String> categoryCodes;
 
     @NotBlank(message = "가맹점업종명 can not be blank.")
     @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")

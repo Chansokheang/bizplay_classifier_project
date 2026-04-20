@@ -20,7 +20,7 @@ public interface FileUploadHistoryRepo {
 
     @Select("""
         INSERT INTO file_upload_history (
-            company_id,
+            company_business_number,
             original_file_name,
             stored_file_name,
             file_url,
@@ -39,7 +39,7 @@ public interface FileUploadHistoryRepo {
     """)
     @Results(id = "fileUploadHistoryMap", value = {
             @Result(property = "fileId", column = "file_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId", column = "company_business_number"),
             @Result(property = "originalFileName", column = "original_file_name"),
             @Result(property = "storedFileName", column = "stored_file_name"),
             @Result(property = "fileUrl", column = "file_url"),
@@ -58,53 +58,53 @@ public interface FileUploadHistoryRepo {
     @Select("""
         SELECT *
         FROM file_upload_history
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
         ORDER BY created_date DESC
     """)
     @ResultMap("fileUploadHistoryMap")
-    List<FileUploadHistoryDTO> getFilesByCompanyId(@Param("companyId") UUID companyId);
+    List<FileUploadHistoryDTO> getFilesByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT *
         FROM file_upload_history
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND file_type = #{fileType}
         ORDER BY created_date ASC
     """)
     @ResultMap("fileUploadHistoryMap")
     List<FileUploadHistoryDTO> getFilesByCompanyIdAndFileType(
-            @Param("companyId") UUID companyId,
+            @Param("companyId") String companyId,
             @Param("fileType") com.api.bizplay_classifier_api.model.enums.FileType fileType
     );
 
     @Select("""
         SELECT *
         FROM file_upload_history
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
         ORDER BY created_date DESC
         LIMIT 1
     """)
     @ResultMap("fileUploadHistoryMap")
-    FileUploadHistoryDTO getLatestFileByCompanyId(@Param("companyId") UUID companyId);
+    FileUploadHistoryDTO getLatestFileByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT *
         FROM file_upload_history
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND file_type = 'TRAINING'
         ORDER BY created_date DESC
         LIMIT 1
     """)
     @ResultMap("fileUploadHistoryMap")
-    FileUploadHistoryDTO getLatestTrainingFileByCompanyId(@Param("companyId") UUID companyId);
+    FileUploadHistoryDTO getLatestTrainingFileByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT COUNT(1)
         FROM companies
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND user_id = #{userId}
     """)
-    int existsCompanyByIdAndUserId(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+    int existsCompanyByIdAndUserId(@Param("companyId") String companyId, @Param("userId") UUID userId);
 
     @Delete("""
         DELETE FROM file_upload_history

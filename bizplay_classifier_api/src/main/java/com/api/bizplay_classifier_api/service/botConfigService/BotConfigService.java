@@ -6,23 +6,22 @@ import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.request.PromptEnhancementRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public interface BotConfigService {
     BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest, AiProvider provider, String modelName);
 
-    BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config, AiProvider provider, String modelName);
+    BotConfigDTO upsertBotConfig(String companyId, BotConfigRequest.Config config, AiProvider provider, String modelName);
 
-    String updatePromptFromLatestTrainingData(UUID companyId, Integer sampleRows);
+    String updatePromptFromLatestTrainingData(String companyId, Integer sampleRows);
 
-    PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(UUID companyId, Integer sampleRows);
+    PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(String companyId, Integer sampleRows);
 
-    PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(UUID companyId, Integer sampleRows, PromptEnhancementRequest request);
+    PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(String companyId, Integer sampleRows, PromptEnhancementRequest request);
 
-    PromptEnhancementResponse generatePromptEnhancementPreview(UUID companyId, Integer sampleRows);
+    PromptEnhancementResponse generatePromptEnhancementPreview(String companyId, Integer sampleRows);
 
-    CompletableFuture<PromptEnhancementResponse> generatePromptEnhancementPreviewAsync(UUID companyId, Integer sampleRows);
+    CompletableFuture<PromptEnhancementResponse> generatePromptEnhancementPreviewAsync(String companyId, Integer sampleRows);
 
-    BotConfigDTO getLatestBotConfigByCompanyId(UUID companyId);
+    BotConfigDTO getLatestBotConfigByCompanyId(String companyId);
 }

@@ -18,7 +18,7 @@ import java.util.UUID;
 public class FileRowPatchRequest {
 
     @NotNull(message = "companyId is required.")
-    private UUID companyId;
+    private String companyId;
 
     @NotEmpty(message = "updates list must not be empty.")
     @Valid
