@@ -16,7 +16,7 @@ import java.util.UUID;
 @Builder
 public class BotConfigDTO {
     private UUID botId;
-    private UUID companyId;
+    private String companyId;
     private BotConfigRequest.Config config;
     @JsonIgnore
     private String rawConfig;

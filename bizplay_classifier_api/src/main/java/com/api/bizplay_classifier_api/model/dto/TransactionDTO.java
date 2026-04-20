@@ -14,7 +14,7 @@ import java.util.UUID;
 @Builder
 public class TransactionDTO {
     private UUID transactionId;
-    private UUID companyId;
+    private String companyId;
     private String approvalDate;
     private String approvalTime;
     private String merchantName;

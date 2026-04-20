@@ -8,7 +8,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
-
 public interface RuleService {
     RuleDTO createRule(RuleRequest ruleRequest);
 
@@ -16,7 +15,7 @@ public interface RuleService {
 
     void deleteRuleByRuleId(UUID ruleId);
 
-    List<RuleDTO> getAllRulesByCompanyId(UUID companyId);
+    List<RuleDTO> getAllRulesByCompanyId(String companyId);
 
-    DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, UUID companyId, String sheetName);
+    DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, String companyId, String sheetName);
 }

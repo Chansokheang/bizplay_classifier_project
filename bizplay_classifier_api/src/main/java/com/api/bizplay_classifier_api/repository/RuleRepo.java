@@ -15,13 +15,13 @@ import java.util.UUID;
 public interface RuleRepo {
 
     @Select("""
-        INSERT INTO rules (company_id, "가맹점업종명", "가맹점업종코드", min_amount, max_amount, description)
+        INSERT INTO rules (company_business_number, "가맹점업종명", "가맹점업종코드", min_amount, max_amount, description)
         VALUES (#{rule.companyId}, #{rule.merchantIndustryName}, #{rule.merchantIndustryCode}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
         RETURNING *
     """)
     @Results(id = "ruleMap", value = {
             @Result(property = "ruleId",              column = "rule_id",        jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId",           column = "company_id",     jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId",           column = "company_business_number"),
             @Result(property = "merchantIndustryName",column = "가맹점업종명"),
             @Result(property = "merchantIndustryCode",column = "가맹점업종코드"),
             @Result(property = "usageStatus",         column = "usage_status"),
@@ -35,21 +35,21 @@ public interface RuleRepo {
     RuleDTO createRule(@Param("rule") RuleRequest ruleRequest);
 
     @Select("""
-        SELECT * FROM rules WHERE company_id = #{companyId}
+        SELECT * FROM rules WHERE company_business_number = #{companyId}
     """)
     @ResultMap("ruleMap")
-    List<RuleDTO> getAllRulesByCompanyId(@Param("companyId") UUID companyId);
+    List<RuleDTO> getAllRulesByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT *
         FROM rules
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND "가맹점업종코드" = #{merchantIndustryCode}
         LIMIT 1
     """)
     @ResultMap("ruleMap")
     RuleDTO findByCompanyIdAndIndustryCode(
-            @Param("companyId") UUID companyId,
+            @Param("companyId") String companyId,
             @Param("merchantIndustryCode") String merchantIndustryCode
     );
 
@@ -63,7 +63,7 @@ public interface RuleRepo {
         FROM rules r
         JOIN rule_category_map rcm ON rcm.rule_id = r.rule_id
         JOIN categories c ON c.category_id = rcm.category_id
-        WHERE r.company_id = #{companyId}
+        WHERE r.company_business_number = #{companyId}
     """)
     @Results(id = "ruleClassifierMap", value = {
             @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
@@ -72,17 +72,17 @@ public interface RuleRepo {
             @Result(property = "code",                 column = "code"),
             @Result(property = "category",             column = "category")
     })
-    List<RuleClassifierDTO> getRuleClassifiersByCompanyId(@Param("companyId") UUID companyId);
+    List<RuleClassifierDTO> getRuleClassifiersByCompanyId(@Param("companyId") String companyId);
 
     @Update("""
         UPDATE rules
         SET usage_status = 'Y'
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
           AND "가맹점업종코드" = #{merchantIndustryCode}
           AND COALESCE(usage_status, '') <> 'Y'
     """)
     int markRulesAsUsedByCompanyIdAndIndustryCode(
-            @Param("companyId") UUID companyId,
+            @Param("companyId") String companyId,
             @Param("merchantIndustryCode") String merchantIndustryCode
     );
 

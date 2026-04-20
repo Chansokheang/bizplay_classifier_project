@@ -188,7 +188,7 @@ public class TransactionServiceImple implements TransactionService {
 
     @Override
     @Transactional
-    public TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, UUID defaultCompanyId, String sheetName) {
+    public TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, String defaultCompanyId, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
@@ -205,7 +205,7 @@ public class TransactionServiceImple implements TransactionService {
 
     @Override
     @Transactional
-    public TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, UUID defaultCompanyId, String sheetName) {
+    public TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, String defaultCompanyId, String sheetName) {
         if (fileBytes == null || fileBytes.length == 0) {
             throw new IllegalArgumentException("Excel file bytes are required.");
         }
@@ -216,7 +216,7 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, UUID defaultCompanyId, String sheetName, String originalFileName) throws IOException {
+    private TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, String defaultCompanyId, String sheetName, String originalFileName) throws IOException {
         if (defaultCompanyId != null) {
             companyService.getCompanyByCompanyId(defaultCompanyId);
         }
@@ -261,11 +261,11 @@ public class TransactionServiceImple implements TransactionService {
             validateRequiredHeaders(headerMap, defaultCompanyId);
             ensureUsageAndMethodColumnsSafe(sheet.getRow(headerParseResult.headerRowIndex()), headerMap);
 
-            Map<UUID, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
-            Map<UUID, BotConfigRequest.Config> botConfigCache = new HashMap<>();
+            Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
+            Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
             Set<String> usedRuleKeys = new HashSet<>();
-            UUID fileCompanyId = defaultCompanyId;
+            String fileCompanyId = defaultCompanyId;
             int totalRows = 0;
             int skippedRows = 0;
             int insertedRows = 0;
@@ -283,7 +283,7 @@ public class TransactionServiceImple implements TransactionService {
                     continue;
                 }
 
-                UUID companyId = resolveCompanyId(row, headerMap, formatter, rowIndex, defaultCompanyId);
+                String companyId = resolveCompanyId(row, headerMap, formatter, rowIndex, defaultCompanyId);
                 fileCompanyId = mergeFileCompanyId(fileCompanyId, companyId);
                 UsageValue usageValue = resolveUsageValueByMerchantName(
                         row,
@@ -393,7 +393,7 @@ public class TransactionServiceImple implements TransactionService {
     }
 
     @Override
-    public List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(UUID companyId) {
+    public List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(String companyId) {
         companyService.getCompanyByCompanyId(companyId);
         return fileClassifySummaryRepo.getAllByCompanyId(companyId);
     }
@@ -469,7 +469,7 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private UUID mergeFileCompanyId(UUID current, UUID candidate) {
+    private String mergeFileCompanyId(String current, String candidate) {
         if (current == null) {
             return candidate;
         }
@@ -658,7 +658,7 @@ public class TransactionServiceImple implements TransactionService {
         return false;
     }
 
-    private void validateRequiredHeaders(Map<String, Integer> headerMap, UUID defaultCompanyId) {
+    private void validateRequiredHeaders(Map<String, Integer> headerMap, String defaultCompanyId) {
         List<String> missing = new ArrayList<>();
         if (!headerMap.containsKey("approval_date")) missing.add("승인일자");
         if (!headerMap.containsKey("approval_time")) missing.add("승인시간");
@@ -694,16 +694,12 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private UUID resolveCompanyId(Row row, Map<String, Integer> headerMap, DataFormatter formatter, int rowIndex, UUID defaultCompanyId) {
-        UUID companyId = defaultCompanyId;
+    private String resolveCompanyId(Row row, Map<String, Integer> headerMap, DataFormatter formatter, int rowIndex, String defaultCompanyId) {
+        String companyId = defaultCompanyId;
         if (companyId == null) {
             String companyIdRaw = getCellValue(row, headerMap, formatter, "company_id");
             if (companyIdRaw != null && !companyIdRaw.isBlank()) {
-                try {
-                    companyId = UUID.fromString(companyIdRaw);
-                } catch (IllegalArgumentException e) {
-                    throw new IllegalArgumentException("Row " + (rowIndex + 1) + ": company_id must be a valid UUID.");
-                }
+                companyId = normalizeCompanyBusinessNumber(companyIdRaw, rowIndex);
             }
         }
         if (companyId == null) {
@@ -712,8 +708,8 @@ public class TransactionServiceImple implements TransactionService {
         return companyId;
     }
 
-    private UsageValue resolveUsageValueByMerchantName(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
-                                                       Map<UUID, List<RuleClassifierDTO>> rulesCache,
+    private UsageValue resolveUsageValueByMerchantName(Row row, Map<String, Integer> headerMap, DataFormatter formatter, String companyId,
+                                                       Map<String, List<RuleClassifierDTO>> rulesCache,
                                                        Set<String> usedRuleKeys) {
         String usageCode = getCellValue(row, headerMap, formatter, USAGE_CODE_HEADER);
         String usageName = getCellValue(row, headerMap, formatter, USAGE_NAME_HEADER);
@@ -759,7 +755,7 @@ public class TransactionServiceImple implements TransactionService {
         return UsageValue.ruleMatched(finalUsageCode, finalUsageName);
     }
 
-    private void markRuleAsUsed(UUID companyId, String industryCodeNormalized, Set<String> usedRuleKeys) {
+    private void markRuleAsUsed(String companyId, String industryCodeNormalized, Set<String> usedRuleKeys) {
         if (companyId == null || industryCodeNormalized == null || industryCodeNormalized.isBlank()) {
             return;
         }
@@ -772,9 +768,9 @@ public class TransactionServiceImple implements TransactionService {
         ruleRepo.markRulesAsUsedByCompanyIdAndIndustryCode(companyId, industryCodeNormalized);
     }
 
-    private UsageValue resolveUsageValueByAi(Row row, Map<String, Integer> headerMap, DataFormatter formatter, UUID companyId,
-                                             Map<UUID, List<RuleClassifierDTO>> rulesCache,
-                                             Map<UUID, BotConfigRequest.Config> botConfigCache,
+    private UsageValue resolveUsageValueByAi(Row row, Map<String, Integer> headerMap, DataFormatter formatter, String companyId,
+                                             Map<String, List<RuleClassifierDTO>> rulesCache,
+                                             Map<String, BotConfigRequest.Config> botConfigCache,
                                              Map<String, AiFallbackService.AiFallbackResult> aiResultCache,
                                              UsageValue current,
                                              boolean disambiguateMultiCode) {
@@ -893,7 +889,7 @@ public class TransactionServiceImple implements TransactionService {
         return UsageValue.aiMatched(mergedCode, mergedName, reason);
     }
 
-    private String buildAiCacheKey(UUID companyId, Map<String, String> rowSnapshot) {
+    private String buildAiCacheKey(String companyId, Map<String, String> rowSnapshot) {
         String merchant = normalizeMatcherText(rowSnapshot.get("merchant_name"));
         String industryCode = rowSnapshot.getOrDefault("merchant_industry_code", "").trim().toUpperCase();
         String taxType = normalizeMatcherText(rowSnapshot.get("tax_type"));
@@ -946,7 +942,7 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private BotConfigRequest.Config resolveBotConfig(UUID companyId, Map<UUID, BotConfigRequest.Config> botConfigCache) {
+    private BotConfigRequest.Config resolveBotConfig(String companyId, Map<String, BotConfigRequest.Config> botConfigCache) {
         if (botConfigCache.containsKey(companyId)) {
             return botConfigCache.get(companyId);
         }
@@ -1089,7 +1085,7 @@ public class TransactionServiceImple implements TransactionService {
         return String.join(",", limited);
     }
 
-    private void upsertRuleCategoryFromRow(UUID companyId, String merchantIndustryCode, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {
+    private void upsertRuleCategoryFromRow(String companyId, String merchantIndustryCode, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {
 
         if (companyId == null || merchantIndustryCode == null || merchantIndustryCode.isBlank()) {
             return;
@@ -1117,7 +1113,7 @@ public class TransactionServiceImple implements TransactionService {
                             .companyId(companyId)
                             .merchantIndustryCode(normalizedCode)
                             .merchantIndustryName(normalizedName)
-                            .categoryIds(Collections.emptyList())
+                            .categoryCodes(Collections.emptyList())
                             .description("auto-trained-from-upload")
                             .build()
             );
@@ -1127,7 +1123,7 @@ public class TransactionServiceImple implements TransactionService {
         for (Pair pair : pairs) {
             String code = pair.code();
             String categoryName = pair.name();
-            if (!code.matches("^[A-Za-z0-9]{5}$")) {
+            if (!code.matches("^[A-Za-z0-9]{1,50}$")) {
                 continue;
             }
 
@@ -1137,7 +1133,7 @@ public class TransactionServiceImple implements TransactionService {
         }
     }
 
-    private CategoryDTO findOrCreateCategory(UUID companyId, String code, String categoryName) {
+    private CategoryDTO findOrCreateCategory(String companyId, String code, String categoryName) {
         CategoryDTO byCode = categoryRepo.findByCompanyIdAndCode(companyId, code);
         if (byCode != null) {
             return byCode;
@@ -1315,7 +1311,7 @@ public class TransactionServiceImple implements TransactionService {
             }
 
             Row dataRow = sheet.createRow(1);
-            writeCell(dataRow, 0, request.getCompanyId() == null ? null : request.getCompanyId().toString());
+            writeCell(dataRow, 0, request.getCompanyId());
             writeCell(dataRow, 1, request.getApprovalDate());
             writeCell(dataRow, 2, request.getApprovalTime());
             writeCell(dataRow, 3, request.getMerchantName());
@@ -1348,7 +1344,7 @@ public class TransactionServiceImple implements TransactionService {
     }
 
     private TransactionRequest parseRowToRequest(Row row, Map<String, Integer> headerMap, DataFormatter formatter,
-                                                 int rowIndex, UUID companyId, String derivedUsageCode) {
+                                                 int rowIndex, String companyId, String derivedUsageCode) {
         return TransactionRequest.builder()
                 .companyId(companyId)
                 .approvalDate(getCellValue(row, headerMap, formatter, "approval_date"))
@@ -1384,6 +1380,17 @@ public class TransactionServiceImple implements TransactionService {
         }
         String value = formatter.formatCellValue(row.getCell(headerMap.get(header))).trim();
         return value.isEmpty() ? null : value;
+    }
+
+    private String normalizeCompanyBusinessNumber(String rawValue, int rowIndex) {
+        if (rawValue == null || rawValue.isBlank()) {
+            return null;
+        }
+        String digitsOnly = rawValue.replaceAll("\\D", "");
+        if (digitsOnly.length() != 10) {
+            throw new IllegalArgumentException("Row " + (rowIndex + 1) + ": company_id must be a 10-digit business number.");
+        }
+        return digitsOnly;
     }
 
     private boolean isRowEmpty(Row row, DataFormatter formatter) {
@@ -1440,7 +1447,7 @@ public class TransactionServiceImple implements TransactionService {
             throw new IllegalArgumentException("File not found: " + fileId);
         }
 
-        UUID companyId = request.getCompanyId();
+        String companyId = request.getCompanyId();
 
         byte[] originalBytes;
         try {

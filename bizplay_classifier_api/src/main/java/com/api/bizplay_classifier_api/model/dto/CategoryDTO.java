@@ -13,7 +13,7 @@ import java.util.UUID;
 @Builder
 public class CategoryDTO {
     private UUID categoryId;
-    private UUID companyId;
+    private String companyId;
     private String code;
     private String category;
     private Boolean isUsed;

@@ -6,14 +6,12 @@ import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryRespon
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.UUID;
-
 public interface CategoryService {
     CategoryDTO createCategory(CategoryRequest categoryRequest);
 
     List<CategoryDTO> getAllCategories();
 
-    List<CategoryDTO> getAllCategoriesByCompanyId(UUID companyId);
+    List<CategoryDTO> getAllCategoriesByCompanyId(String companyId);
 
-    CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, UUID companyId, String sheetName);
+    CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String companyId, String sheetName);
 }

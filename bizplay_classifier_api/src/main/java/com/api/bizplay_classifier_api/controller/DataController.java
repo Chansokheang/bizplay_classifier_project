@@ -38,7 +38,7 @@ public class DataController {
     @PostMapping(value = "/train", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> trainRulesFromFile(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") UUID companyId,
+            @RequestParam("companyId") String companyId,
             @RequestParam(value = "sheetName", required = false) String sheetName,
             @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
@@ -70,3 +70,4 @@ public class DataController {
         );
     }
 }
+

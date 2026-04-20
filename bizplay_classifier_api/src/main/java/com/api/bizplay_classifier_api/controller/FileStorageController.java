@@ -64,7 +64,7 @@ public class FileStorageController {
     @PostMapping(value = "/training-files/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadTrainingFile(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") UUID companyId
+            @RequestParam("companyId") String companyId
     ) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
@@ -118,13 +118,13 @@ public class FileStorageController {
     }
 
     @GetMapping("/files/company/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(@PathVariable String companyId) {
         return getFilesByCompanyId(companyId, null);
     }
 
     @GetMapping("/files/company/{companyId}/filter")
     public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(
-            @PathVariable UUID companyId,
+            @PathVariable String companyId,
             @RequestParam(value = "fileType", required = false) FileType fileType
     ) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
@@ -188,3 +188,4 @@ public class FileStorageController {
         );
     }
 }
+

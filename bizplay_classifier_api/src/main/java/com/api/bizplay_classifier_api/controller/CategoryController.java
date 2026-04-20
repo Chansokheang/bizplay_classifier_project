@@ -47,7 +47,7 @@ public class CategoryController {
     }
 
     @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getAllCategoriesByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getAllCategoriesByCompanyId(@PathVariable String companyId) {
         return ResponseEntity.ok(
                 ApiResponse.<List<CategoryDTO>>builder()
                         .payload(categoryService.getAllCategoriesByCompanyId(companyId))
@@ -61,7 +61,7 @@ public class CategoryController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadCategoriesByExcel(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") UUID companyId,
+            @RequestParam("companyId") String companyId,
             @RequestParam(value = "sheetName", required = false) String sheetName
     ) {
         CategoryUploadSummaryResponse payload = categoryService.createCategoriesByExcel(file, companyId, sheetName);
@@ -75,3 +75,4 @@ public class CategoryController {
         );
     }
 }
+

@@ -1,6 +1,5 @@
 package com.api.bizplay_classifier_api.controller;
 
-import com.api.bizplay_classifier_api.model.enums.CompanyType;
 import com.api.bizplay_classifier_api.model.request.CompanyRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CompanyResponse;
@@ -14,8 +13,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.UUID;
-
 @Log4j2
 @RestController
 @RequestMapping("/api/v1/companies")
@@ -27,12 +24,10 @@ public class CompanyController {
     private final CompanyService companyService;
 
     @PostMapping("/create")
-    public ResponseEntity<ApiResponse<?>> createCompany(
-            @RequestParam(value = "companyType", defaultValue = "CLASSIFIER") CompanyType companyType,
-            @Valid @RequestBody CompanyRequest companyRequest) {
+    public ResponseEntity<ApiResponse<?>> createCompany(@Valid @RequestBody CompanyRequest companyRequest) {
         return ResponseEntity.ok(
                 ApiResponse.<CompanyResponse>builder()
-                        .payload(companyService.createCompany(companyRequest, companyType))
+                        .payload(companyService.createCompany(companyRequest))
                         .message("Company was created successfully.")
                         .code(200)
                         .status(HttpStatus.OK)
@@ -54,7 +49,7 @@ public class CompanyController {
     }
 
     @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getCompanyByCompanyId(@Valid @PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> getCompanyByCompanyId(@Valid @PathVariable String companyId) {
         return ResponseEntity.ok(
                 ApiResponse.<CompanyResponse>builder()
                         .payload(companyService.getCompanyByCompanyId(companyId))
@@ -66,7 +61,7 @@ public class CompanyController {
     }
 
     @DeleteMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> deleteCompanyByCompanyId(@PathVariable UUID companyId) {
+    public ResponseEntity<ApiResponse<?>> deleteCompanyByCompanyId(@PathVariable String companyId) {
         companyService.deleteCompanyByCompanyId(companyId);
         return ResponseEntity.ok(
                 ApiResponse.<Void>builder()

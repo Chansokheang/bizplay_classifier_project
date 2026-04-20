@@ -76,7 +76,7 @@ public class BotConfigServiceImple implements BotConfigService {
 
     @Override
     @Transactional
-    public BotConfigDTO upsertBotConfig(UUID companyId, BotConfigRequest.Config config, AiProvider provider, String modelName) {
+    public BotConfigDTO upsertBotConfig(String companyId, BotConfigRequest.Config config, AiProvider provider, String modelName) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
@@ -91,7 +91,7 @@ public class BotConfigServiceImple implements BotConfigService {
     }
 
     @Override
-    public BotConfigDTO getLatestBotConfigByCompanyId(UUID companyId) {
+    public BotConfigDTO getLatestBotConfigByCompanyId(String companyId) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
@@ -110,19 +110,19 @@ public class BotConfigServiceImple implements BotConfigService {
 
     @Override
     @Transactional
-    public String updatePromptFromLatestTrainingData(UUID companyId, Integer sampleRows) {
+    public String updatePromptFromLatestTrainingData(String companyId, Integer sampleRows) {
         return updatePromptFromLatestTrainingDataWithSource(companyId, sampleRows, null).getPrompt();
     }
 
     @Override
     @Transactional
-    public PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(UUID companyId, Integer sampleRows) {
+    public PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(String companyId, Integer sampleRows) {
         return updatePromptFromLatestTrainingDataWithSource(companyId, sampleRows, null);
     }
 
     @Override
     @Transactional
-    public PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(UUID companyId, Integer sampleRows, PromptEnhancementRequest request) {
+    public PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(String companyId, Integer sampleRows, PromptEnhancementRequest request) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
@@ -194,7 +194,7 @@ public class BotConfigServiceImple implements BotConfigService {
 
     @Override
     @Transactional(readOnly = true)
-    public PromptEnhancementResponse generatePromptEnhancementPreview(UUID companyId, Integer sampleRows) {
+    public PromptEnhancementResponse generatePromptEnhancementPreview(String companyId, Integer sampleRows) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
         if (exists == 0) {
@@ -224,7 +224,7 @@ public class BotConfigServiceImple implements BotConfigService {
     @Override
     @Async("aiTaskExecutor")
     @Transactional(readOnly = true)
-    public CompletableFuture<PromptEnhancementResponse> generatePromptEnhancementPreviewAsync(UUID companyId, Integer sampleRows) {
+    public CompletableFuture<PromptEnhancementResponse> generatePromptEnhancementPreviewAsync(String companyId, Integer sampleRows) {
         try {
             PromptEnhancementResponse response = generatePromptEnhancementPreview(companyId, sampleRows);
             return CompletableFuture.completedFuture(response);
@@ -233,7 +233,7 @@ public class BotConfigServiceImple implements BotConfigService {
         }
     }
 
-    private BotConfigDTO saveOrUpdateBotConfig(UUID companyId, BotConfigRequest request, String configJson) {
+    private BotConfigDTO saveOrUpdateBotConfig(String companyId, BotConfigRequest request, String configJson) {
         UUID latestBotId = botConfigRepo.findLatestBotIdByCompanyId(companyId);
         if (latestBotId != null) {
             return withParsedConfig(botConfigRepo.updateBotConfigByBotId(latestBotId, configJson));
@@ -272,7 +272,7 @@ public class BotConfigServiceImple implements BotConfigService {
         return dto;
     }
 
-    private BotConfigRequest.Config resolveBaseConfig(UUID companyId) {
+    private BotConfigRequest.Config resolveBaseConfig(String companyId) {
         String latestConfigJson = botConfigRepo.getLatestConfigJsonByCompanyId(companyId);
         if (latestConfigJson == null || latestConfigJson.isBlank()) {
             return buildDefaultConfig();

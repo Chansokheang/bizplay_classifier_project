@@ -13,7 +13,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @Builder
 public class FileUploadHistoryRequest {
-    private UUID companyId;
+    private String companyId;
     private String originalFileName;
     private String storedFileName;
     private String fileUrl;

@@ -15,7 +15,7 @@ import java.util.UUID;
 public class FileClassifySummaryDTO {
     private UUID summaryId;
     private UUID fileId;
-    private UUID companyId;
+    private String companyId;
     private Integer totalRows;
     private Integer processedRows;
     private Integer skippedRows;

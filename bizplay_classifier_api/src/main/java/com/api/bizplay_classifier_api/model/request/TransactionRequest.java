@@ -10,16 +10,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.UUID;
-
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
 public class TransactionRequest {
     @NotNull(message = "Company id cannot be null.")
-    @Schema(example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
-    private UUID companyId;
+    @Schema(example = "1234567890")
+    private String companyId;
 
     @NotBlank(message = "Approval date cannot be blank.")
     @Pattern(regexp = "^\\d{8}$", message = "Approval date must be in yyyyMMdd format.")

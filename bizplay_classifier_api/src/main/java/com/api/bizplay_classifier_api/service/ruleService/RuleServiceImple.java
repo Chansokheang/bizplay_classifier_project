@@ -23,7 +23,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -41,10 +43,11 @@ public class RuleServiceImple implements RuleService {
     @Transactional
     public RuleDTO createRule(RuleRequest ruleRequest) {
         companyService.getCompanyByCompanyId(ruleRequest.getCompanyId());
+        List<UUID> categoryIds = resolveCategoryIds(ruleRequest.getCompanyId(), ruleRequest.getCategoryCodes());
         RuleDTO createdRule = ruleRepo.createRule(ruleRequest);
-        if (ruleRequest.getCategoryIds() != null && !ruleRequest.getCategoryIds().isEmpty()) {
-            ruleRepo.createRuleCategoryMappings(createdRule.getRuleId(), ruleRequest.getCategoryIds());
-            for (UUID categoryId : ruleRequest.getCategoryIds()) {
+        if (!categoryIds.isEmpty()) {
+            ruleRepo.createRuleCategoryMappings(createdRule.getRuleId(), categoryIds);
+            for (UUID categoryId : categoryIds) {
                 categoryRepo.markCategoryAsUsed(categoryId);
             }
         }
@@ -56,9 +59,10 @@ public class RuleServiceImple implements RuleService {
     public RuleDTO updateRuleByRuleId(UUID ruleId, RuleUpdateRequest ruleUpdateRequest) {
         RuleDTO updatedRule = ruleRepo.updateRuleByRuleId(ruleId, ruleUpdateRequest);
         ruleRepo.deleteRuleCategoryMappings(ruleId);
-        if (ruleUpdateRequest.getCategoryIds() != null && !ruleUpdateRequest.getCategoryIds().isEmpty()) {
-            ruleRepo.createRuleCategoryMappings(ruleId, ruleUpdateRequest.getCategoryIds());
-            for (UUID categoryId : ruleUpdateRequest.getCategoryIds()) {
+        List<UUID> categoryIds = resolveCategoryIds(updatedRule.getCompanyId(), ruleUpdateRequest.getCategoryCodes());
+        if (!categoryIds.isEmpty()) {
+            ruleRepo.createRuleCategoryMappings(ruleId, categoryIds);
+            for (UUID categoryId : categoryIds) {
                 categoryRepo.markCategoryAsUsed(categoryId);
             }
         }
@@ -76,14 +80,14 @@ public class RuleServiceImple implements RuleService {
     }
 
     @Override
-    public List<RuleDTO> getAllRulesByCompanyId(UUID companyId) {
+    public List<RuleDTO> getAllRulesByCompanyId(String companyId) {
         companyService.getCompanyByCompanyId(companyId);
         return ruleRepo.getAllRulesByCompanyId(companyId);
     }
 
     @Override
     @Transactional
-    public DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, UUID companyId, String sheetName) {
+    public DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, String companyId, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
@@ -146,7 +150,7 @@ public class RuleServiceImple implements RuleService {
                 }
 
                 String normalizedCode = code.trim();
-                if (!normalizedCode.matches("^[A-Za-z0-9]{5}$")) {
+                if (!normalizedCode.matches("^[A-Za-z0-9]{1,50}$")) {
                     skippedRows++;
                     skippedInvalidUsageCode++;
                     continue;
@@ -175,6 +179,7 @@ public class RuleServiceImple implements RuleService {
                                     .companyId(companyId)
                                     .merchantIndustryCode(normalizedIndustryCode)
                                     .merchantIndustryName(normalizedIndustryName)
+                                    .categoryCodes(List.of())
                                     .description("trained-from-data")
                                     .build()
                     );
@@ -209,7 +214,7 @@ public class RuleServiceImple implements RuleService {
         }
     }
 
-    private CategoryUpsertResult findOrCreateCategory(UUID companyId, String code, String categoryName) {
+    private CategoryUpsertResult findOrCreateCategory(String companyId, String code, String categoryName) {
         CategoryDTO byCode = categoryRepo.findByCompanyIdAndCode(companyId, code);
         if (byCode != null) {
             return new CategoryUpsertResult(byCode, false);
@@ -228,6 +233,47 @@ public class RuleServiceImple implements RuleService {
                         .build()
         );
         return new CategoryUpsertResult(created, true);
+    }
+
+    private List<UUID> resolveCategoryIds(String companyId, List<String> categoryCodes) {
+        if (categoryCodes == null || categoryCodes.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> normalizedCodes = new LinkedHashSet<>();
+        for (String categoryCode : categoryCodes) {
+            if (categoryCode == null || categoryCode.isBlank()) {
+                continue;
+            }
+            normalizedCodes.add(categoryCode.trim());
+        }
+
+        if (normalizedCodes.isEmpty()) {
+            return List.of();
+        }
+
+        List<CategoryDTO> categories = categoryRepo.findByCompanyIdAndCodes(companyId, List.copyOf(normalizedCodes));
+        Map<String, UUID> categoryIdByCode = new HashMap<>();
+        for (CategoryDTO category : categories) {
+            categoryIdByCode.put(category.getCode(), category.getCategoryId());
+        }
+
+        List<String> missingCodes = new ArrayList<>();
+        List<UUID> categoryIds = new ArrayList<>();
+        for (String normalizedCode : normalizedCodes) {
+            UUID categoryId = categoryIdByCode.get(normalizedCode);
+            if (categoryId == null) {
+                missingCodes.add(normalizedCode);
+                continue;
+            }
+            categoryIds.add(categoryId);
+        }
+
+        if (!missingCodes.isEmpty()) {
+            throw new CustomNotFoundException("Category code was not found: " + String.join(", ", missingCodes));
+        }
+
+        return categoryIds;
     }
 
     private HeaderParseResult findHeaderMap(Sheet sheet, DataFormatter formatter) {

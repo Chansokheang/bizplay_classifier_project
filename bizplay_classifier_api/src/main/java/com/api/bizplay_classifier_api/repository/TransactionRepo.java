@@ -16,7 +16,7 @@ public interface TransactionRepo {
 
     @Select("""
         INSERT INTO transactions (
-            company_id,
+            company_business_number,
             approval_date,
             approval_time,
             merchant_name,
@@ -47,7 +47,7 @@ public interface TransactionRepo {
     """)
     @Results(id = "transactionMap", value = {
             @Result(property = "transactionId", column = "transaction_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId", column = "company_business_number"),
             @Result(property = "approvalDate", column = "approval_date"),
             @Result(property = "approvalTime", column = "approval_time"),
             @Result(property = "merchantName", column = "merchant_name"),
@@ -66,7 +66,7 @@ public interface TransactionRepo {
     @Insert({
             "<script>",
             "INSERT INTO transactions (",
-            "company_id, approval_date, approval_time, merchant_name,",
+            "company_business_number, approval_date, approval_time, merchant_name,",
             "merchant_industry_code, merchant_industry_name, merchant_business_reg_number,",
             "supply_amount, vat_amount, tax_type, field_name1, pk",
             ") VALUES",

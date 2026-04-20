@@ -18,7 +18,7 @@ public interface FileClassifySummaryRepo {
     @Select("""
         INSERT INTO file_classify_summary (
             file_id,
-            company_id,
+            company_business_number,
             total_rows,
             processed_rows,
             skipped_rows,
@@ -43,7 +43,7 @@ public interface FileClassifySummaryRepo {
     @Results(id = "fileClassifySummaryMap", value = {
             @Result(property = "summaryId", column = "summary_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
             @Result(property = "fileId", column = "file_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "companyId", column = "company_business_number"),
             @Result(property = "totalRows", column = "total_rows"),
             @Result(property = "processedRows", column = "processed_rows"),
             @Result(property = "skippedRows", column = "skipped_rows"),
@@ -55,7 +55,7 @@ public interface FileClassifySummaryRepo {
     })
     FileClassifySummaryDTO createSummary(
             @Param("fileId") UUID fileId,
-            @Param("companyId") UUID companyId,
+            @Param("companyId") String companyId,
             @Param("totalRows") int totalRows,
             @Param("processedRows") int processedRows,
             @Param("skippedRows") int skippedRows,
@@ -67,11 +67,11 @@ public interface FileClassifySummaryRepo {
     @Select("""
         SELECT *
         FROM file_classify_summary
-        WHERE company_id = #{companyId}
+        WHERE company_business_number = #{companyId}
         ORDER BY created_date DESC
     """)
     @org.apache.ibatis.annotations.ResultMap("fileClassifySummaryMap")
-    List<FileClassifySummaryDTO> getAllByCompanyId(@Param("companyId") UUID companyId);
+    List<FileClassifySummaryDTO> getAllByCompanyId(@Param("companyId") String companyId);
 
     @Select("""
         SELECT *
