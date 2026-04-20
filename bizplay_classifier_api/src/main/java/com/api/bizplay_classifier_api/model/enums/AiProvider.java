@@ -1,7 +1,8 @@
 package com.api.bizplay_classifier_api.model.enums;
 
 public enum AiProvider {
-    OPENAI_COMPATIBLE,
+    EXAONE,
     OPENAI,
-    GEMINI
+    GEMINI,
+    CLAUDE
 }

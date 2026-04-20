@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.controller;
 
+import com.api.bizplay_classifier_api.model.enums.CompanyType;
 import com.api.bizplay_classifier_api.model.request.CompanyRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CompanyResponse;
@@ -26,10 +27,12 @@ public class CompanyController {
     private final CompanyService companyService;
 
     @PostMapping("/create")
-    public ResponseEntity<ApiResponse<?>> createCompany(@Valid @RequestBody CompanyRequest companyRequest) {
+    public ResponseEntity<ApiResponse<?>> createCompany(
+            @RequestParam(value = "companyType", defaultValue = "CLASSIFIER") CompanyType companyType,
+            @Valid @RequestBody CompanyRequest companyRequest) {
         return ResponseEntity.ok(
                 ApiResponse.<CompanyResponse>builder()
-                        .payload(companyService.createCompany(companyRequest))
+                        .payload(companyService.createCompany(companyRequest, companyType))
                         .message("Company was created successfully.")
                         .code(200)
                         .status(HttpStatus.OK)

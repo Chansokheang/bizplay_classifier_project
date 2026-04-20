@@ -14,6 +14,8 @@ import java.util.UUID;
 public interface TransactionService {
     TransactionResponse createTransaction(TransactionRequest transactionRequest);
 
+    TransactionUploadSummaryResponse createSingleTransactionForTesting(TransactionRequest transactionRequest);
+
     TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, UUID defaultCompanyId, String sheetName);
 
     TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, UUID defaultCompanyId, String sheetName);
