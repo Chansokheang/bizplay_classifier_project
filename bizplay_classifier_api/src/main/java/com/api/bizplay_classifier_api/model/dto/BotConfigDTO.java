@@ -1,5 +1,7 @@
 package com.api.bizplay_classifier_api.model.dto;
 
+import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,7 +17,8 @@ import java.util.UUID;
 public class BotConfigDTO {
     private UUID botId;
     private UUID companyId;
-    private String config;
+    private BotConfigRequest.Config config;
+    @JsonIgnore
+    private String rawConfig;
     private Timestamp createdDate;
 }
-
