@@ -49,7 +49,7 @@ CREATE TABLE companies (
 -- ============================================
 CREATE TABLE bot_config (
                             bot_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                            company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+                            company_business_number      CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
                             config          JSON NOT NULL,
                             created_date    TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -59,36 +59,22 @@ CREATE TABLE bot_config (
 -- ============================================
 CREATE TABLE categories (
                             category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                            company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+                            company_business_number  CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
                             code        VARCHAR(50) NOT NUll,
                             category    VARCHAR(255) NOT NULL,
-                            "?ъ슜?щ?"  BOOLEAN NOT NULL DEFAULT FALSE
+                            "사용여부"  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ============================================
 -- 5. RULE (purpose)
 -- ============================================
--- CREATE TABLE rules (
---                        rule_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
---                        company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
--- --                        category_id UUID REFERENCES categories(category_id),
---                        rule_name    VARCHAR(255) NOT NULL,
--- --                         媛留뱀젏紐?varchar(255) NOT NULL ,
--- --                         媛留뱀젏?낆쥌紐?varchar(255),
---                        媛留뱀젏?낆쥌肄붾뱶    CHAR(5) NOT NULL,
---                        usage_status    CHAR(1) NOT NULL DEFAULT 'N',
---                        min_amount      INT,
---                        max_amount      INT,
---                        description     TEXT,
---                        created_date    TIMESTAMP NOT NULL DEFAULT NOW()
--- );
 
 
 CREATE TABLE rules (
                        rule_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                       company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
-                       媛留뱀젏?낆쥌紐?   VARCHAR(255) NOT NULL,
-                       媛留뱀젏?낆쥌肄붾뱶    VARCHAR(5) NOT NULL,
+                       company_business_number     CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+                       가맹점업종명    VARCHAR(255) NOT NULL,
+                       가맹점업종코드    VARCHAR(5) NOT NULL,
                        usage_status    CHAR(1) NOT NULL DEFAULT 'N',
                        min_amount      INT,
                        max_amount      INT,
@@ -102,7 +88,7 @@ CREATE TABLE rules (
 -- ============================================
 -- CREATE TABLE transactions (
 --                               transaction_id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
---                               company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number),
+--                               company_business_number                      UUID NOT NULL REFERENCES companies(company_business_number),
 --                               approval_date                   CHAR(8) NOT NULL,
 --                               approval_time                   CHAR(6) NOT NULL,
 --                               merchant_name                   VARCHAR(50) NOT NULL,
@@ -113,10 +99,10 @@ CREATE TABLE rules (
 --                               vat_amount                      INT,
 --                               tax_type                        VARCHAR(10),
 --                               field_name1                     VARCHAR(50),
---                               ?댁슜湲곌?id                       VARCHAR(255),   -- TODO: refactor to UUID FK ??company
+--                               이용기관id                       VARCHAR(255),   -- TODO: refactor to UUID FK → company
 --                               pk                              VARCHAR(255),   -- TODO: clarify purpose
---                               ?ъ슜?릋d                         VARCHAR(255),   -- TODO: refactor to UUID FK ??user
---                               ?묒꽦?릋d                         VARCHAR(255),   -- TODO: refactor to UUID FK ??user
+--                               사용자id                         VARCHAR(255),   -- TODO: refactor to UUID FK → user
+--                               작성자id                         VARCHAR(255),   -- TODO: refactor to UUID FK → user
 --                               created_date                    TIMESTAMP NOT NULL DEFAULT NOW()
 -- );
 
@@ -128,7 +114,7 @@ CREATE TABLE rules (
 --                                   summary_id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 --                                   rule_id                         UUID NOT NULL REFERENCES rules(rule_id) ON UPDATE CASCADE ON DELETE CASCADE,
 --                                   classify_id                     UUID NOT NULL REFERENCES classify_detail(classify_id) ON UPDATE CASCADE ON DELETE CASCADE,
---                                   company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+--                                   company_business_number                      UUID NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
 --                                   case_num                        INT,
 --                                   total_amount                    INT,
 --                                   month                           VARCHAR(10),
@@ -153,7 +139,7 @@ CREATE INDEX idx_rule_company        ON rules(company_business_number);
 -- ============================================
 -- CREATE TABLE file_upload_history (
 --                                      file_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
---                                      company_business_number CHAR(10) REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+--                                      company_business_number          UUID REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
 --                                      original_file_name  VARCHAR(255) NOT NULL,
 --                                      stored_file_name    VARCHAR(255) NOT NULL,
 --                                      file_url            TEXT NOT NULL,
@@ -167,7 +153,7 @@ CREATE INDEX idx_rule_company        ON rules(company_business_number);
 
 CREATE TABLE file_upload_history (
                                      file_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                                     company_business_number CHAR(10) REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+                                     company_business_number          CHAR(10) REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
                                      original_file_name  VARCHAR(255) NOT NULL,
                                      stored_file_name    VARCHAR(255) NOT NULL,
                                      file_url            TEXT NOT NULL,
@@ -201,7 +187,7 @@ CREATE TABLE rule_category_map (
 CREATE TABLE file_classify_summary (
                                        summary_id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                        file_id                 UUID NOT NULL REFERENCES file_upload_history(file_id) ON UPDATE CASCADE ON DELETE CASCADE,
-                                       company_business_number CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
+                                       company_business_number              CHAR(10) NOT NULL REFERENCES companies(company_business_number) ON UPDATE CASCADE ON DELETE CASCADE,
 
     -- processing totals
                                        total_rows              INT NOT NULL DEFAULT 0,
