@@ -228,13 +228,15 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 + "\n\n위 학습 데이터를 기반으로 시스템 프롬프트를 생성하세요.";
 
         try {
+            log.info("AI generatePrompt calling: provider={}, url={}, model={}", resolvedConfig.provider(), resolvedConfig.url(), resolvedConfig.modelName());
             String content = executePrompt(systemMessage, userMessage, resolvedConfig);
             if (content == null || content.isBlank()) {
+                log.warn("AI generatePrompt returned empty content");
                 return null;
             }
             return content.trim();
         } catch (Exception e) {
-            log.warn("AI prompt generation failed: {}", e.getMessage());
+            log.warn("AI prompt generation failed: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -303,10 +305,21 @@ public class AiFallbackServiceImple implements AiFallbackService {
 
     private Map<String, Object> buildRequestBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {
         return switch (config.provider()) {
-            case OPENAI, EXAONE -> buildOpenAiStyleBody(systemPrompt, userPrompt, config);
+            case OPENAI -> buildOpenAiStyleBody(systemPrompt, userPrompt, config);
+            case EXAONE -> buildExaoneBody(systemPrompt, userPrompt);
             case GEMINI -> buildGeminiBody(systemPrompt, userPrompt, config);
             case CLAUDE -> buildClaudeBody(systemPrompt, userPrompt, config);
         };
+    }
+
+    private Map<String, Object> buildExaoneBody(String systemPrompt, String userPrompt) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("stream", false);
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userPrompt)
+        ));
+        return body;
     }
 
     private Map<String, Object> buildOpenAiStyleBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {

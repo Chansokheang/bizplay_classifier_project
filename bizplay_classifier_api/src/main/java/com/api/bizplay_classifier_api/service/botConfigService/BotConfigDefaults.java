@@ -5,7 +5,7 @@ import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 
 public final class BotConfigDefaults {
     public static final AiProvider DEFAULT_PROVIDER = AiProvider.EXAONE;
-    public static final String DEFAULT_MODEL_NAME = "EXAONE-3.5-7.8B-Instruct-AWQ";
+    public static final String DEFAULT_MODEL_NAME = "exaone-357-8b-instruct-awq";
     public static final double DEFAULT_TEMPERATURE = 0.0;
     public static final String DEFAULT_API_KEY = "sk-d7a20eb034c847e8994e192b40c69a61";
     public static final String DEFAULT_SYSTEM_PROMPT = """
