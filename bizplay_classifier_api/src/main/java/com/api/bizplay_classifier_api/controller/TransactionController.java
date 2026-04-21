@@ -80,10 +80,10 @@ public class TransactionController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadTransactionsByExcel(
             @RequestPart("file") MultipartFile file,
-            @RequestParam(value = "companyId", required = false) String companyId,
+            @RequestParam(value = "corpNo", required = false) String corpNo,
             @RequestParam(value = "sheetName", required = false) String sheetName
     ) {
-        TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(file, companyId, sheetName);
+        TransactionUploadSummaryResponse payload = transactionService.createTransactionsByExcel(file, corpNo, sheetName);
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<TransactionUploadSummaryResponse>builder()
                         .payload(payload)
@@ -94,9 +94,9 @@ public class TransactionController {
         );
     }
 
-    @GetMapping("/files/company/{companyId}/classify-summaries")
-    public ResponseEntity<ApiResponse<?>> getAllClassifySummariesByCompanyId(@PathVariable String companyId) {
-        List<FileClassifySummaryDTO> payload = transactionService.getAllFileClassifySummariesByCompanyId(companyId);
+    @GetMapping("/files/corp/{corpNo}/classify-summaries")
+    public ResponseEntity<ApiResponse<?>> getAllClassifySummariesByCorpNo(@PathVariable String corpNo) {
+        List<FileClassifySummaryDTO> payload = transactionService.getAllFileClassifySummariesByCompanyId(corpNo);
         return ResponseEntity.ok(
                 ApiResponse.<List<FileClassifySummaryDTO>>builder()
                         .payload(payload)
@@ -122,7 +122,7 @@ public class TransactionController {
         if (fileRecord.getCompanyId() != null) {
             int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(fileRecord.getCompanyId(), currentUserId);
             if (exists == 0) {
-                throw new CustomNotFoundException("Company was not found with Id: " + fileRecord.getCompanyId());
+                throw new CustomNotFoundException("Corp was not found with corpNo: " + fileRecord.getCompanyId());
             }
         }
 

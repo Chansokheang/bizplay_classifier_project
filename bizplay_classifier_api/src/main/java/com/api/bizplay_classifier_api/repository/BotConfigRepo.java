@@ -17,13 +17,13 @@ import java.util.UUID;
 public interface BotConfigRepo {
 
     @Select("""
-        INSERT INTO bot_config (company_business_number, config)
-        VALUES (#{bot.companyId}, CAST(#{configJson} AS json))
+        INSERT INTO classifier_bot_config (corp_no, config)
+        VALUES (#{bot.corpNo}, CAST(#{configJson} AS json))
         RETURNING *
     """)
     @Results(id = "botConfigMap", value = {
             @Result(property = "botId", column = "bot_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_business_number"),
+            @Result(property = "corpNo", column = "corp_no"),
             @Result(property = "rawConfig", column = "config"),
             @Result(property = "createdDate", column = "created_date")
     })
@@ -31,15 +31,15 @@ public interface BotConfigRepo {
 
     @Select("""
         SELECT bot_id
-        FROM bot_config
-        WHERE company_business_number = #{companyId}
+        FROM classifier_bot_config
+        WHERE corp_no = #{corpNo}
         ORDER BY created_date DESC
         LIMIT 1
     """)
-    UUID findLatestBotIdByCompanyId(@Param("companyId") String companyId);
+    UUID findLatestBotIdByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
-        UPDATE bot_config
+        UPDATE classifier_bot_config
         SET config = CAST(#{configJson} AS json)
         WHERE bot_id = #{botId}
         RETURNING *
@@ -49,37 +49,58 @@ public interface BotConfigRepo {
 
     @Select("""
         SELECT COUNT(1)
-        FROM companies
-        WHERE company_business_number = #{companyId}
+        FROM corp
+        WHERE corp_no = #{corpNo}
           AND user_id = #{userId}
     """)
-    int existsCompanyByIdAndUserId(@Param("companyId") String companyId, @Param("userId") UUID userId);
+    int existsCorpByCorpNoAndUserId(@Param("corpNo") String corpNo, @Param("userId") UUID userId);
 
     @Select("""
         SELECT config ->> 'systemPrompt'
-        FROM bot_config
-        WHERE company_business_number = #{companyId}
+        FROM classifier_bot_config
+        WHERE corp_no = #{corpNo}
         ORDER BY created_date DESC
         LIMIT 1
     """)
-    String getLatestSystemPromptByCompanyId(@Param("companyId") String companyId);
+    String getLatestSystemPromptByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT config::text
-        FROM bot_config
-        WHERE company_business_number = #{companyId}
+        FROM classifier_bot_config
+        WHERE corp_no = #{corpNo}
         ORDER BY created_date DESC
         LIMIT 1
     """)
-    String getLatestConfigJsonByCompanyId(@Param("companyId") String companyId);
+    String getLatestConfigJsonByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT *
-        FROM bot_config
-        WHERE company_business_number = #{companyId}
+        FROM classifier_bot_config
+        WHERE corp_no = #{corpNo}
         ORDER BY created_date DESC
         LIMIT 1
     """)
     @ResultMap("botConfigMap")
-    BotConfigDTO getLatestBotConfigByCompanyId(@Param("companyId") String companyId);
+    BotConfigDTO getLatestBotConfigByCorpNo(@Param("corpNo") String corpNo);
+
+    default UUID findLatestBotIdByCompanyId(String companyId) {
+        return findLatestBotIdByCorpNo(companyId);
+    }
+
+    default int existsCompanyByIdAndUserId(String companyId, UUID userId) {
+        return existsCorpByCorpNoAndUserId(companyId, userId);
+    }
+
+    default String getLatestSystemPromptByCompanyId(String companyId) {
+        return getLatestSystemPromptByCorpNo(companyId);
+    }
+
+    default String getLatestConfigJsonByCompanyId(String companyId) {
+        return getLatestConfigJsonByCorpNo(companyId);
+    }
+
+    default BotConfigDTO getLatestBotConfigByCompanyId(String companyId) {
+        return getLatestBotConfigByCorpNo(companyId);
+    }
 }
+

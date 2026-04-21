@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,7 +16,8 @@ import java.util.UUID;
 @Builder
 public class RuleDTO {
     private UUID ruleId;
-    private String companyId;
+    @JsonProperty("corpNo")
+    private String corpNo;
     private String merchantIndustryName;
     private String merchantIndustryCode;
     private String usageStatus;

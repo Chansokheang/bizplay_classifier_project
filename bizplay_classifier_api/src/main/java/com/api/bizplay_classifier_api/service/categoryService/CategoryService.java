@@ -11,7 +11,7 @@ public interface CategoryService {
 
     List<CategoryDTO> getAllCategories();
 
-    List<CategoryDTO> getAllCategoriesByCompanyId(String companyId);
+    List<CategoryDTO> getAllCategoriesByCorpNo(String corpNo);
 
-    CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String companyId, String sheetName);
+    CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName);
 }

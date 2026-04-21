@@ -1,5 +1,8 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -16,7 +19,10 @@ import java.util.UUID;
 @Builder
 public class CategoryRequest {
     @NotNull(message = "Company Id can not be null.")
-    private String companyId;
+    @JsonProperty("corpNo")
+    @JsonAlias("corpNo")
+    @Schema(name = "corpNo", example = "1234567890")
+    private String corpNo;
 
     @NotBlank(message = "Code can not be blank.")
     @Pattern(regexp = "^[A-Za-z0-9]{1,50}$", message = "Code must be 1 to 50 alphanumeric characters.")

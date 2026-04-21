@@ -1,5 +1,7 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -16,7 +18,9 @@ import lombok.NoArgsConstructor;
 @Builder
 public class TransactionRequest {
     @NotNull(message = "Company id cannot be null.")
-    @Schema(example = "1234567890")
+    @JsonProperty("corpNo")
+    @JsonAlias("companyId")
+    @Schema(name = "corpNo", example = "1234567890")
     private String companyId;
 
     @NotBlank(message = "Approval date cannot be blank.")

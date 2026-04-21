@@ -5,7 +5,16 @@ import com.api.bizplay_classifier_api.model.dto.RuleClassifierDTO;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
-import org.apache.ibatis.annotations.*;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Many;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.ResultMap;
+import org.apache.ibatis.annotations.Results;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.type.JdbcType;
 
 import java.util.List;
@@ -15,86 +24,86 @@ import java.util.UUID;
 public interface RuleRepo {
 
     @Select("""
-        INSERT INTO rules (company_business_number, "가맹점업종명", "가맹점업종코드", min_amount, max_amount, description)
-        VALUES (#{rule.companyId}, #{rule.merchantIndustryName}, #{rule.merchantIndustryCode}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
+        INSERT INTO classifier_rules (corp_no, 가맹점업종명, 가맹점업종코드, min_amount, max_amount, description)
+        VALUES (#{rule.corpNo}, #{rule.merchantIndustryName}, #{rule.merchantIndustryCode}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
         RETURNING *
     """)
     @Results(id = "ruleMap", value = {
-            @Result(property = "ruleId",              column = "rule_id",        jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId",           column = "company_business_number"),
-            @Result(property = "merchantIndustryName",column = "가맹점업종명"),
-            @Result(property = "merchantIndustryCode",column = "가맹점업종코드"),
-            @Result(property = "usageStatus",         column = "usage_status"),
-            @Result(property = "minAmount",           column = "min_amount"),
-            @Result(property = "maxAmount",           column = "max_amount"),
-            @Result(property = "description",         column = "description"),
-            @Result(property = "createdDate",         column = "created_date"),
-            @Result(property = "categoryDTOList",     column = "rule_id",
+            @Result(property = "ruleId", column = "rule_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
+            @Result(property = "corpNo", column = "corp_no"),
+            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
+            @Result(property = "merchantIndustryCode", column = "가맹점업종코드"),
+            @Result(property = "usageStatus", column = "usage_status"),
+            @Result(property = "minAmount", column = "min_amount"),
+            @Result(property = "maxAmount", column = "max_amount"),
+            @Result(property = "description", column = "description"),
+            @Result(property = "createdDate", column = "created_date"),
+            @Result(property = "categoryDTOList", column = "rule_id",
                     many = @Many(select = "com.api.bizplay_classifier_api.repository.CategoryRepo.getAllCategoriesByRuleId"))
     })
     RuleDTO createRule(@Param("rule") RuleRequest ruleRequest);
 
     @Select("""
-        SELECT * FROM rules WHERE company_business_number = #{companyId}
+        SELECT * FROM classifier_rules WHERE corp_no = #{corpNo}
     """)
     @ResultMap("ruleMap")
-    List<RuleDTO> getAllRulesByCompanyId(@Param("companyId") String companyId);
+    List<RuleDTO> getAllRulesByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT *
-        FROM rules
-        WHERE company_business_number = #{companyId}
-          AND "가맹점업종코드" = #{merchantIndustryCode}
+        FROM classifier_rules
+        WHERE corp_no = #{corpNo}
+          AND 가맹점업종코드 = #{merchantIndustryCode}
         LIMIT 1
     """)
     @ResultMap("ruleMap")
-    RuleDTO findByCompanyIdAndIndustryCode(
-            @Param("companyId") String companyId,
+    RuleDTO findByCorpNoAndIndustryCode(
+            @Param("corpNo") String corpNo,
             @Param("merchantIndustryCode") String merchantIndustryCode
     );
 
     @Select("""
         SELECT
-            r."가맹점업종명"   AS merchant_industry_name,
-            r."가맹점업종코드" AS merchant_industry_code,
-            r.description      AS description,
-            c.code             AS code,
-            c.category         AS category
-        FROM rules r
+            r.가맹점업종명 AS merchant_industry_name,
+            r.가맹점업종코드 AS merchant_industry_code,
+            r.description            AS description,
+            c.code                   AS code,
+            c.category               AS category
+        FROM classifier_rules r
         JOIN rule_category_map rcm ON rcm.rule_id = r.rule_id
-        JOIN categories c ON c.category_id = rcm.category_id
-        WHERE r.company_business_number = #{companyId}
+        JOIN classifier_categories c ON c.code = rcm.code
+        WHERE r.corp_no = #{corpNo}
     """)
     @Results(id = "ruleClassifierMap", value = {
-            @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
-            @Result(property = "merchantIndustryCode", column = "merchant_industry_code"),
-            @Result(property = "description",          column = "description"),
-            @Result(property = "code",                 column = "code"),
-            @Result(property = "category",             column = "category")
+            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
+            @Result(property = "merchantIndustryCode", column = "가맹점업종코드"),
+            @Result(property = "description", column = "description"),
+            @Result(property = "code", column = "code"),
+            @Result(property = "category", column = "category")
     })
-    List<RuleClassifierDTO> getRuleClassifiersByCompanyId(@Param("companyId") String companyId);
+    List<RuleClassifierDTO> getRuleClassifiersByCorpNo(@Param("corpNo") String corpNo);
 
     @Update("""
-        UPDATE rules
+        UPDATE classifier_rules
         SET usage_status = 'Y'
-        WHERE company_business_number = #{companyId}
-          AND "가맹점업종코드" = #{merchantIndustryCode}
+        WHERE corp_no = #{corpNo}
+          AND 가맹점업종코드 = #{merchantIndustryCode}
           AND COALESCE(usage_status, '') <> 'Y'
     """)
-    int markRulesAsUsedByCompanyIdAndIndustryCode(
-            @Param("companyId") String companyId,
+    int markRulesAsUsedByCorpNoAndIndustryCode(
+            @Param("corpNo") String corpNo,
             @Param("merchantIndustryCode") String merchantIndustryCode
     );
 
     @Select("""
-        UPDATE rules
+        UPDATE classifier_rules
         SET
-            "가맹점업종명"  = #{rule.merchantIndustryName},
-            "가맹점업종코드" = #{rule.merchantIndustryCode},
-            usage_status     = COALESCE(#{rule.usageStatus}, usage_status),
-            min_amount       = #{rule.minAmount},
-            max_amount       = #{rule.maxAmount},
-            description      = #{rule.description}
+            가맹점업종명 = #{rule.merchantIndustryName},
+            가맹점업종코드 = #{rule.merchantIndustryCode},
+            usage_status = COALESCE(#{rule.usageStatus}, usage_status),
+            min_amount = #{rule.minAmount},
+            max_amount = #{rule.maxAmount},
+            description = #{rule.description}
         WHERE rule_id = #{ruleId}
         RETURNING *
     """)
@@ -103,9 +112,9 @@ public interface RuleRepo {
 
     @Insert({
             "<script>",
-            "INSERT INTO rule_category_map (rule_id, category_id) VALUES",
+            "INSERT INTO rule_category_map (rule_id, code) VALUES",
             "<foreach collection='categoryIds' item='categoryId' separator=','>",
-            "(#{ruleId}, #{categoryId})",
+            "(#{ruleId}, (SELECT code FROM classifier_categories WHERE category_id = #{categoryId}))",
             "</foreach>",
             "</script>"
     })
@@ -117,15 +126,30 @@ public interface RuleRepo {
     Integer deleteRuleCategoryMappings(@Param("ruleId") UUID ruleId);
 
     @Delete("""
-        DELETE FROM rules WHERE rule_id = #{ruleId}
+        DELETE FROM classifier_rules WHERE rule_id = #{ruleId}
     """)
     Integer deleteRuleByRuleId(@Param("ruleId") UUID ruleId);
 
     @Insert("""
-        INSERT INTO rule_category_map (rule_id, category_id)
-        VALUES (#{ruleId}, #{categoryId})
+        INSERT INTO rule_category_map (rule_id, code)
+        VALUES (#{ruleId}, (SELECT code FROM classifier_categories WHERE category_id = #{categoryId}))
         ON CONFLICT DO NOTHING
     """)
     int createRuleCategoryMappingIgnoreConflict(@Param("ruleId") UUID ruleId, @Param("categoryId") UUID categoryId);
 
+    default List<RuleDTO> getAllRulesByCompanyId(String companyId) {
+        return getAllRulesByCorpNo(companyId);
+    }
+
+    default RuleDTO findByCompanyIdAndIndustryCode(String companyId, String merchantIndustryCode) {
+        return findByCorpNoAndIndustryCode(companyId, merchantIndustryCode);
+    }
+
+    default List<RuleClassifierDTO> getRuleClassifiersByCompanyId(String companyId) {
+        return getRuleClassifiersByCorpNo(companyId);
+    }
+
+    default int markRulesAsUsedByCompanyIdAndIndustryCode(String companyId, String merchantIndustryCode) {
+        return markRulesAsUsedByCorpNoAndIndustryCode(companyId, merchantIndustryCode);
+    }
 }

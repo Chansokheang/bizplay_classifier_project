@@ -65,11 +65,11 @@ public class BotConfigController {
         );
     }
 
-    @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getLatestBotConfigByCompanyId(@PathVariable String companyId) {
+    @GetMapping("/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> getLatestBotConfigByCorpNo(@PathVariable String corpNo) {
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()
-                        .payload(botConfigService.getLatestBotConfigByCompanyId(companyId))
+                        .payload(botConfigService.getLatestBotConfigByCompanyId(corpNo))
                         .message("Bot config was retrieved successfully.")
                         .status(HttpStatus.OK)
                         .code(HttpStatus.OK.value())
@@ -77,9 +77,9 @@ public class BotConfigController {
         );
     }
 
-    @PutMapping("/{companyId}")
+    @PutMapping("/{corpNo}")
     public ResponseEntity<ApiResponse<?>> upsertBotConfig(
-            @PathVariable String companyId,
+            @PathVariable String corpNo,
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
                     defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
@@ -97,7 +97,7 @@ public class BotConfigController {
         if (config.getApiKey() == null || config.getApiKey().isBlank()) {
             config.setApiKey(apiKey);
         }
-        BotConfigDTO payload = botConfigService.upsertBotConfig(companyId, config, provider, modelName);
+        BotConfigDTO payload = botConfigService.upsertBotConfig(corpNo, config, provider, modelName);
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()
                         .payload(payload)
@@ -110,11 +110,11 @@ public class BotConfigController {
 
     @GetMapping("/prompt-enhancement")
     public ResponseEntity<ApiResponse<PromptEnhancementResponse>> generatePromptEnhancementPreview(
-            @RequestParam("companyId") String companyId,
+            @RequestParam("corpNo") String corpNo,
             @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
         // Call the synchronous version - it's already fast enough with the AI optimizations
-        PromptEnhancementResponse result = botConfigService.generatePromptEnhancementPreview(companyId, sampleRows);
+        PromptEnhancementResponse result = botConfigService.generatePromptEnhancementPreview(corpNo, sampleRows);
         return ResponseEntity.ok(
                 ApiResponse.<PromptEnhancementResponse>builder()
                         .payload(result)

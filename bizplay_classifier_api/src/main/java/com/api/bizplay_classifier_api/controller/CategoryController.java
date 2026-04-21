@@ -46,11 +46,11 @@ public class CategoryController {
         );
     }
 
-    @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getAllCategoriesByCompanyId(@PathVariable String companyId) {
+    @GetMapping("/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> getAllCategoriesByCorpNo(@PathVariable String corpNo) {
         return ResponseEntity.ok(
                 ApiResponse.<List<CategoryDTO>>builder()
-                        .payload(categoryService.getAllCategoriesByCompanyId(companyId))
+                        .payload(categoryService.getAllCategoriesByCorpNo(corpNo))
                         .message("Categories were retrieved successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -61,10 +61,10 @@ public class CategoryController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadCategoriesByExcel(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") String companyId,
+            @RequestParam("corpNo") String corpNo,
             @RequestParam(value = "sheetName", required = false) String sheetName
     ) {
-        CategoryUploadSummaryResponse payload = categoryService.createCategoriesByExcel(file, companyId, sheetName);
+        CategoryUploadSummaryResponse payload = categoryService.createCategoriesByExcel(file, corpNo, sheetName);
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<CategoryUploadSummaryResponse>builder()
                         .payload(payload)

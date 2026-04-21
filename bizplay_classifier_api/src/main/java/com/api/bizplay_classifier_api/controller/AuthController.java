@@ -23,18 +23,18 @@ public class AuthController {
 
     private final AppUserService appUserService;
 
-    @PostMapping("/register")
-    public ResponseEntity<ApiResponse<AppUserDTO>> registerUser(@Valid @RequestBody AppUserRequest appUserRequest) {
-            AppUserDTO appUserDTO = appUserService.registerUser(appUserRequest);
-            return ResponseEntity.status(HttpStatus.CREATED).body(
-                    ApiResponse.<AppUserDTO>builder()
-                            .payload(appUserDTO)
-                            .message("User registered successfully.")
-                            .code(HttpStatus.CREATED.value())
-                            .status(HttpStatus.CREATED)
-                            .build()
-            );
-    }
+//    @PostMapping("/register")
+//    public ResponseEntity<ApiResponse<AppUserDTO>> registerUser(@Valid @RequestBody AppUserRequest appUserRequest) {
+//            AppUserDTO appUserDTO = appUserService.registerUser(appUserRequest);
+//            return ResponseEntity.status(HttpStatus.CREATED).body(
+//                    ApiResponse.<AppUserDTO>builder()
+//                            .payload(appUserDTO)
+//                            .message("User registered successfully.")
+//                            .code(HttpStatus.CREATED.value())
+//                            .status(HttpStatus.CREATED)
+//                            .build()
+//            );
+//    }
 
     @PostMapping("login")
     public ResponseEntity<?> authenticate(@Valid @RequestBody AuthRequest authRequest) throws Exception {

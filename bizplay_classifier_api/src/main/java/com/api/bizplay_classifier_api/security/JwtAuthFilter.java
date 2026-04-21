@@ -36,12 +36,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (authHeader != null && authHeader.startsWith("Bearer ")){
             token = extractBearerToken(authHeader);
             if (token != null && !token.isBlank()) {
-                try {
+                if (jwtService.isStaticToken(token)) {
                     email = jwtService.extractUsername(token);
-                } catch (JwtException | IllegalArgumentException e) {
-                    SecurityContextHolder.clearContext();
-                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid JWT token.");
-                    return;
+                } else {
+                    try {
+                        email = jwtService.extractUsername(token);
+                    } catch (JwtException | IllegalArgumentException e) {
+                        SecurityContextHolder.clearContext();
+                        response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid JWT token.");
+                        return;
+                    }
                 }
             }
         }

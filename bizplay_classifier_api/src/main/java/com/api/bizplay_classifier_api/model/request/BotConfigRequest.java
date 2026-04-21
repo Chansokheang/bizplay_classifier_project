@@ -1,6 +1,8 @@
 package com.api.bizplay_classifier_api.model.request;
 
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -20,12 +22,22 @@ import java.util.UUID;
 @Builder
 public class BotConfigRequest {
     @NotNull(message = "Company Id can not be null.")
-    @Schema(example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
+    @JsonProperty("corpNo")
+    @JsonAlias("companyId")
+    @Schema(name = "corpNo", example = "1234567890")
     private String companyId;
 
     @NotNull(message = "Config can not be null.")
     @Valid
     private Config config;
+
+    public String getCorpNo() {
+        return companyId;
+    }
+
+    public void setCorpNo(String corpNo) {
+        this.companyId = corpNo;
+    }
 
     @Data
     @AllArgsConstructor

@@ -22,6 +22,22 @@ public interface AppUserRepo {
     AppUser registerUser(@Param("user") AppUserRequest appUserRequest);
 
     @Select("""
+        INSERT INTO "users" (username, firstname, lastname, email, password, gender, dob, is_verified)
+        VALUES (#{username}, #{firstname}, #{lastname}, #{email}, #{password}, #{gender}, #{dob}, TRUE)
+        RETURNING *
+    """)
+    @ResultMap("userMap")
+    AppUser createStaticLoginUser(
+            @Param("username") String username,
+            @Param("firstname") String firstname,
+            @Param("lastname") String lastname,
+            @Param("email") String email,
+            @Param("password") String password,
+            @Param("gender") Character gender,
+            @Param("dob") java.time.LocalDate dob
+    );
+
+    @Select("""
         SELECT * FROM "users" WHERE email = #{email}
     """)
     @ResultMap("userMap")

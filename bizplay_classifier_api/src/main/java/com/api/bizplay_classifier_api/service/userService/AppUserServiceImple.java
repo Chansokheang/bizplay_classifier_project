@@ -32,6 +32,14 @@ import java.util.UUID;
 @Service
 public class AppUserServiceImple implements AppUserService{
 
+    private static final String STATIC_LOGIN_USERNAME = "bizplay";
+    private static final String STATIC_LOGIN_FIRSTNAME = "Biz";
+    private static final String STATIC_LOGIN_LASTNAME = "Play";
+    private static final String STATIC_LOGIN_EMAIL = "bizplay.admin@local";
+    private static final String STATIC_LOGIN_PASSWORD = "BizplayStatic123!";
+    private static final Character STATIC_LOGIN_GENDER = 'N';
+    private static final LocalDate STATIC_LOGIN_DOB = LocalDate.of(2000, 1, 1);
+
     private final AppUserRepo appUserRepo;
     private final BCryptPasswordEncoder passwordEncoder;
     private final ModelMapper modelMapper;
@@ -42,23 +50,32 @@ public class AppUserServiceImple implements AppUserService{
     private final EmailUtil emailUtil;
 
     public LoginResponse authenticate(AuthRequest authRequest) {
-        String email = authRequest.getEmail().toLowerCase();
-        AppUserDTO appUser = findUserByEmail(email);
-
-        if (!Boolean.TRUE.equals(appUser.getIsVerified())){
-            throw new CustomNotFoundException("Your email is not verified. Please verify your email before login.");
-        }
-
-        final UserDetails userDetails = loadUserByUsername(email);
-
-        if (!passwordEncoder.matches(authRequest.getPassword(), userDetails.getPassword())){
-            throw new CustomNotFoundException("The email or password is incorrect.");
-        }
+        AppUser staticUser = ensureStaticLoginUser();
+        AppUserDTO appUser = modelMapper.map(staticUser, AppUserDTO.class);
+        final UserDetails userDetails = loadUserByUsername(STATIC_LOGIN_EMAIL);
 
         final String token = jwtService.generateToken(userDetails);
         AuthResponse authResponse = new AuthResponse(token);
 
         return new LoginResponse(appUser, authResponse);
+    }
+
+    private AppUser ensureStaticLoginUser() {
+        AppUser existingUser = appUserRepo.findUserByEmail(STATIC_LOGIN_EMAIL);
+        if (existingUser != null) {
+            return existingUser;
+        }
+
+        String encodedPassword = passwordEncoder.encode(STATIC_LOGIN_PASSWORD);
+        return appUserRepo.createStaticLoginUser(
+                STATIC_LOGIN_USERNAME,
+                STATIC_LOGIN_FIRSTNAME,
+                STATIC_LOGIN_LASTNAME,
+                STATIC_LOGIN_EMAIL,
+                encodedPassword,
+                STATIC_LOGIN_GENDER,
+                STATIC_LOGIN_DOB
+        );
     }
 
     @Override

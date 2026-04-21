@@ -39,7 +39,7 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers(
                                 "/api/v1/**",
-                                "/api/v1/companies/company_by_userId"
+                                "/api/v1/corps/corp_by_user_id"
                                 ).authenticated()
                         .anyRequest().authenticated()
                 )
@@ -48,3 +48,4 @@ public class SecurityConfig {
         return http.build();
     }
 }
+

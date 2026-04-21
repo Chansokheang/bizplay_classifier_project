@@ -64,18 +64,18 @@ public class FileStorageController {
     @PostMapping(value = "/training-files/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadTrainingFile(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") String companyId
+            @RequestParam("corpNo") String corpNo
     ) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(corpNo, currentUserId);
         if (exists == 0) {
-            throw new CustomNotFoundException("Company was not found with Id: " + companyId);
+            throw new CustomNotFoundException("Corp was not found with corpNo: " + corpNo);
         }
 
         FileStorageResponse stored = fileStorageService.storeFile(file, FileType.TRAINING);
         FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
                 FileUploadHistoryRequest.builder()
-                        .companyId(companyId)
+                        .companyId(corpNo)
                         .originalFileName(stored.getOriginalFileName())
                         .storedFileName(stored.getStoredFileName())
                         .fileUrl(stored.getFileUrl())
@@ -117,26 +117,26 @@ public class FileStorageController {
                 .body(resource);
     }
 
-    @GetMapping("/files/company/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(@PathVariable String companyId) {
-        return getFilesByCompanyId(companyId, null);
+    @GetMapping("/files/corp/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> getFilesByCorpNo(@PathVariable String corpNo) {
+        return getFilesByCorpNo(corpNo, null);
     }
 
-    @GetMapping("/files/company/{companyId}/filter")
-    public ResponseEntity<ApiResponse<?>> getFilesByCompanyId(
-            @PathVariable String companyId,
+    @GetMapping("/files/corp/{corpNo}/filter")
+    public ResponseEntity<ApiResponse<?>> getFilesByCorpNo(
+            @PathVariable String corpNo,
             @RequestParam(value = "fileType", required = false) FileType fileType
     ) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(corpNo, currentUserId);
         if (exists == 0) {
-            throw new CustomNotFoundException("Company was not found with Id: " + companyId);
+            throw new CustomNotFoundException("Corp was not found with corpNo: " + corpNo);
         }
 
         List<FileUploadHistoryDTO> files = fileType == null
-                ? fileUploadHistoryRepo.getFilesByCompanyId(companyId)
-                : fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(companyId, fileType);
-        Map<UUID, FileClassifySummaryDTO> summaryByFileId = fileClassifySummaryRepo.getAllByCompanyId(companyId).stream()
+                ? fileUploadHistoryRepo.getFilesByCompanyId(corpNo)
+                : fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(corpNo, fileType);
+        Map<UUID, FileClassifySummaryDTO> summaryByFileId = fileClassifySummaryRepo.getAllByCompanyId(corpNo).stream()
                 .collect(Collectors.toMap(
                         FileClassifySummaryDTO::getFileId,
                         s -> s,
@@ -170,7 +170,7 @@ public class FileStorageController {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
         int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(fileRecord.getCompanyId(), currentUserId);
         if (exists == 0) {
-            throw new CustomNotFoundException("Company was not found with Id: " + fileRecord.getCompanyId());
+            throw new CustomNotFoundException("Corp was not found with corpNo: " + fileRecord.getCompanyId());
         }
 
         fileStorageService.deleteByStoredFileName(fileRecord.getStoredFileName());

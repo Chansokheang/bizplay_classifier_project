@@ -16,9 +16,9 @@ import java.util.UUID;
 public interface FileClassifySummaryRepo {
 
     @Select("""
-        INSERT INTO file_classify_summary (
+        INSERT INTO classifier_file_classify_summary (
             file_id,
-            company_business_number,
+            corp_no,
             total_rows,
             processed_rows,
             skipped_rows,
@@ -29,7 +29,7 @@ public interface FileClassifySummaryRepo {
         )
         VALUES (
             #{fileId},
-            #{companyId},
+            #{corpNo},
             #{totalRows},
             #{processedRows},
             #{skippedRows},
@@ -43,7 +43,7 @@ public interface FileClassifySummaryRepo {
     @Results(id = "fileClassifySummaryMap", value = {
             @Result(property = "summaryId", column = "summary_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
             @Result(property = "fileId", column = "file_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_business_number"),
+            @Result(property = "corpNo", column = "corp_no"),
             @Result(property = "totalRows", column = "total_rows"),
             @Result(property = "processedRows", column = "processed_rows"),
             @Result(property = "skippedRows", column = "skipped_rows"),
@@ -55,7 +55,7 @@ public interface FileClassifySummaryRepo {
     })
     FileClassifySummaryDTO createSummary(
             @Param("fileId") UUID fileId,
-            @Param("companyId") String companyId,
+            @Param("corpNo") String corpNo,
             @Param("totalRows") int totalRows,
             @Param("processedRows") int processedRows,
             @Param("skippedRows") int skippedRows,
@@ -66,20 +66,25 @@ public interface FileClassifySummaryRepo {
 
     @Select("""
         SELECT *
-        FROM file_classify_summary
-        WHERE company_business_number = #{companyId}
+        FROM classifier_file_classify_summary
+        WHERE corp_no = #{corpNo}
         ORDER BY created_date DESC
     """)
     @org.apache.ibatis.annotations.ResultMap("fileClassifySummaryMap")
-    List<FileClassifySummaryDTO> getAllByCompanyId(@Param("companyId") String companyId);
+    List<FileClassifySummaryDTO> getAllByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT *
-        FROM file_classify_summary
+        FROM classifier_file_classify_summary
         WHERE file_id = #{fileId}
         ORDER BY created_date DESC
         LIMIT 1
     """)
     @org.apache.ibatis.annotations.ResultMap("fileClassifySummaryMap")
     FileClassifySummaryDTO getLatestByFileId(@Param("fileId") UUID fileId);
+
+    default List<FileClassifySummaryDTO> getAllByCompanyId(String companyId) {
+        return getAllByCorpNo(companyId);
+    }
 }
+

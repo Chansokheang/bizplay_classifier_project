@@ -63,11 +63,11 @@ public class RuleController {
         );
     }
 
-    @GetMapping("/{companyId}")
-    public ResponseEntity<ApiResponse<?>> getAllRulesByCompanyId(@PathVariable String companyId) {
+    @GetMapping("/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> getAllRulesByCorpNo(@PathVariable String corpNo) {
         return ResponseEntity.ok(
                 ApiResponse.<List<RuleDTO>>builder()
-                        .payload(ruleService.getAllRulesByCompanyId(companyId))
+                        .payload(ruleService.getAllRulesByCompanyId(corpNo))
                         .message("Rules was retrieved successfully.")
                         .code(200)
                         .status(HttpStatus.OK)

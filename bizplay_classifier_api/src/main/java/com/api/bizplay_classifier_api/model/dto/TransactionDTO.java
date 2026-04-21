@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,6 +15,7 @@ import java.util.UUID;
 @Builder
 public class TransactionDTO {
     private UUID transactionId;
+    @JsonProperty("corpNo")
     private String companyId;
     private String approvalDate;
     private String approvalTime;

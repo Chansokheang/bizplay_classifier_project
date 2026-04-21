@@ -11,9 +11,12 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
-public class CompanyResponse {
-    private String companyId;
-    private String companyName;
-    private String businessNumber;
+public class CorpResponse {
+    private Long corpId;
+    private Long corpGroupId;
+    private String corpNo;
+    private String corpName;
+    private String corpGroupCode;
     private List<RuleDTO> ruleDTOList;
 }
+

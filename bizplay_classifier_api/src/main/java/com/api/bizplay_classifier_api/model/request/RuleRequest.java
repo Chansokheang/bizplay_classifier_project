@@ -18,25 +18,34 @@ import java.util.List;
 @NoArgsConstructor
 @Builder
 public class RuleRequest {
-    @NotNull(message = "Company Id can not be null.")
-    private String companyId;
+    @NotNull(message = "Corp no can not be null.")
+    @JsonAlias({"companyId"})
+    private String corpNo;
 
     @NotEmpty(message = "Category code list can not be empty.")
     @JsonAlias("categoryIds")
     private List<String> categoryCodes;
 
-    @NotBlank(message = "가맹점업종명 can not be blank.")
+    @NotBlank(message = "Merchant industry name can not be blank.")
     @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
     @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
     private String merchantIndustryName;
 
-    @NotBlank(message = "가맹점업종코드 can not be blank.")
-    @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "가맹점업종코드 must be exactly 5 alphanumeric characters.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\ucf54\ub4dc")
+    @NotBlank(message = "Merchant industry code can not be blank.")
+    @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "Merchant industry code must be exactly 5 alphanumeric characters.")
+    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uCF54\uB4DC")
     @JsonAlias("merchantIndustryCode")
     private String merchantIndustryCode;
 
     private Integer minAmount;
     private Integer maxAmount;
     private String description;
+
+    public String getCompanyId() {
+        return corpNo;
+    }
+
+    public void setCompanyId(String companyId) {
+        this.corpNo = companyId;
+    }
 }

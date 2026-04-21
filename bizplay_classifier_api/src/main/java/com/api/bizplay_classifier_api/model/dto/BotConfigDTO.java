@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.model.dto;
 
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,9 +17,19 @@ import java.util.UUID;
 @Builder
 public class BotConfigDTO {
     private UUID botId;
+    @JsonIgnore
     private String companyId;
     private BotConfigRequest.Config config;
     @JsonIgnore
     private String rawConfig;
     private Timestamp createdDate;
+
+    @JsonProperty("corpNo")
+    public String getCorpNo() {
+        return companyId;
+    }
+
+    public void setCorpNo(String corpNo) {
+        this.companyId = corpNo;
+    }
 }

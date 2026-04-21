@@ -16,7 +16,7 @@ public interface TransactionRepo {
 
     @Select("""
         INSERT INTO transactions (
-            company_business_number,
+            corp_no,
             approval_date,
             approval_time,
             merchant_name,
@@ -30,7 +30,7 @@ public interface TransactionRepo {
             pk
         )
         VALUES (
-            #{transaction.companyId},
+            #{transaction.corpNo},
             #{transaction.approvalDate},
             #{transaction.approvalTime},
             #{transaction.merchantName},
@@ -47,7 +47,7 @@ public interface TransactionRepo {
     """)
     @Results(id = "transactionMap", value = {
             @Result(property = "transactionId", column = "transaction_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
-            @Result(property = "companyId", column = "company_business_number"),
+            @Result(property = "corpNo", column = "corp_no"),
             @Result(property = "approvalDate", column = "approval_date"),
             @Result(property = "approvalTime", column = "approval_time"),
             @Result(property = "merchantName", column = "merchant_name"),
@@ -66,13 +66,13 @@ public interface TransactionRepo {
     @Insert({
             "<script>",
             "INSERT INTO transactions (",
-            "company_business_number, approval_date, approval_time, merchant_name,",
+            "corp_no, approval_date, approval_time, merchant_name,",
             "merchant_industry_code, merchant_industry_name, merchant_business_reg_number,",
             "supply_amount, vat_amount, tax_type, field_name1, pk",
             ") VALUES",
             "<foreach collection='transactions' item='t' separator=','>",
             "(",
-            "#{t.companyId}, #{t.approvalDate}, #{t.approvalTime}, #{t.merchantName},",
+            "#{t.corpNo}, #{t.approvalDate}, #{t.approvalTime}, #{t.merchantName},",
             "#{t.merchantIndustryCode}, #{t.merchantIndustryName}, #{t.merchantBusinessRegistrationNumber},",
             "#{t.supplyAmount}, #{t.vatAmount}, #{t.taxType}, #{t.fieldName1}, #{t.pk}",
             ")",
@@ -81,3 +81,4 @@ public interface TransactionRepo {
     })
     int createTransactionsBatch(@Param("transactions") java.util.List<TransactionRequest> transactions);
 }
+

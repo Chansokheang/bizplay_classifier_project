@@ -38,16 +38,16 @@ public class DataController {
     @PostMapping(value = "/train", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> trainRulesFromFile(
             @RequestPart("file") MultipartFile file,
-            @RequestParam("companyId") String companyId,
+            @RequestParam("corpNo") String corpNo,
             @RequestParam(value = "sheetName", required = false) String sheetName,
             @RequestParam(value = "sampleRows", required = false) Integer sampleRows
     ) {
-        DataTrainSummaryResponse payload = ruleService.trainRulesFromExcel(file, companyId, sheetName);
+        DataTrainSummaryResponse payload = ruleService.trainRulesFromExcel(file, corpNo, sheetName);
 
         FileStorageResponse stored = fileStorageService.storeFile(file, FileType.TRAINING);
         fileUploadHistoryRepo.createFileRecord(
                 FileUploadHistoryRequest.builder()
-                        .companyId(companyId)
+                        .companyId(corpNo)
                         .originalFileName(stored.getOriginalFileName())
                         .storedFileName(stored.getStoredFileName())
                         .fileUrl(stored.getFileUrl())
@@ -58,7 +58,7 @@ public class DataController {
 
         // Auto-generate and persist enhanced prompt after training.
         // sampleRows=null -> use all valid rows.
-        botConfigService.updatePromptFromLatestTrainingData(companyId, sampleRows);
+        botConfigService.updatePromptFromLatestTrainingData(corpNo, sampleRows);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<DataTrainSummaryResponse>builder()

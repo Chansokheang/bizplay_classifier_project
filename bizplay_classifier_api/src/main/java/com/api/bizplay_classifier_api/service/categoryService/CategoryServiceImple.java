@@ -5,7 +5,7 @@ import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
-import com.api.bizplay_classifier_api.service.companyService.CompanyService;
+import com.api.bizplay_classifier_api.service.corpService.CorpService;
 import com.api.bizplay_classifier_api.utils.GetCurrentUser;
 import lombok.AllArgsConstructor;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -33,22 +33,22 @@ public class CategoryServiceImple implements CategoryService {
     private static final String HEADER_IS_USED = "is_used";
 
     private final CategoryRepo categoryRepo;
-    private final CompanyService companyService;
+    private final CorpService corpService;
     private final GetCurrentUser getCurrentUser;
 
     @Override
     public CategoryDTO createCategory(CategoryRequest categoryRequest) {
-        ensureCompanyOwnership(categoryRequest.getCompanyId());
-        CategoryDTO existedByCode = categoryRepo.findByCompanyIdAndCode(
-                categoryRequest.getCompanyId(),
+        ensureCompanyOwnership(categoryRequest.getCorpNo());
+        CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(
+                categoryRequest.getCorpNo(),
                 categoryRequest.getCode()
         );
         if (existedByCode != null) {
             throw new CustomNotFoundException("Category code is already existed.");
         }
 
-//        CategoryDTO existedByCategory = categoryRepo.findByCompanyIdAndCategory(
-//                categoryRequest.getCompanyId(),
+//        CategoryDTO existedByCategory = categoryRepo.findBycorpNoAndCategory(
+//                categoryRequest.getcorpNo(),
 //                categoryRequest.getCategory()
 //        );
 //        if (existedByCategory != null) {
@@ -64,19 +64,19 @@ public class CategoryServiceImple implements CategoryService {
     }
 
     @Override
-    public List<CategoryDTO> getAllCategoriesByCompanyId(String companyId) {
-        companyService.getCompanyByCompanyId(companyId);
-        return categoryRepo.getAllCategoriesByCompanyId(companyId);
+    public List<CategoryDTO> getAllCategoriesByCorpNo(String corpNo) {
+        corpService.getCorpByCorpNo(corpNo);
+        return categoryRepo.getAllCategoriesByCorpNo(corpNo);
     }
 
     @Override
     @Transactional
-    public CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String companyId, String sheetName) {
+    public CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
 
-        ensureCompanyOwnership(companyId);
+        ensureCompanyOwnership(corpNo);
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -118,14 +118,14 @@ public class CategoryServiceImple implements CategoryService {
                 }
 
                 String normalizedCategory = category.trim();
-                CategoryDTO existedByCode = categoryRepo.findByCompanyIdAndCode(companyId, normalizedCode);
-                CategoryDTO existedByCategory = categoryRepo.findByCompanyIdAndCategory(companyId, normalizedCategory);
+                CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(corpNo, normalizedCode);
+                CategoryDTO existedByCategory = categoryRepo.findByCorpNoAndCategory(corpNo, normalizedCategory);
                 CategoryDTO target = existedByCode != null ? existedByCode : existedByCategory;
 
                 if (target == null) {
                     target = categoryRepo.createCategory(
                             CategoryRequest.builder()
-                                    .companyId(companyId)
+                                    .corpNo(corpNo)
                                     .code(normalizedCode)
                                     .category(normalizedCategory)
                                     .build()
@@ -151,11 +151,11 @@ public class CategoryServiceImple implements CategoryService {
         }
     }
 
-    private void ensureCompanyOwnership(String companyId) {
+    private void ensureCompanyOwnership(String corpNo) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = categoryRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = categoryRepo.existsCorpByCorpNoAndUserId(corpNo, currentUserId);
         if (exists == 0) {
-            throw new CustomNotFoundException("Company was not found with Id: " + companyId);
+            throw new CustomNotFoundException("Company was not found with Id: " + corpNo);
         }
     }
 

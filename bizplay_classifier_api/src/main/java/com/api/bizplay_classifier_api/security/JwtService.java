@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.security.Key;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
@@ -19,10 +20,18 @@ import java.util.function.Function;
 @Component
 public class JwtService {
     public static final long JWT_TOKEN_VALIDITY = 31 * 24 * 60 * 60;
+    private static final String STATIC_TOKEN_SUBJECT = "bizplay.admin@local";
+    private static final Date STATIC_TOKEN_ISSUED_AT = Date.from(Instant.parse("2026-01-01T00:00:00Z"));
+    private static final Date STATIC_TOKEN_EXPIRATION = Date.from(Instant.parse("2099-12-31T23:59:59Z"));
     private final String base64Secret;
+    private final String staticToken;
 
-    public JwtService(@Value("${app.jwt.base64-secret}") String base64Secret) {
+    public JwtService(
+            @Value("${app.jwt.base64-secret}") String base64Secret,
+            @Value("${app.auth.static-token:}") String staticToken
+    ) {
         this.base64Secret = base64Secret;
+        this.staticToken = staticToken;
     }
 
     private String createToken(Map<String, Object> claim, String subject) {
@@ -32,6 +41,16 @@ public class JwtService {
                 .setIssuedAt(new Date(System.currentTimeMillis()))
                 .setExpiration(new Date(System.currentTimeMillis() + JWT_TOKEN_VALIDITY * 1000))
                 .signWith(getSignKey(), SignatureAlgorithm.HS256).compact();
+    }
+
+    private String createStaticJwtToken() {
+        return Jwts.builder()
+                .setClaims(Map.of("type", "static"))
+                .setSubject(STATIC_TOKEN_SUBJECT)
+                .setIssuedAt(STATIC_TOKEN_ISSUED_AT)
+                .setExpiration(STATIC_TOKEN_EXPIRATION)
+                .signWith(getSignKey(), SignatureAlgorithm.HS256)
+                .compact();
     }
 
     private Key getSignKey() {
@@ -51,6 +70,9 @@ public class JwtService {
 
     //2. generate token for user
     public String generateToken(UserDetails userDetails) {
+        if (isStaticTokenEnabled()) {
+            return createStaticJwtToken();
+        }
         Map<String, Object> claims = new HashMap<>();
         return createToken(claims, userDetails.getUsername());
     }
@@ -89,5 +111,13 @@ public class JwtService {
     public Boolean validateToken(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+    }
+
+    public boolean isStaticToken(String token) {
+        return isStaticTokenEnabled() && createStaticJwtToken().equals(token);
+    }
+
+    private boolean isStaticTokenEnabled() {
+        return staticToken != null && !staticToken.isBlank() && !"disabled".equalsIgnoreCase(staticToken);
     }
 }

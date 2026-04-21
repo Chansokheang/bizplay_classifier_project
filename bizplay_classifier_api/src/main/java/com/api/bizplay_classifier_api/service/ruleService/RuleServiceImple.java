@@ -9,7 +9,7 @@ import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
-import com.api.bizplay_classifier_api.service.companyService.CompanyService;
+import com.api.bizplay_classifier_api.service.corpService.CorpService;
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -37,12 +37,12 @@ public class RuleServiceImple implements RuleService {
 
     private final RuleRepo ruleRepo;
     private final CategoryRepo categoryRepo;
-    private final CompanyService companyService;
+    private final CorpService corpService;
 
     @Override
     @Transactional
     public RuleDTO createRule(RuleRequest ruleRequest) {
-        companyService.getCompanyByCompanyId(ruleRequest.getCompanyId());
+        corpService.getCorpByCorpNo(ruleRequest.getCompanyId());
         List<UUID> categoryIds = resolveCategoryIds(ruleRequest.getCompanyId(), ruleRequest.getCategoryCodes());
         RuleDTO createdRule = ruleRepo.createRule(ruleRequest);
         if (!categoryIds.isEmpty()) {
@@ -59,7 +59,7 @@ public class RuleServiceImple implements RuleService {
     public RuleDTO updateRuleByRuleId(UUID ruleId, RuleUpdateRequest ruleUpdateRequest) {
         RuleDTO updatedRule = ruleRepo.updateRuleByRuleId(ruleId, ruleUpdateRequest);
         ruleRepo.deleteRuleCategoryMappings(ruleId);
-        List<UUID> categoryIds = resolveCategoryIds(updatedRule.getCompanyId(), ruleUpdateRequest.getCategoryCodes());
+        List<UUID> categoryIds = resolveCategoryIds(updatedRule.getCorpNo(), ruleUpdateRequest.getCategoryCodes());
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(ruleId, categoryIds);
             for (UUID categoryId : categoryIds) {
@@ -81,7 +81,7 @@ public class RuleServiceImple implements RuleService {
 
     @Override
     public List<RuleDTO> getAllRulesByCompanyId(String companyId) {
-        companyService.getCompanyByCompanyId(companyId);
+        corpService.getCorpByCorpNo(companyId);
         return ruleRepo.getAllRulesByCompanyId(companyId);
     }
 
@@ -92,7 +92,7 @@ public class RuleServiceImple implements RuleService {
             throw new IllegalArgumentException("Excel file is required.");
         }
 
-        companyService.getCompanyByCompanyId(companyId);
+        corpService.getCorpByCorpNo(companyId);
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -176,7 +176,7 @@ public class RuleServiceImple implements RuleService {
                 if (rule == null) {
                     rule = ruleRepo.createRule(
                             RuleRequest.builder()
-                                    .companyId(companyId)
+                                    .corpNo(companyId)
                                     .merchantIndustryCode(normalizedIndustryCode)
                                     .merchantIndustryName(normalizedIndustryName)
                                     .categoryCodes(List.of())
@@ -215,19 +215,19 @@ public class RuleServiceImple implements RuleService {
     }
 
     private CategoryUpsertResult findOrCreateCategory(String companyId, String code, String categoryName) {
-        CategoryDTO byCode = categoryRepo.findByCompanyIdAndCode(companyId, code);
+        CategoryDTO byCode = categoryRepo.findByCorpNoAndCode(companyId, code);
         if (byCode != null) {
             return new CategoryUpsertResult(byCode, false);
         }
 
-        CategoryDTO byCategory = categoryRepo.findByCompanyIdAndCategory(companyId, categoryName);
+        CategoryDTO byCategory = categoryRepo.findByCorpNoAndCategory(companyId, categoryName);
         if (byCategory != null) {
             return new CategoryUpsertResult(byCategory, false);
         }
 
         CategoryDTO created = categoryRepo.createCategory(
                 CategoryRequest.builder()
-                        .companyId(companyId)
+                        .corpNo(companyId)
                         .code(code)
                         .category(categoryName)
                         .build()
@@ -252,7 +252,7 @@ public class RuleServiceImple implements RuleService {
             return List.of();
         }
 
-        List<CategoryDTO> categories = categoryRepo.findByCompanyIdAndCodes(companyId, List.copyOf(normalizedCodes));
+        List<CategoryDTO> categories = categoryRepo.findByCorpNoAndCodes(companyId, List.copyOf(normalizedCodes));
         Map<String, UUID> categoryIdByCode = new HashMap<>();
         for (CategoryDTO category : categories) {
             categoryIdByCode.put(category.getCode(), category.getCategoryId());

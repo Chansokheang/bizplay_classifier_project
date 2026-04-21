@@ -22,7 +22,7 @@ import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.botConfigService.BotConfigDefaults;
-import com.api.bizplay_classifier_api.service.companyService.CompanyService;
+import com.api.bizplay_classifier_api.service.corpService.CorpService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
@@ -49,7 +49,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Comparator;
 import java.util.Set;
 import java.util.UUID;
 
@@ -62,12 +61,11 @@ public class TransactionServiceImple implements TransactionService {
     private final BotConfigRepo botConfigRepo;
     private final FileClassifySummaryRepo fileClassifySummaryRepo;
     private final CategoryRepo categoryRepo;
-    private final CompanyService companyService;
+    private final CorpService corpService;
     private final FileStorageService fileStorageService;
     private final AiFallbackService aiFallbackService;
     private final ObjectMapper objectMapper;
     private static final int EXCEL_BATCH_SIZE = 500;
-    private static final int AI_FALLBACK_CONTEXT_LIMIT = 30;
     private static final String USAGE_CODE_HEADER = "field_name1";
     private static final String USAGE_NAME_HEADER = "usage_name";
     private static final String METHOD_HEADER = "method";
@@ -218,7 +216,7 @@ public class TransactionServiceImple implements TransactionService {
 
     private TransactionUploadSummaryResponse createTransactionsByExcel(byte[] fileBytes, String defaultCompanyId, String sheetName, String originalFileName) throws IOException {
         if (defaultCompanyId != null) {
-            companyService.getCompanyByCompanyId(defaultCompanyId);
+            corpService.getCorpByCorpNo(defaultCompanyId);
         }
 
         FileStorageResponse inputFile = fileStorageService.storeBytes(
@@ -394,7 +392,7 @@ public class TransactionServiceImple implements TransactionService {
 
     @Override
     public List<FileClassifySummaryDTO> getAllFileClassifySummariesByCompanyId(String companyId) {
-        companyService.getCompanyByCompanyId(companyId);
+        corpService.getCorpByCorpNo(companyId);
         return fileClassifySummaryRepo.getAllByCompanyId(companyId);
     }
 
@@ -1110,7 +1108,7 @@ public class TransactionServiceImple implements TransactionService {
         if (rule == null) {
             rule = ruleRepo.createRule(
                     RuleRequest.builder()
-                            .companyId(companyId)
+                            .corpNo(companyId)
                             .merchantIndustryCode(normalizedCode)
                             .merchantIndustryName(normalizedName)
                             .categoryCodes(Collections.emptyList())
@@ -1134,19 +1132,19 @@ public class TransactionServiceImple implements TransactionService {
     }
 
     private CategoryDTO findOrCreateCategory(String companyId, String code, String categoryName) {
-        CategoryDTO byCode = categoryRepo.findByCompanyIdAndCode(companyId, code);
+        CategoryDTO byCode = categoryRepo.findByCorpNoAndCode(companyId, code);
         if (byCode != null) {
             return byCode;
         }
 
-        CategoryDTO byCategory = categoryRepo.findByCompanyIdAndCategory(companyId, categoryName);
+        CategoryDTO byCategory = categoryRepo.findByCorpNoAndCategory(companyId, categoryName);
         if (byCategory != null) {
             return byCategory;
         }
 
         return categoryRepo.createCategory(
                 CategoryRequest.builder()
-                        .companyId(companyId)
+                        .corpNo(companyId)
                         .code(code)
                         .category(categoryName)
                         .build()
@@ -1500,7 +1498,7 @@ public class TransactionServiceImple implements TransactionService {
 
                 String newCode = update.getUsageCode().trim();
                 com.api.bizplay_classifier_api.model.dto.CategoryDTO category =
-                        categoryRepo.findByCompanyIdAndCode(companyId, newCode);
+                        categoryRepo.findByCorpNoAndCode(companyId, newCode);
                 if (category == null) {
                     // Code not found in this company's chart of accounts — skip
                     skippedRows.add(update.getRowIndex());
