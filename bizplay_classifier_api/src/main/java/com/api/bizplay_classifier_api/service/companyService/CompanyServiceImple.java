@@ -41,6 +41,9 @@ public class CompanyServiceImple implements CompanyService {
     public CompanyResponse createCompany(CompanyRequest companyRequest) throws UsernameNotFoundException {
         UUID userId = getCurrentUser.getCurrentUserId();
         companyRequest.setBusinessNumber(normalizeBusinessNumber(companyRequest.getBusinessNumber()));
+        if (companyRepo.existsByBusinessNumber(companyRequest.getBusinessNumber())) {
+            throw new IllegalArgumentException("Business number " + companyRequest.getBusinessNumber() + " is already registered.");
+        }
         CompanyDTO companyDTO = companyRepo.createCompany(companyRequest, userId);
         return modelMapper.map(companyDTO, CompanyResponse.class);
     }

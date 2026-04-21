@@ -39,22 +39,25 @@ public class BotConfigController {
     @PostMapping("/create")
     public ResponseEntity<ApiResponse<?>> createBotConfig(
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
-//            @Parameter(schema = @Schema(
-//                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
-//                    allowableValues = {
-//                            "EXAONE-3.5-7.8B-Instruct-AWQ",
-//                            "gpt-4o-mini",
-//                            "gemini-1.5-flash",
-//                            "claude-3-5-sonnet-latest"
-//                    }
-//            ))
-
-            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") AiModel modelName,
+            @Parameter(schema = @Schema(
+                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                    allowableValues = {
+                            "EXAONE-3.5-7.8B-Instruct-AWQ",
+                            "gpt-4o-mini",
+                            "gemini-1.5-flash",
+                            "claude-3-5-sonnet-latest"
+                    }
+            ))
+            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
+            @RequestParam(value = "apiKey", defaultValue = "sk-d7a20eb034c847e8994e192b40c69a61") String apiKey,
             @Valid @RequestBody BotConfigRequest botConfigRequest
     ) {
+        if (botConfigRequest.getConfig().getApiKey() == null || botConfigRequest.getConfig().getApiKey().isBlank()) {
+            botConfigRequest.getConfig().setApiKey(apiKey);
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<BotConfigDTO>builder()
-                        .payload(botConfigService.createBotConfig(botConfigRequest, provider, String.valueOf(modelName.getModelName())))
+                        .payload(botConfigService.createBotConfig(botConfigRequest, provider, modelName))
                         .message("Bot config was created successfully.")
                         .status(HttpStatus.CREATED)
                         .code(HttpStatus.CREATED.value())
@@ -88,8 +91,12 @@ public class BotConfigController {
                     }
             ))
             @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
+            @RequestParam(value = "apiKey", defaultValue = "sk-d7a20eb034c847e8994e192b40c69a61") String apiKey,
             @RequestBody @Valid BotConfigRequest.Config config
     ) {
+        if (config.getApiKey() == null || config.getApiKey().isBlank()) {
+            config.setApiKey(apiKey);
+        }
         BotConfigDTO payload = botConfigService.upsertBotConfig(companyId, config, provider, modelName);
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()

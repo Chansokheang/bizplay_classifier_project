@@ -16,6 +16,11 @@ public interface CompanyRepo {
     List<CompanyDTO> getAllCompanyByUserId(@Param("userId") UUID userId);
 
     @Select("""
+        SELECT COUNT(*) > 0 FROM companies WHERE company_business_number = #{businessNumber}
+    """)
+    boolean existsByBusinessNumber(@Param("businessNumber") String businessNumber);
+
+    @Select("""
         INSERT INTO companies (user_id, company_name, company_business_number)
         VALUES (#{userId}, #{company.companyName}, #{company.businessNumber})
         RETURNING *
