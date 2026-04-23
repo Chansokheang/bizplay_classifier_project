@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.exception;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.validation.FieldError;
@@ -98,6 +99,17 @@ public class GlobalExceptionHanding {
                 e.getMessage() != null ? e.getMessage() : "Service is temporarily unavailable."
         );
         problemDetail.setTitle("Service Unavailable");
+        problemDetail.setProperty("timestamp", LocalDateTime.now());
+        return problemDetail;
+    }
+
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ProblemDetail handleDuplicateKeyException(DuplicateKeyException e) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                "Duplicate value violates a unique constraint."
+        );
+        problemDetail.setTitle("Conflict");
         problemDetail.setProperty("timestamp", LocalDateTime.now());
         return problemDetail;
     }

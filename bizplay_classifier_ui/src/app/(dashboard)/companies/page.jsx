@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { Plus, Search, Building2 } from 'lucide-react'
 import { COMPANIES as INITIAL } from '../../../lib/mock-data'
-import { getAllCompanies, createCompany } from '../../../service/companyService'
+import { getAllCorps, createCorp, getAllCorpGroups, createCorpGroup } from '../../../service/companyService'
 import CompanyCard from '../../../components/CompanyCard'
 import CompanyModal from '../../../components/CompanyModal'
 
@@ -15,6 +15,7 @@ export default function CompaniesPage() {
   const [loadError, setLoadError] = useState('')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
+  const [corpGroups, setCorpGroups] = useState([])
 
   useEffect(() => {
     const fetchCompanies = async () => {
@@ -22,15 +23,16 @@ export default function CompaniesPage() {
         setLoading(true)
         setLoadError('')
         const token = session?.accessToken ?? null
-        const data = await getAllCompanies(token)
+        const data = await getAllCorps(token)
         const mapped = Array.isArray(data?.payload) ? data.payload.map((c) => {
           const rules = c.ruleDTOList ?? []
           const categories = rules.flatMap((r) => r.categoryDTOList ?? [])
           const uniqueCategories = new Set(categories.map((cat) => cat.categoryId))
           return {
-            id: c.companyId,
-            name: c.companyName ?? 'Untitled Company',
-            industry: c.businessNumber ?? '—',
+            id: c.corpNo,
+            name: c.corpName ?? 'Untitled Company',
+            industry: c.corpNo ?? '—',
+            corpGroupId: c.corpGroupId ?? null,
             status: 'active',
             rulesCount: rules.length,
             categoriesCount: uniqueCategories.size,
@@ -44,6 +46,15 @@ export default function CompaniesPage() {
           const index = Object.fromEntries(finalCompanies.map((c) => [c.id, c.name]))
           window.localStorage.setItem('companiesIndex', JSON.stringify(index))
         } catch {}
+
+        // Load corp-groups so the create-corp form can let the user pick one.
+        try {
+          const groups = await getAllCorpGroups(token)
+          const list = Array.isArray(groups?.payload) ? groups.payload : []
+          setCorpGroups(list)
+        } catch {
+          /* leave list empty — modal will offer to create a group inline */
+        }
       } catch (err) {
         setLoadError('Unable to load companies. Showing cached data.')
         setCompanies(INITIAL)
@@ -74,15 +85,20 @@ export default function CompaniesPage() {
     }
 
     const token = session?.accessToken ?? null
-    const result = await createCompany(
-      { companyName: data.name, businessNumber: data.businessNumber },
+    const result = await createCorp(
+      {
+        corpName: data.name,
+        corpNo: data.businessNumber,
+        corpGroupId: data.corpGroupId,
+      },
       token,
     )
     const payload = result?.payload ?? {}
     const created = {
-      id: payload.companyId ?? String(Date.now()),
-      name: payload.companyName ?? data.name,
-      industry: payload.businessNumber ?? data.businessNumber,
+      id: payload.corpNo ?? data.businessNumber ?? String(Date.now()),
+      name: payload.corpName ?? data.name,
+      industry: payload.corpNo ?? data.businessNumber,
+      corpGroupId: payload.corpGroupId ?? data.corpGroupId ?? null,
       status: 'active',
       categoriesCount: 0,
       rulesCount: 0,
@@ -91,6 +107,25 @@ export default function CompaniesPage() {
     }
     setCompanies(prev => [...prev, created])
     setModal(null)
+  }
+
+  const handleCreateGroup = async (corpGroupCode) => {
+    const token = session?.accessToken ?? null
+    const res = await createCorpGroup({ corpGroupCode }, token)
+    const created = res?.payload ?? { corpGroupCode }
+    // Some backends return the new id; if absent, refresh the list.
+    if (created.corpGroupId == null) {
+      try {
+        const refreshed = await getAllCorpGroups(token)
+        const list = Array.isArray(refreshed?.payload) ? refreshed.payload : []
+        setCorpGroups(list)
+        return list.find((g) => g.corpGroupCode === corpGroupCode) ?? created
+      } catch {
+        // fall through with what we have
+      }
+    }
+    setCorpGroups((prev) => [...prev, created])
+    return created
   }
 
   return (
@@ -163,7 +198,13 @@ export default function CompaniesPage() {
       )}
 
       {modal !== null && (
-        <CompanyModal company={modal==='create'?null:modal} onClose={()=>setModal(null)} onSave={handleSave}/>
+        <CompanyModal
+          company={modal==='create'?null:modal}
+          corpGroups={corpGroups}
+          onCreateGroup={handleCreateGroup}
+          onClose={()=>setModal(null)}
+          onSave={handleSave}
+        />
       )}
     </div>
   )

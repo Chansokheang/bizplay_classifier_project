@@ -73,7 +73,7 @@ public interface CategoryRepo {
     @Select("""
         SELECT c.*
         FROM classifier_categories c
-        INNER JOIN rule_category_map rc ON c.code = rc.code
+        INNER JOIN rule_category_map rc ON c.category_id = rc.category_id
         WHERE rule_id = #{ruleId}
     """)
     @ResultMap("categoryMap")

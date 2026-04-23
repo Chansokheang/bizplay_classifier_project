@@ -105,7 +105,7 @@ public class CorpServiceImple implements CorpService {
 
     private String normalizeBusinessNumber(String businessNumber) {
         if (businessNumber == null || businessNumber.isBlank()) {
-            return null;
+            throw new IllegalArgumentException("Business number is required.");
         }
 
         String digitsOnly = businessNumber.replaceAll("\\D", "");
@@ -128,4 +128,3 @@ public class CorpServiceImple implements CorpService {
     }
 
 }
-

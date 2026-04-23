@@ -66,9 +66,10 @@ CREATE TABLE classifer_bot_config (
 CREATE TABLE classifer_categories (
                                       category_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                       corp_no      CHAR(10) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE CASCADE,
-                                      code         VARCHAR(50) UNIQUE NOT NUll,
+                                      code         VARCHAR(50) NOT NUll,
                                       category     VARCHAR(255) NOT NULL,
-                                      "사용여부"      BOOLEAN NOT NULL DEFAULT FALSE
+                                      "사용여부"      BOOLEAN NOT NULL DEFAULT FALSE,
+                                      CONSTRAINT uq_categories_corp_code UNIQUE (corp_no, code)
 );
 
 -- ============================================
@@ -125,8 +126,8 @@ create table otps(
 
 CREATE TABLE rule_category_map (
                                    rule_id      UUID NOT NULL REFERENCES classifer_rules(rule_id) ON UPDATE CASCADE ON DELETE CASCADE,
-                                   code  VARCHAR(50) NOT NULL REFERENCES classifer_categories(code) ON UPDATE CASCADE ON DELETE CASCADE,
-                                   PRIMARY KEY (rule_id, code)
+                                   category_id  UUID NOT NULL REFERENCES classifer_categories(category_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                                   PRIMARY KEY (rule_id, category_id)
 );
 
 

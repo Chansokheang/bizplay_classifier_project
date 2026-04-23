@@ -39,12 +39,15 @@ public class CategoryServiceImple implements CategoryService {
     @Override
     public CategoryDTO createCategory(CategoryRequest categoryRequest) {
         ensureCompanyOwnership(categoryRequest.getCorpNo());
+        categoryRequest.setCode(categoryRequest.getCode().trim());
+        categoryRequest.setCategory(categoryRequest.getCategory().trim());
+
         CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(
                 categoryRequest.getCorpNo(),
                 categoryRequest.getCode()
         );
         if (existedByCode != null) {
-            throw new CustomNotFoundException("Category code is already existed.");
+            throw new IllegalArgumentException("Category code " + categoryRequest.getCode() + " already exists.");
         }
 
 //        CategoryDTO existedByCategory = categoryRepo.findBycorpNoAndCategory(

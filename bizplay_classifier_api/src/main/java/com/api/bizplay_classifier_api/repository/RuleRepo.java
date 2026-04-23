@@ -71,7 +71,7 @@ public interface RuleRepo {
             c.category               AS category
         FROM classifier_rules r
         JOIN rule_category_map rcm ON rcm.rule_id = r.rule_id
-        JOIN classifier_categories c ON c.code = rcm.code
+        JOIN classifier_categories c ON c.category_id = rcm.category_id
         WHERE r.corp_no = #{corpNo}
     """)
     @Results(id = "ruleClassifierMap", value = {
@@ -112,9 +112,9 @@ public interface RuleRepo {
 
     @Insert({
             "<script>",
-            "INSERT INTO rule_category_map (rule_id, code) VALUES",
+            "INSERT INTO rule_category_map (rule_id, category_id) VALUES",
             "<foreach collection='categoryIds' item='categoryId' separator=','>",
-            "(#{ruleId}, (SELECT code FROM classifier_categories WHERE category_id = #{categoryId}))",
+            "(#{ruleId}, #{categoryId})",
             "</foreach>",
             "</script>"
     })
@@ -131,8 +131,8 @@ public interface RuleRepo {
     Integer deleteRuleByRuleId(@Param("ruleId") UUID ruleId);
 
     @Insert("""
-        INSERT INTO rule_category_map (rule_id, code)
-        VALUES (#{ruleId}, (SELECT code FROM classifier_categories WHERE category_id = #{categoryId}))
+        INSERT INTO rule_category_map (rule_id, category_id)
+        VALUES (#{ruleId}, #{categoryId})
         ON CONFLICT DO NOTHING
     """)
     int createRuleCategoryMappingIgnoreConflict(@Param("ruleId") UUID ruleId, @Param("categoryId") UUID categoryId);

@@ -3,14 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import {
-  Tags, Plus, Search, Pencil, Trash2, X,
+  Tags, Plus, Search, X,
   FileSpreadsheet, Loader2, FileUp, ArrowUpRight,
 } from 'lucide-react'
 import {
-  getCategoriesByCompany,
+  getCategoriesByCorp,
   createCategory,
-  updateCategory,
-  deleteCategory,
   uploadCategories,
 } from '../../../../../service/categoryService'
 import {
@@ -134,107 +132,6 @@ function CreateModal({ onClose, onSave, loading, error }) {
               onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(180deg, #1E3AF4 0%, #1A32D8 100%)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.25), 0 1px 1px rgba(255,255,255,0.15) inset' } }}
               onMouseLeave={(e) => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(180deg, #1A32D8 0%, #1529AB 100%)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(26,50,216,0.15), 0 1px 1px rgba(255,255,255,0.15) inset' } }}>
               {loading ? <><Loader2 size={16} className="animate-spin" />Processing…</> : 'Create Category'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ─── Edit modal ────────────────────────────────────────────────────────────
-function EditModal({ category, onClose, onSave, loading, error }) {
-  const [form, setForm] = useState({ ...category })
-  const [codeError, setCodeError] = useState('')
-
-  const validateCode = (v) => {
-    if (!v) return 'Code is required'
-    if (!/^[A-Za-z0-9]{5}$/.test(v)) return 'Code must be exactly 5 alphanumeric characters'
-    return ''
-  }
-
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!form.category?.trim() && !form.name?.trim()) return
-    const err = validateCode(form.code)
-    if (err) { setCodeError(err); return }
-    onSave(form)
-  }
-
-  const displayName = form.category ?? form.name ?? ''
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-300"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(12px)' }}
-      onClick={(e) => e.target === e.currentTarget && !loading && onClose()}>
-      <div className="w-full max-w-[460px] rounded-[24px] overflow-hidden animate-fade-in shadow-2xl"
-        style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
-
-        <div className="flex items-center justify-between px-7 py-6 border-b border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center justify-center w-11 h-11 rounded-2xl shadow-sm border"
-              style={{ background: 'rgba(26,50,216,0.05)', borderColor: 'rgba(26,50,216,0.1)' }}>
-              <Tags size={20} style={{ color: '#1A32D8' }} />
-            </div>
-            <div>
-              <h2 className="font-bold text-[17px] tracking-tight text-slate-800 leading-none mb-1">Edit Category</h2>
-              <p className="text-[12px] font-semibold text-slate-500">Update the classification category</p>
-            </div>
-          </div>
-          <button onClick={onClose} disabled={loading}
-            className="w-8 h-8 -mr-1 -mt-4 flex items-center justify-center rounded-full hover:bg-slate-200/60 text-slate-400 hover:text-slate-700 transition-colors disabled:opacity-50">
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="px-7 py-7 space-y-6">
-          <div className="space-y-2">
-            <label className="text-[13px] font-bold text-slate-700 block">
-              Code <span className="text-red-500">*</span>
-              <span className="ml-1 font-normal text-slate-400">(5 alphanumeric chars)</span>
-            </label>
-            <input
-              type="text"
-              required
-              maxLength={5}
-              placeholder="e.g. TRV01"
-              value={form.code ?? ''}
-              onChange={(e) => { setForm({ ...form, code: e.target.value }); setCodeError(validateCode(e.target.value)) }}
-              className="w-full px-4 py-3 rounded-xl text-[14px] font-mono tracking-widest font-medium outline-none transition-all placeholder:text-slate-400 bg-white border shadow-[0_1px_2px_rgba(15,23,42,0.03)] hover:border-slate-300"
-              style={{ borderColor: codeError ? '#EF4444' : '#CBD5E1' }}
-              onFocus={(e) => { e.target.style.borderColor = codeError ? '#EF4444' : '#1A32D8'; e.target.style.boxShadow = `0 0 0 4px ${codeError ? 'rgba(239,68,68,0.1)' : 'rgba(26,50,216,0.1)'}` }}
-              onBlur={(e) => { e.target.style.borderColor = codeError ? '#EF4444' : '#CBD5E1'; e.target.style.boxShadow = 'none' }}
-            />
-            {codeError && <p className="text-[12px] font-semibold text-red-500">{codeError}</p>}
-          </div>
-          <div className="space-y-2">
-            <label className="text-[13px] font-bold text-slate-700 block">Category Name <span className="text-red-500">*</span></label>
-            <input type="text" required value={displayName}
-              onChange={(e) => setForm({ ...form, category: e.target.value, name: e.target.value })}
-              className="w-full px-4 py-3 rounded-xl text-[14px] font-medium outline-none transition-all placeholder:text-slate-400 bg-white border border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.03)] hover:border-slate-300"
-              onFocus={(e) => { e.target.style.borderColor = '#1A32D8'; e.target.style.boxShadow = '0 0 0 4px rgba(26,50,216,0.1)' }}
-              onBlur={(e) => { e.target.style.borderColor = '#CBD5E1'; e.target.style.boxShadow = 'none' }}
-            />
-          </div>
-
-          {error && (
-            <div role="alert" className="px-4 py-3 rounded-xl text-[13px] bg-red-50 text-red-600 border border-red-100 flex items-start gap-2.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0 mt-1.5" aria-hidden />
-              <span className="min-w-0 flex-1 font-semibold leading-snug break-words">{error}</span>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} disabled={loading}
-              className="w-[120px] py-3.5 rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-40 transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200">
-              Cancel
-            </button>
-            <button type="submit" disabled={loading}
-              className="flex-1 py-3.5 rounded-xl text-[14px] font-bold cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2 transition-all text-white"
-              style={{ background: 'linear-gradient(180deg, #1A32D8 0%, #1529AB 100%)', border: '1px solid #14249B', boxShadow: '0 4px 10px rgba(26,50,216,0.15), 0 1px 1px rgba(255,255,255,0.15) inset' }}
-              onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(180deg, #1E3AF4 0%, #1A32D8 100%)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(26,50,216,0.25), 0 1px 1px rgba(255,255,255,0.15) inset' } }}
-              onMouseLeave={(e) => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(180deg, #1A32D8 0%, #1529AB 100%)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(26,50,216,0.15), 0 1px 1px rgba(255,255,255,0.15) inset' } }}>
-              {loading ? <><Loader2 size={16} className="animate-spin" />Processing…</> : 'Save Changes'}
             </button>
           </div>
         </form>
@@ -447,6 +344,47 @@ function MethodPicker({ onChoose, onClose }) {
   )
 }
 
+// ─── Error sanitizer ──────────────────────────────────────────────────────
+function friendlyCategoryError(raw, { context = 'create' } = {}) {
+  const text = String(raw ?? '').trim()
+  if (!text) return context === 'upload' ? 'Upload failed. Please try again.' : 'Failed to create category.'
+
+  // Duplicate category code (Postgres / MyBatis wrapped)
+  if (/classifier_categories_code_key|중복된 키 값|duplicate key|unique constraint|이미 있습니다/i.test(text)) {
+    const m = text.match(/\(code\)=\(([^)]+)\)/i)
+    if (context === 'upload') {
+      return m
+        ? `A category with code "${m[1]}" already exists. Remove duplicates from your file or use different codes.`
+        : 'Some categories in the file already exist. Remove duplicates and try again.'
+    }
+    return m
+      ? `A category with code "${m[1]}" already exists.`
+      : 'A category with that code already exists.'
+  }
+
+  // NOT NULL violations
+  if (/not.?null|null 값/i.test(text)) {
+    return context === 'upload'
+      ? 'A required column is missing or empty in the file. Please check your data.'
+      : 'A required field is missing.'
+  }
+
+  // Sheet / parsing problems
+  if (/sheet.*not.*found|시트.*없|invalid.*sheet/i.test(text)) {
+    return 'The selected sheet was not found in the file.'
+  }
+  if (/unsupported.*format|invalid.*file|cannot.*parse|파싱/i.test(text)) {
+    return 'Could not read the file. Make sure it is a valid .xlsx / .xls.'
+  }
+
+  // Fallback: strip MyBatis ### markers, collapse whitespace, take first sentence, cap length.
+  const cleaned = text.replace(/###[^#]*?###/g, ' ').replace(/\s+/g, ' ').trim()
+  const firstSentence = cleaned.split(/(?<=\.)\s|;\s/)[0].trim() || cleaned
+  return firstSentence.length > 200
+    ? `${firstSentence.slice(0, 197)}…`
+    : firstSentence
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 export default function CategoriesPage() {
   const { id: companyId } = useParams()
@@ -457,18 +395,16 @@ export default function CategoriesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
-  // modal state: null | 'picker' | 'create' | 'upload' | {id,...} (edit)
+  // modal state: null | 'picker' | 'create' | 'upload'
   const [modal, setModal] = useState(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
 
   // ── fetch ──
   const fetchCategories = useCallback(async () => {
     if (!token) return
     try {
-      const res = await getCategoriesByCompany(companyId, token)
+      const res = await getCategoriesByCorp(companyId, token)
       const payload = Array.isArray(res?.payload) ? res.payload : []
       // normalise API shape → internal shape
       const mapped = payload.map((c) => ({
@@ -499,26 +435,11 @@ export default function CategoriesPage() {
     setActionLoading(true)
     setActionError('')
     try {
-      await createCategory({ companyId, code, category }, token)
+      await createCategory({ corpNo: companyId, code, category }, token)
       await fetchCategories()
       setModal(null)
     } catch (e) {
-      setActionError(e.message || 'Failed to create category')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  // ── edit ──
-  const handleEdit = async (data) => {
-    setActionLoading(true)
-    setActionError('')
-    try {
-      await updateCategory(data.id, { code: data.code, category: data.category ?? data.name }, token)
-      await fetchCategories()
-      setModal(null)
-    } catch (e) {
-      setActionError(e.message || 'Failed to update category')
+      setActionError(friendlyCategoryError(e?.message, { context: 'create' }))
     } finally {
       setActionLoading(false)
     }
@@ -533,23 +454,9 @@ export default function CategoriesPage() {
       await fetchCategories()
       setModal(null)
     } catch (e) {
-      setActionError(e.message || 'Upload failed. Please try again.')
+      setActionError(friendlyCategoryError(e?.message, { context: 'upload' }))
     } finally {
       setActionLoading(false)
-    }
-  }
-
-  // ── delete ──
-  const handleDelete = async (cat) => {
-    setDeleteLoading(true)
-    try {
-      await deleteCategory(cat.id, token)
-      await fetchCategories()
-      setConfirmDelete(null)
-    } catch (e) {
-      console.error('Delete failed:', e)
-    } finally {
-      setDeleteLoading(false)
     }
   }
 
@@ -643,7 +550,6 @@ export default function CategoriesPage() {
                 <col style={{ width: '110px' }} />
                 <col />
                 <col style={{ width: '140px' }} />
-                <col style={{ width: '88px' }} />
               </colgroup>
               <TableHeader>
                 <TableRow className="bg-[#F8FAFC] hover:bg-[#F8FAFC]">
@@ -651,7 +557,6 @@ export default function CategoriesPage() {
                   <TableHead>Code</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead className="text-right">Situation</TableHead>
-                  <TableHead className="text-right w-20 p-0 pr-2" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -690,24 +595,6 @@ export default function CategoriesPage() {
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right whitespace-nowrap py-3.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button type="button" onClick={() => { setActionError(''); setModal(cat) }}
-                          className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
-                          style={{ color: '#CBD5E1' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; e.currentTarget.style.color = '#64748B' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#CBD5E1' }}>
-                          <Pencil size={13} />
-                        </button>
-                        <button type="button" onClick={() => setConfirmDelete(cat)}
-                          className="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer"
-                          style={{ color: '#CBD5E1' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#EF4444' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#CBD5E1' }}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -725,44 +612,6 @@ export default function CategoriesPage() {
       )}
       {modal === 'upload' && (
         <UploadModal onClose={() => setModal(null)} onUpload={handleUpload} loading={actionLoading} error={actionError} />
-      )}
-      {modal && modal !== 'picker' && modal !== 'create' && modal !== 'upload' && (
-        <EditModal category={modal} onClose={() => setModal(null)} onSave={handleEdit} loading={actionLoading} error={actionError} />
-      )}
-
-      {/* Delete confirm */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(15,23,42,0.45)' }}
-          onClick={(e) => e.target === e.currentTarget && setConfirmDelete(null)}>
-          <div className="w-full max-w-sm rounded-2xl p-6 animate-fade-in"
-            style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-            <div className="flex items-center justify-center w-12 h-12 rounded-xl mx-auto mb-4"
-              style={{ background: 'rgba(239,68,68,0.1)' }}>
-              <Trash2 size={22} color="#EF4444" />
-            </div>
-            <h2 className="font-bold text-center mb-2" style={{ color: '#0F172A' }}>Delete Category</h2>
-            <p className="text-sm text-center mb-6" style={{ color: '#64748B' }}>
-              Delete <strong style={{ color: '#0F172A' }}>{confirmDelete.name}</strong>? This will also remove its rules.
-            </p>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmDelete(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium cursor-pointer"
-                style={{ background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = '#F8FAFC' }}>
-                Cancel
-              </button>
-              <button onClick={() => handleDelete(confirmDelete)} disabled={deleteLoading}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold cursor-pointer flex items-center justify-center gap-2"
-                style={{ background: deleteLoading ? '#FCA5A5' : '#EF4444', color: '#fff' }}
-                onMouseEnter={(e) => { if (!deleteLoading) e.currentTarget.style.background = '#DC2626' }}
-                onMouseLeave={(e) => { if (!deleteLoading) e.currentTarget.style.background = '#EF4444' }}>
-                {deleteLoading && <Loader2 size={14} className="animate-spin" />}
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )

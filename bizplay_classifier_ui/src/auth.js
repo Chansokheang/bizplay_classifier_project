@@ -32,12 +32,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           throw new Error(msg)
         }
 
-        // Normalise the user object — adjust field names to match your API response.
-        const user = payload?.user ?? payload?.data ?? payload ?? {}
+        // Response shape: { message, status, code, payload: { username, firstname, lastname, email, ... }, token }
+        const user = payload?.payload ?? payload?.user ?? payload?.data ?? payload ?? {}
+        const fullName = [user.firstname, user.lastname].filter(Boolean).join(' ').trim()
         return {
-          id:          String(user.id    ?? user.userId    ?? '1'),
-          name:        user.name         ?? user.fullName  ?? String(credentials.email).split('@')[0],
-          email:       user.email        ?? String(credentials.email),
+          id:          String(user.id    ?? user.userId   ?? user.username ?? user.email ?? '1'),
+          name:        user.name         ?? user.fullName ?? (fullName || null) ?? user.username ?? String(credentials.email).split('@')[0],
+          email:       user.email        ?? user.username ?? String(credentials.email),
           accessToken: payload?.token    ?? payload?.accessToken ?? payload?.access_token ?? null,
         }
       },

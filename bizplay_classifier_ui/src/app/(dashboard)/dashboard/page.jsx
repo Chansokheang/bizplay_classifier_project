@@ -18,8 +18,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { COMPANIES as MOCK_COMPANIES, TRANSACTIONS as MOCK_TX } from '../../../lib/mock-data'
-import { isCompanyUuid } from '../../../lib/company-id'
-import { getAllCompanies } from '../../../service/companyService'
+import { getAllCorps } from '../../../service/companyService'
 import { getOutputFiles } from '../../../service/transactionService'
 
 const PRIMARY = '#1A32D8'
@@ -39,14 +38,14 @@ const card = {
 
 const inner = { background: '#F8FAFC', border: '1px solid #F1F5F9' }
 
-function mapApiCompany(c) {
+function mapApiCorp(c) {
   const rules = c.ruleDTOList ?? []
   const categories = rules.flatMap((r) => r.categoryDTOList ?? [])
   const uniqueCategories = new Set(categories.map((cat) => cat.categoryId))
   return {
-    id: String(c.companyId),
-    name: c.companyName ?? 'Untitled Company',
-    industry: c.businessNumber ?? '—',
+    id: String(c.corpNo),
+    name: c.corpName ?? 'Untitled Company',
+    industry: c.corpNo ?? '—',
     status: 'active',
     rulesCount: rules.length,
     categoriesCount: uniqueCategories.size,
@@ -181,14 +180,14 @@ export default function DashboardOverviewPage() {
       setLoading(true)
       setLoadError('')
       try {
-        const companiesRes = await getAllCompanies(token)
+        const companiesRes = await getAllCorps(token)
         const payload = Array.isArray(companiesRes?.payload) ? companiesRes.payload : []
-        const rows = payload.map(mapApiCompany)
+        const rows = payload.map(mapApiCorp)
 
-        const uuidRows = rows.filter((r) => isCompanyUuid(r.id))
+        const fetchableRows = rows.filter((r) => Boolean(r.id))
         const settled =
-          uuidRows.length > 0
-            ? await Promise.allSettled(uuidRows.map((r) => getOutputFiles(r.id, token)))
+          fetchableRows.length > 0
+            ? await Promise.allSettled(fetchableRows.map((r) => getOutputFiles(r.id, token)))
             : []
 
         const rowsById = {}
@@ -200,7 +199,7 @@ export default function DashboardOverviewPage() {
         let totalR = 0
         let totalC = 0
 
-        uuidRows.forEach((row, i) => {
+        fetchableRows.forEach((row, i) => {
           const result = settled[i]
           if (result.status !== 'fulfilled') return
           const list = Array.isArray(result.value?.payload) ? result.value.payload : []

@@ -1,7 +1,8 @@
-export const AUTH_BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:8080'
+// BACKEND_URL is expected to include the /api/v1 prefix (see src/app/api/proxy/[...path]/route.js)
+export const AUTH_BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:8080/api/v1'
 
 /**
- * POST /auths/login
+ * POST {AUTH_BASE_URL}/auths/login
  * Returns { res, payload } so callers can handle errors and response shapes themselves.
  * Used by src/auth.js (NextAuth credentials provider).
  */

@@ -19,7 +19,7 @@ import {
   Info,
 } from 'lucide-react'
 import {
-  getRulesByCompany,
+  getRulesByCorp,
   deleteRule,
 } from '../../../../../service/ruleService'
 import { trainFromFile } from '../../../../../service/trainingService'
@@ -325,7 +325,7 @@ export default function RulesPage() {
     setLoading(true)
     setLoadError('')
     try {
-      const data = await getRulesByCompany(companyId, token)
+      const data = await getRulesByCorp(companyId, token)
       const payload = Array.isArray(data) ? data : (data?.payload ?? [])
       setRules(mapApiRulesToRows(payload))
     } catch (e) {
