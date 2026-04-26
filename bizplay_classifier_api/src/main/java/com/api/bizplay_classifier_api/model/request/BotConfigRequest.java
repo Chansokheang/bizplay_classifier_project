@@ -22,7 +22,7 @@ public class BotConfigRequest {
     @JsonProperty("corpNo")
     @JsonAlias("companyId")
     @Schema(name = "corpNo", example = "1234567890")
-    private String companyId;
+    private String corpNo;
 
     @NotNull(message = "Config can not be null.")
     @Valid

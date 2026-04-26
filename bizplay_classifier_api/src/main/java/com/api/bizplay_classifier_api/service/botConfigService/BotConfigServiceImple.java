@@ -51,9 +51,9 @@ public class BotConfigServiceImple implements BotConfigService {
     @Transactional
     public BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest, AiProvider provider, String modelName) {
         UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(botConfigRequest.getCompanyId(), currentUserId);
+        int exists = botConfigRepo.existsCompanyByIdAndUserId(botConfigRequest.getCorpNo(), currentUserId);
         if (exists == 0) {
-            throw new CustomNotFoundException("Company was not found with Id: " + botConfigRequest.getCompanyId());
+            throw new CustomNotFoundException("Company was not found with Id: " + botConfigRequest.getCorpNo());
         }
 
         BotConfigRequest.Config configWithProvider = withProvider(
@@ -62,13 +62,13 @@ public class BotConfigServiceImple implements BotConfigService {
                 modelName
         );
         BotConfigRequest requestWithProvider = BotConfigRequest.builder()
-                .companyId(botConfigRequest.getCompanyId())
+                .corpNo(botConfigRequest.getCorpNo())
                 .config(configWithProvider)
                 .build();
 
         String configJson = toConfigJson(requestWithProvider);
         return saveOrUpdateBotConfig(
-                botConfigRequest.getCompanyId(),
+                botConfigRequest.getCorpNo(),
                 requestWithProvider,
                 configJson
         );
@@ -83,7 +83,7 @@ public class BotConfigServiceImple implements BotConfigService {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }
         BotConfigRequest request = BotConfigRequest.builder()
-                .companyId(companyId)
+                .corpNo(companyId)
                 .config(withProvider(config, provider, modelName))
                 .build();
         String configJson = toConfigJson(request);
@@ -162,7 +162,7 @@ public class BotConfigServiceImple implements BotConfigService {
         String apiKey = firstNonBlank(request == null ? null : request.getApiKey(), baseConfig.getApiKey());
 
         String configJson = toConfigJson(BotConfigRequest.builder()
-                .companyId(companyId)
+                .corpNo(companyId)
                 .config(BotConfigRequest.Config.builder()
                         .provider(provider)
                         .modelName(modelName)
@@ -175,7 +175,7 @@ public class BotConfigServiceImple implements BotConfigService {
         saveOrUpdateBotConfig(
                 companyId,
                 BotConfigRequest.builder()
-                        .companyId(companyId)
+                        .corpNo(companyId)
                         .config(BotConfigRequest.Config.builder()
                                 .provider(provider)
                                 .modelName(modelName)
