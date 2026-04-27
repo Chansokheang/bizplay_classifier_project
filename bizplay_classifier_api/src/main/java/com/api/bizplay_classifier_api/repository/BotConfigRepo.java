@@ -51,9 +51,8 @@ public interface BotConfigRepo {
         SELECT COUNT(1)
         FROM corp
         WHERE corp_no = #{corpNo}
-          AND user_id = #{userId}
     """)
-    int existsCorpByCorpNoAndUserId(@Param("corpNo") String corpNo, @Param("userId") UUID userId);
+    int existsCorpByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT config ->> 'systemPrompt'
@@ -87,8 +86,8 @@ public interface BotConfigRepo {
         return findLatestBotIdByCorpNo(companyId);
     }
 
-    default int existsCompanyByIdAndUserId(String companyId, UUID userId) {
-        return existsCorpByCorpNoAndUserId(companyId, userId);
+    default int existsCompanyById(String companyId) {
+        return existsCorpByCorpNo(companyId);
     }
 
     default String getLatestSystemPromptByCompanyId(String companyId) {

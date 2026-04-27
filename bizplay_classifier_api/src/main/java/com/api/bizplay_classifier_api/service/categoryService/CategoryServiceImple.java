@@ -6,7 +6,6 @@ import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
-import com.api.bizplay_classifier_api.utils.GetCurrentUser;
 import lombok.AllArgsConstructor;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -22,7 +21,6 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 @AllArgsConstructor
@@ -34,7 +32,6 @@ public class CategoryServiceImple implements CategoryService {
 
     private final CategoryRepo categoryRepo;
     private final CorpService corpService;
-    private final GetCurrentUser getCurrentUser;
 
     @Override
     public CategoryDTO createCategory(CategoryRequest categoryRequest) {
@@ -155,8 +152,7 @@ public class CategoryServiceImple implements CategoryService {
     }
 
     private void ensureCompanyOwnership(String corpNo) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = categoryRepo.existsCorpByCorpNoAndUserId(corpNo, currentUserId);
+        int exists = categoryRepo.existsCorpByCorpNo(corpNo);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + corpNo);
         }

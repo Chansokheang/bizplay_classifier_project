@@ -1,6 +1,7 @@
 package com.api.bizplay_classifier_api.service.userService;
 
 import com.api.bizplay_classifier_api.model.dto.AppUserDTO;
+import com.api.bizplay_classifier_api.model.entity.AppUser;
 import com.api.bizplay_classifier_api.model.request.AppUserRequest;
 import com.api.bizplay_classifier_api.model.request.AuthRequest;
 import com.api.bizplay_classifier_api.model.response.LoginResponse;
@@ -17,4 +18,6 @@ public interface AppUserService extends UserDetailsService {
     LoginResponse authenticate(AuthRequest authRequest) throws Exception;
 
     AppUserDTO findUserByUserId(UUID userId);
+
+    AppUser getOrCreateStaticLoginUser();
 }

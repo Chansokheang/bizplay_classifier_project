@@ -42,8 +42,8 @@ public class RuleServiceImple implements RuleService {
     @Override
     @Transactional
     public RuleDTO createRule(RuleRequest ruleRequest) {
-        corpService.getCorpByCorpNo(ruleRequest.getCompanyId());
-        List<UUID> categoryIds = resolveCategoryIds(ruleRequest.getCompanyId(), ruleRequest.getCategoryCodes());
+        corpService.getCorpByCorpNo(ruleRequest.getCorpNo());
+        List<UUID> categoryIds = resolveCategoryIds(ruleRequest.getCorpNo(), ruleRequest.getCategoryCodes());
         RuleDTO createdRule = ruleRepo.createRule(ruleRequest);
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(createdRule.getRuleId(), categoryIds);

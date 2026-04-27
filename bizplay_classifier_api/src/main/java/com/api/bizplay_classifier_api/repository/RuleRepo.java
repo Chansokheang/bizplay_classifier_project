@@ -24,15 +24,29 @@ import java.util.UUID;
 public interface RuleRepo {
 
     @Select("""
-        INSERT INTO classifier_rules (corp_no, 가맹점업종명, 가맹점업종코드, min_amount, max_amount, description)
-        VALUES (#{rule.corpNo}, #{rule.merchantIndustryName}, #{rule.merchantIndustryCode}, #{rule.minAmount}, #{rule.maxAmount}, #{rule.description})
+        INSERT INTO classifier_rules (
+            corp_no,
+            merchant_industry_name,
+            merchant_industry_code,
+            min_amount,
+            max_amount,
+            description
+        )
+        VALUES (
+            #{rule.corpNo},
+            #{rule.merchantIndustryName},
+            #{rule.merchantIndustryCode},
+            #{rule.minAmount},
+            #{rule.maxAmount},
+            #{rule.description}
+        )
         RETURNING *
     """)
     @Results(id = "ruleMap", value = {
             @Result(property = "ruleId", column = "rule_id", jdbcType = JdbcType.OTHER, typeHandler = UUIDTypeHandler.class),
             @Result(property = "corpNo", column = "corp_no"),
-            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
-            @Result(property = "merchantIndustryCode", column = "가맹점업종코드"),
+            @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
+            @Result(property = "merchantIndustryCode", column = "merchant_industry_code"),
             @Result(property = "usageStatus", column = "usage_status"),
             @Result(property = "minAmount", column = "min_amount"),
             @Result(property = "maxAmount", column = "max_amount"),
@@ -53,7 +67,7 @@ public interface RuleRepo {
         SELECT *
         FROM classifier_rules
         WHERE corp_no = #{corpNo}
-          AND 가맹점업종코드 = #{merchantIndustryCode}
+          AND merchant_industry_code = #{merchantIndustryCode}
         LIMIT 1
     """)
     @ResultMap("ruleMap")
@@ -64,8 +78,8 @@ public interface RuleRepo {
 
     @Select("""
         SELECT
-            r.가맹점업종명 AS merchant_industry_name,
-            r.가맹점업종코드 AS merchant_industry_code,
+            r.merchant_industry_name AS merchant_industry_name,
+            r.merchant_industry_code AS merchant_industry_code,
             r.description            AS description,
             c.code                   AS code,
             c.category               AS category
@@ -75,8 +89,8 @@ public interface RuleRepo {
         WHERE r.corp_no = #{corpNo}
     """)
     @Results(id = "ruleClassifierMap", value = {
-            @Result(property = "merchantIndustryName", column = "가맹점업종명"),
-            @Result(property = "merchantIndustryCode", column = "가맹점업종코드"),
+            @Result(property = "merchantIndustryName", column = "merchant_industry_name"),
+            @Result(property = "merchantIndustryCode", column = "merchant_industry_code"),
             @Result(property = "description", column = "description"),
             @Result(property = "code", column = "code"),
             @Result(property = "category", column = "category")
@@ -87,7 +101,7 @@ public interface RuleRepo {
         UPDATE classifier_rules
         SET usage_status = 'Y'
         WHERE corp_no = #{corpNo}
-          AND 가맹점업종코드 = #{merchantIndustryCode}
+          AND merchant_industry_code = #{merchantIndustryCode}
           AND COALESCE(usage_status, '') <> 'Y'
     """)
     int markRulesAsUsedByCorpNoAndIndustryCode(
@@ -98,8 +112,8 @@ public interface RuleRepo {
     @Select("""
         UPDATE classifier_rules
         SET
-            가맹점업종명 = #{rule.merchantIndustryName},
-            가맹점업종코드 = #{rule.merchantIndustryCode},
+            merchant_industry_name = #{rule.merchantIndustryName},
+            merchant_industry_code = #{rule.merchantIndustryCode},
             usage_status = COALESCE(#{rule.usageStatus}, usage_status),
             min_amount = #{rule.minAmount},
             max_amount = #{rule.maxAmount},

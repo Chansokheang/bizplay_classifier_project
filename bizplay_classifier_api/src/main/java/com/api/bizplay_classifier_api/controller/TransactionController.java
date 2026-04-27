@@ -12,8 +12,6 @@ import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.transactionService.TransactionService;
-import com.api.bizplay_classifier_api.utils.GetCurrentUser;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.http.MediaType;
@@ -37,13 +35,11 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/transactions")
 @AllArgsConstructor
-@SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class TransactionController {
 
     private final TransactionService transactionService;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
-    private final GetCurrentUser getCurrentUser;
 
     @PostMapping("/test-single-transaction/create")
     public ResponseEntity<ApiResponse<?>> createSingleTransactionForTesting(
@@ -118,9 +114,8 @@ public class TransactionController {
             throw new CustomNotFoundException("File record not found for id: " + fileId);
         }
 
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
         if (fileRecord.getCompanyId() != null) {
-            int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(fileRecord.getCompanyId(), currentUserId);
+            int exists = fileUploadHistoryRepo.existsCompanyById(fileRecord.getCompanyId());
             if (exists == 0) {
                 throw new CustomNotFoundException("Corp was not found with corpNo: " + fileRecord.getCompanyId());
             }

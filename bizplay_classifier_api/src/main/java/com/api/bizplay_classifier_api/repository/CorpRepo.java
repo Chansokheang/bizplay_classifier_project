@@ -12,7 +12,6 @@ import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
-import java.util.UUID;
 
 @Mapper
 public interface CorpRepo {
@@ -22,16 +21,15 @@ public interface CorpRepo {
             c.corp_id,
             c.corp_group_id,
             c.corp_no,
-            c.user_id,
             c.corp_name,
             cg.corp_group_cd,
             c.created_date
         FROM corp c
         JOIN corp_group cg ON cg.corp_group_id = c.corp_group_id
-        WHERE c.user_id = #{userId}
+        ORDER BY c.created_date DESC
     """)
     @org.apache.ibatis.annotations.ResultMap("companyMap")
-    List<CorpDTO> getAllCorpsByUserId(@Param("userId") UUID userId);
+    List<CorpDTO> getAllCorps();
 
     @Select("""
         SELECT COUNT(*) > 0
@@ -82,20 +80,18 @@ public interface CorpRepo {
     boolean existsCorpGroupByCode(@Param("corpGroupCode") String corpGroupCode);
 
     @Select("""
-        INSERT INTO corp (corp_no, user_id, corp_group_id, corp_name)
-        VALUES (#{corpNo}, #{userId}, #{company.corpGroupId}, #{company.corpName})
+        INSERT INTO corp (corp_no, corp_group_id, corp_name)
+        VALUES (#{corpNo}, #{company.corpGroupId}, #{company.corpName})
         RETURNING
             corp_id,
             corp_group_id,
             corp_no,
-            user_id,
             corp_name,
             created_date
     """)
     @org.apache.ibatis.annotations.ResultMap("companyMap")
     CorpDTO createCorp(
             @Param("company") CorpRequest corpRequest,
-            @Param("userId") UUID userId,
             @Param("corpNo") String corpNo
     );
 
@@ -104,32 +100,27 @@ public interface CorpRepo {
             c.corp_id,
             c.corp_group_id,
             c.corp_no,
-            c.user_id,
             c.corp_name,
             cg.corp_group_cd,
             c.created_date
         FROM corp c
         JOIN corp_group cg ON cg.corp_group_id = c.corp_group_id
         WHERE c.corp_no = #{corpNo}
-          AND c.user_id = #{userId}
     """)
     @Results(id = "companyMap", value = {
             @Result(property = "corpId", column = "corp_id"),
             @Result(property = "corpGroupId", column = "corp_group_id"),
             @Result(property = "corpNo", column = "corp_no"),
-            @Result(property = "userId", column = "user_id"),
             @Result(property = "corpName", column = "corp_name"),
             @Result(property = "corpGroupCode", column = "corp_group_cd"),
             @Result(property = "createdDate", column = "created_date"),
             @Result(property = "ruleDTOList", column = "corp_no", many = @Many(select = "com.api.bizplay_classifier_api.repository.RuleRepo.getAllRulesByCorpNo"))
     })
-    CorpDTO getCorpByCorpNo(@Param("userId") UUID userId, @Param("corpNo") String corpNo);
+    CorpDTO getCorpByCorpNo(@Param("corpNo") String corpNo);
 
     @Delete("""
         DELETE FROM corp
         WHERE corp_no = #{corpNo}
-          AND user_id = #{userId}
     """)
-    int deleteCorpByCorpNo(@Param("userId") UUID userId, @Param("corpNo") String corpNo);
+    int deleteCorpByCorpNo(@Param("corpNo") String corpNo);
 }
-

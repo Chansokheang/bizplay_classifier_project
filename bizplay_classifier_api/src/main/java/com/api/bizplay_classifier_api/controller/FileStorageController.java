@@ -11,8 +11,6 @@ import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
 import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
-import com.api.bizplay_classifier_api.utils.GetCurrentUser;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.AllArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -38,14 +36,12 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/storage")
 @AllArgsConstructor
-@SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class FileStorageController {
 
     private final FileStorageService fileStorageService;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileClassifySummaryRepo fileClassifySummaryRepo;
-    private final GetCurrentUser getCurrentUser;
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadFile(@RequestPart("file") MultipartFile file) {
@@ -66,8 +62,7 @@ public class FileStorageController {
             @RequestPart("file") MultipartFile file,
             @RequestParam("corpNo") String corpNo
     ) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(corpNo, currentUserId);
+        int exists = fileUploadHistoryRepo.existsCompanyById(corpNo);
         if (exists == 0) {
             throw new CustomNotFoundException("Corp was not found with corpNo: " + corpNo);
         }
@@ -127,8 +122,7 @@ public class FileStorageController {
             @PathVariable String corpNo,
             @RequestParam(value = "fileType", required = false) FileType fileType
     ) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(corpNo, currentUserId);
+        int exists = fileUploadHistoryRepo.existsCompanyById(corpNo);
         if (exists == 0) {
             throw new CustomNotFoundException("Corp was not found with corpNo: " + corpNo);
         }
@@ -167,8 +161,7 @@ public class FileStorageController {
             throw new CustomNotFoundException("File record not found for id: " + fileId);
         }
 
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = fileUploadHistoryRepo.existsCompanyByIdAndUserId(fileRecord.getCompanyId(), currentUserId);
+        int exists = fileUploadHistoryRepo.existsCompanyById(fileRecord.getCompanyId());
         if (exists == 0) {
             throw new CustomNotFoundException("Corp was not found with corpNo: " + fileRecord.getCompanyId());
         }

@@ -55,7 +55,7 @@ services:
       APP_STORAGE_PUBLIC_BASE_PATH: /api/v1/storage/files
       APP_JWT_BASE64_SECRET: ",A#s5i=1n0Q.EVLSH,A!9)(lxtuOU+R@i3?]ZM,%^1W="
       APP_AI_FALLBACK_ENABLED: "true"
-      APP_AI_FALLBACK_URL: http://10.255.78.58:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions
+      APP_AI_FALLBACK_URL: http://203.255.78.58:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions
       APP_AI_FALLBACK_API_KEY: sk-d7a20eb034c847e8994e192b40c69a61
       APP_AI_FALLBACK_CONNECT_TIMEOUT_MS: "10000"
       APP_AI_FALLBACK_READ_TIMEOUT_MS: "180000"

@@ -11,7 +11,6 @@ import com.api.bizplay_classifier_api.repository.BotConfigRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
-import com.api.bizplay_classifier_api.utils.GetCurrentUser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -41,7 +40,6 @@ public class BotConfigServiceImple implements BotConfigService {
     private final BotConfigRepo botConfigRepo;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileStorageService fileStorageService;
-    private final GetCurrentUser getCurrentUser;
     private final ObjectMapper objectMapper;
     private final AiFallbackService aiFallbackService;
     // AI model has 8192 token limit, 130 rows = ~8000 tokens (safe limit)
@@ -50,8 +48,7 @@ public class BotConfigServiceImple implements BotConfigService {
     @Override
     @Transactional
     public BotConfigDTO createBotConfig(BotConfigRequest botConfigRequest, AiProvider provider, String modelName) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(botConfigRequest.getCorpNo(), currentUserId);
+        int exists = botConfigRepo.existsCompanyById(botConfigRequest.getCorpNo());
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + botConfigRequest.getCorpNo());
         }
@@ -77,8 +74,7 @@ public class BotConfigServiceImple implements BotConfigService {
     @Override
     @Transactional
     public BotConfigDTO upsertBotConfig(String companyId, BotConfigRequest.Config config, AiProvider provider, String modelName) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = botConfigRepo.existsCompanyById(companyId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }
@@ -92,8 +88,7 @@ public class BotConfigServiceImple implements BotConfigService {
 
     @Override
     public BotConfigDTO getLatestBotConfigByCompanyId(String companyId) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = botConfigRepo.existsCompanyById(companyId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }
@@ -123,8 +118,7 @@ public class BotConfigServiceImple implements BotConfigService {
     @Override
     @Transactional
     public PromptEnhancementResponse updatePromptFromLatestTrainingDataWithSource(String companyId, Integer sampleRows, PromptEnhancementRequest request) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = botConfigRepo.existsCompanyById(companyId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }
@@ -195,8 +189,7 @@ public class BotConfigServiceImple implements BotConfigService {
     @Override
     @Transactional(readOnly = true)
     public PromptEnhancementResponse generatePromptEnhancementPreview(String companyId, Integer sampleRows) {
-        UUID currentUserId = getCurrentUser.getCurrentUserId();
-        int exists = botConfigRepo.existsCompanyByIdAndUserId(companyId, currentUserId);
+        int exists = botConfigRepo.existsCompanyById(companyId);
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + companyId);
         }

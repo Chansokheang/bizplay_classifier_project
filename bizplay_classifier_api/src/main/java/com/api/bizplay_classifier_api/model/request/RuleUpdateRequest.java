@@ -1,7 +1,6 @@
 package com.api.bizplay_classifier_api.model.request;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
@@ -22,14 +21,12 @@ public class RuleUpdateRequest {
     private List<String> categoryCodes;
 
     @NotBlank(message = "Merchant industry name can not be blank.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uBA85")
-    @JsonAlias({"merchantIndustryName", "businessType", "business_type"})
+    @JsonAlias({"가맹점업종명", "businessType", "business_type"})
     private String merchantIndustryName;
 
     @NotBlank(message = "Merchant industry code can not be blank.")
     @Pattern(regexp = "^[A-Za-z0-9]{5}$", message = "Merchant industry code must be exactly 5 alphanumeric characters.")
-    @JsonProperty("\uAC00\uB9F9\uC810\uC5C5\uC885\uCF54\uB4DC")
-    @JsonAlias("merchantIndustryCode")
+    @JsonAlias("가맹점업종코드")
     private String merchantIndustryCode;
 
     @Pattern(regexp = "^[YN]$", message = "Usage status must be Y or N.")

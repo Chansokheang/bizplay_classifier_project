@@ -28,7 +28,7 @@ public interface CategoryRepo {
             @Result(property = "corpNo", column = "corp_no"),
             @Result(property = "code", column = "code"),
             @Result(property = "category", column = "category"),
-            @Result(property = "isUsed", column = "사용여부")
+            @Result(property = "isUsed", column = "is_used")
     })
     CategoryDTO createCategory(@Param("category") CategoryRequest categoryRequest);
 
@@ -93,13 +93,12 @@ public interface CategoryRepo {
         SELECT COUNT(1)
         FROM corp
         WHERE corp_no = #{corpNo}
-          AND user_id = #{userId}
     """)
-    int existsCorpByCorpNoAndUserId(@Param("corpNo") String corpNo, @Param("userId") UUID userId);
+    int existsCorpByCorpNo(@Param("corpNo") String corpNo);
 
     @Update("""
         UPDATE classifier_categories
-        SET 사용여부 = TRUE
+        SET is_used = TRUE
         WHERE category_id = #{categoryId}
     """)
     Integer markCategoryAsUsed(@Param("categoryId") UUID categoryId);

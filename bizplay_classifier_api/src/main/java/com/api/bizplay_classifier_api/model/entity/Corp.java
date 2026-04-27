@@ -6,7 +6,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.sql.Timestamp;
-import java.util.UUID;
 
 @Data
 @NoArgsConstructor
@@ -16,7 +15,6 @@ public class Corp {
     private Long corpId;
     private Long corpGroupId;
     private String corpNo;
-    private UUID userId;
     private String corpName;
     private String businessNumber;
     private String corpGroupCode;

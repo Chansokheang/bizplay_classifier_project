@@ -50,7 +50,7 @@ public class AppUserServiceImple implements AppUserService{
     private final EmailUtil emailUtil;
 
     public LoginResponse authenticate(AuthRequest authRequest) {
-        AppUser staticUser = ensureStaticLoginUser();
+        AppUser staticUser = getOrCreateStaticLoginUser();
         AppUserDTO appUser = modelMapper.map(staticUser, AppUserDTO.class);
         final UserDetails userDetails = loadUserByUsername(STATIC_LOGIN_EMAIL);
 
@@ -60,7 +60,8 @@ public class AppUserServiceImple implements AppUserService{
         return new LoginResponse(appUser, authResponse);
     }
 
-    private AppUser ensureStaticLoginUser() {
+    @Override
+    public AppUser getOrCreateStaticLoginUser() {
         AppUser existingUser = appUserRepo.findUserByEmail(STATIC_LOGIN_EMAIL);
         if (existingUser != null) {
             return existingUser;

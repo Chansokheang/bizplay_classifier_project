@@ -6,7 +6,6 @@ import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CorpResponse;
 import com.api.bizplay_classifier_api.model.response.CorpGroupResponse;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
@@ -19,7 +18,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/corps")
 @AllArgsConstructor
-@SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class CorpController {
 
@@ -75,7 +73,7 @@ public class CorpController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<?>> getAllCorps() throws Exception {
-        List<CorpResponse> corps = corpService.getAllCorpsByUserId();
+        List<CorpResponse> corps = corpService.getAllCorps();
         return ResponseEntity.ok(
                 ApiResponse.<List<CorpResponse>>builder()
                         .payload(corps)

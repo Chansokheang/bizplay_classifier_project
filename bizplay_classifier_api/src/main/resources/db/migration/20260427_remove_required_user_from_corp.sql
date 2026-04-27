@@ -1,0 +1,5 @@
+ALTER TABLE corp
+    ALTER COLUMN user_id DROP NOT NULL;
+
+ALTER TABLE companies
+    ALTER COLUMN user_id DROP NOT NULL;

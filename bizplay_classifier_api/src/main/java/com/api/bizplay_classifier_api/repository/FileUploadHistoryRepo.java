@@ -102,9 +102,8 @@ public interface FileUploadHistoryRepo {
         SELECT COUNT(1)
         FROM corp
         WHERE corp_no = #{corpNo}
-          AND user_id = #{userId}
     """)
-    int existsCorpByCorpNoAndUserId(@Param("corpNo") String corpNo, @Param("userId") UUID userId);
+    int existsCorpByCorpNo(@Param("corpNo") String corpNo);
 
     @Delete("""
         DELETE FROM classifier_file_upload_history
@@ -129,8 +128,8 @@ public interface FileUploadHistoryRepo {
         return getLatestTrainingFileByCorpNo(companyId);
     }
 
-    default int existsCompanyByIdAndUserId(String companyId, UUID userId) {
-        return existsCorpByCorpNoAndUserId(companyId, userId);
+    default int existsCompanyById(String companyId) {
+        return existsCorpByCorpNo(companyId);
     }
 }
 

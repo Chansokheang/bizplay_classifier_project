@@ -5,7 +5,6 @@ import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
 import com.api.bizplay_classifier_api.service.categoryService.CategoryService;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,7 +27,6 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/categories")
 @AllArgsConstructor
-@SecurityRequirement(name = "bearerAuth")
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class CategoryController {
 

@@ -13,7 +13,7 @@ public interface CorpService {
 
     CorpGroupResponse getCorpGroupById(Long corpGroupId);
 
-    List<CorpResponse> getAllCorpsByUserId() throws Exception;
+    List<CorpResponse> getAllCorps();
 
     CorpResponse createCorp(CorpRequest corpRequest);
 

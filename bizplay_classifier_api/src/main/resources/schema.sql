@@ -38,7 +38,7 @@ CREATE TABLE "users" (
 -- ============================================
 CREATE TABLE companies (
                            company_business_number CHAR(10) PRIMARY KEY NOT NULL,
-                           user_id         UUID NOT NULL REFERENCES "users"(user_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                           user_id         UUID REFERENCES "users"(user_id) ON UPDATE CASCADE ON DELETE CASCADE,
                            company_name    VARCHAR(255) NOT NULL,
 --                            types VARCHAR(20),
                            created_date    TIMESTAMP NOT NULL DEFAULT NOW()

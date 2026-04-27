@@ -8,17 +8,13 @@ import com.api.bizplay_classifier_api.model.request.CorpGroupRequest;
 import com.api.bizplay_classifier_api.model.response.CorpResponse;
 import com.api.bizplay_classifier_api.model.response.CorpGroupResponse;
 import com.api.bizplay_classifier_api.repository.CorpRepo;
-import com.api.bizplay_classifier_api.service.userService.AppUserService;
-import com.api.bizplay_classifier_api.utils.GetCurrentUser;
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.modelmapper.ModelMapper;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.UUID;
 
 @Log4j2
 @Service
@@ -26,8 +22,6 @@ import java.util.UUID;
 public class CorpServiceImple implements CorpService {
 
     private final CorpRepo corpRepo;
-    private final AppUserService appUserService;
-    private final GetCurrentUser getCurrentUser;
     private final ModelMapper modelMapper;
 
     @Override
@@ -59,9 +53,8 @@ public class CorpServiceImple implements CorpService {
     }
 
     @Override
-    public List<CorpResponse> getAllCorpsByUserId() throws UsernameNotFoundException {
-        UUID userId = getCurrentUser.getCurrentUserId();
-        List<CorpDTO> corpDTOList = corpRepo.getAllCorpsByUserId(userId);
+    public List<CorpResponse> getAllCorps() {
+        List<CorpDTO> corpDTOList = corpRepo.getAllCorps();
         return corpDTOList.stream()
                 .map(corpDTO -> modelMapper.map(corpDTO, CorpResponse.class))
                 .toList();
@@ -69,8 +62,7 @@ public class CorpServiceImple implements CorpService {
 
     @Override
     @Transactional
-    public CorpResponse createCorp(CorpRequest corpRequest) throws UsernameNotFoundException {
-        UUID userId = getCurrentUser.getCurrentUserId();
+    public CorpResponse createCorp(CorpRequest corpRequest) {
         corpRequest.setCorpNo(normalizeBusinessNumber(corpRequest.getCorpNo()));
         if (corpRepo.existsBycorpNo(corpRequest.getCorpNo())) {
             throw new IllegalArgumentException("Business number " + corpRequest.getCorpNo() + " is already registered.");
@@ -78,15 +70,14 @@ public class CorpServiceImple implements CorpService {
         if (!corpRepo.existsCorpGroupById(corpRequest.getCorpGroupId())) {
             throw new CustomNotFoundException("Corp group was not found with Id: " + corpRequest.getCorpGroupId());
         }
-        CorpDTO corpDTO = corpRepo.createCorp(corpRequest, userId, corpRequest.getCorpNo());
-        CorpDTO createdCorp = corpRepo.getCorpByCorpNo(userId, corpDTO.getCorpNo());
+        CorpDTO corpDTO = corpRepo.createCorp(corpRequest, corpRequest.getCorpNo());
+        CorpDTO createdCorp = corpRepo.getCorpByCorpNo(corpDTO.getCorpNo());
         return modelMapper.map(createdCorp, CorpResponse.class);
     }
 
     @Override
     public CorpResponse getCorpByCorpNo(String corpNo) {
-        UUID userId = getCurrentUser.getCurrentUserId();
-        CorpDTO corpDTO = corpRepo.getCorpByCorpNo(userId, corpNo);
+        CorpDTO corpDTO = corpRepo.getCorpByCorpNo(corpNo);
         if (corpDTO == null) {
             throw new CustomNotFoundException("Corp was not found with Id: " + corpNo);
         }
@@ -96,8 +87,7 @@ public class CorpServiceImple implements CorpService {
     @Override
     @Transactional
     public void deleteCorpByCorpNo(String corpNo) {
-        UUID userId = getCurrentUser.getCurrentUserId();
-        int deletedRows = corpRepo.deleteCorpByCorpNo(userId, corpNo);
+        int deletedRows = corpRepo.deleteCorpByCorpNo(corpNo);
         if (deletedRows == 0) {
             throw new CustomNotFoundException("Corp was not found with Id: " + corpNo);
         }
