@@ -11,9 +11,11 @@ public interface CorpService {
 
     List<CorpGroupResponse> getAllCorpGroups();
 
-    CorpGroupResponse getCorpGroupById(Long corpGroupId);
+    CorpGroupResponse getCorpGroupByCode(String corpGroupCode);
 
     List<CorpResponse> getAllCorps();
+
+    List<CorpResponse> getAllCorpsByCorpGroupCode(String corpGroupCode);
 
     CorpResponse createCorp(CorpRequest corpRequest);
 

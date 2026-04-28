@@ -32,6 +32,22 @@ public interface CorpRepo {
     List<CorpDTO> getAllCorps();
 
     @Select("""
+        SELECT
+            c.corp_id,
+            c.corp_group_id,
+            c.corp_no,
+            c.corp_name,
+            cg.corp_group_cd,
+            c.created_date
+        FROM corp c
+        JOIN corp_group cg ON cg.corp_group_id = c.corp_group_id
+        WHERE cg.corp_group_cd = #{corpGroupCode}
+        ORDER BY c.created_date DESC
+    """)
+    @org.apache.ibatis.annotations.ResultMap("companyMap")
+    List<CorpDTO> getAllCorpsByCorpGroupCode(@Param("corpGroupCode") String corpGroupCode);
+
+    @Select("""
         SELECT COUNT(*) > 0
         FROM corp
         WHERE corp_no = #{corpNo}
@@ -60,17 +76,10 @@ public interface CorpRepo {
     @Select("""
         SELECT *
         FROM corp_group
-        WHERE corp_group_id = #{corpGroupId}
+        WHERE corp_group_cd = #{corpGroupCode}
     """)
     @org.apache.ibatis.annotations.ResultMap("corpGroupMap")
-    CorpGroupDTO getCorpGroupById(@Param("corpGroupId") Long corpGroupId);
-
-    @Select("""
-        SELECT COUNT(*) > 0
-        FROM corp_group
-        WHERE corp_group_id = #{corpGroupId}
-    """)
-    boolean existsCorpGroupById(@Param("corpGroupId") Long corpGroupId);
+    CorpGroupDTO getCorpGroupByCode(@Param("corpGroupCode") String corpGroupCode);
 
     @Select("""
         SELECT COUNT(*) > 0
@@ -81,7 +90,11 @@ public interface CorpRepo {
 
     @Select("""
         INSERT INTO corp (corp_no, corp_group_id, corp_name)
-        VALUES (#{corpNo}, #{company.corpGroupId}, #{company.corpName})
+        VALUES (
+            #{corpNo},
+            (SELECT corp_group_id FROM corp_group WHERE corp_group_cd = #{company.corpGroupCode}),
+            #{company.corpName}
+        )
         RETURNING
             corp_id,
             corp_group_id,

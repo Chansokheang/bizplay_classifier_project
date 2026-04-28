@@ -13,10 +13,8 @@ import java.util.List;
 @Builder
 public class CorpResponse {
     private Long corpId;
-    private Long corpGroupId;
     private String corpNo;
     private String corpName;
     private String corpGroupCode;
     private List<RuleDTO> ruleDTOList;
 }
-

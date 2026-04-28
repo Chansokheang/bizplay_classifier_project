@@ -17,7 +17,7 @@ CREATE TABLE corp_group (
 -- ============================================
 CREATE TABLE corp (
     corp_id BIGSERIAL PRIMARY KEY,
-    corp_no CHAR(10) UNIQUE NOT NULL,
+    corp_no VARCHAR(50) UNIQUE NOT NULL,
     corp_group_id BIGINT NOT NULL REFERENCES corp_group(corp_group_id) ON UPDATE CASCADE ON DELETE CASCADE,
     corp_name VARCHAR(255) NOT NULL,
     created_date TIMESTAMP NOT NULL DEFAULT NOW()

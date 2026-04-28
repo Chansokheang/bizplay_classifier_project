@@ -44,10 +44,11 @@ public class CorpServiceImple implements CorpService {
     }
 
     @Override
-    public CorpGroupResponse getCorpGroupById(Long corpGroupId) {
-        CorpGroupDTO corpGroupDTO = corpRepo.getCorpGroupById(corpGroupId);
+    public CorpGroupResponse getCorpGroupByCode(String corpGroupCode) {
+        String normalizedCorpGroupCode = normalizeCorpGroupCode(corpGroupCode);
+        CorpGroupDTO corpGroupDTO = corpRepo.getCorpGroupByCode(normalizedCorpGroupCode);
         if (corpGroupDTO == null) {
-            throw new CustomNotFoundException("Corp group was not found with Id: " + corpGroupId);
+            throw new CustomNotFoundException("Corp group was not found with code: " + normalizedCorpGroupCode);
         }
         return modelMapper.map(corpGroupDTO, CorpGroupResponse.class);
     }
@@ -61,14 +62,27 @@ public class CorpServiceImple implements CorpService {
     }
 
     @Override
+    public List<CorpResponse> getAllCorpsByCorpGroupCode(String corpGroupCode) {
+        String normalizedCorpGroupCode = normalizeCorpGroupCode(corpGroupCode);
+        if (!corpRepo.existsCorpGroupByCode(normalizedCorpGroupCode)) {
+            throw new CustomNotFoundException("Corp group was not found with code: " + normalizedCorpGroupCode);
+        }
+
+        return corpRepo.getAllCorpsByCorpGroupCode(normalizedCorpGroupCode).stream()
+                .map(corpDTO -> modelMapper.map(corpDTO, CorpResponse.class))
+                .toList();
+    }
+
+    @Override
     @Transactional
     public CorpResponse createCorp(CorpRequest corpRequest) {
         corpRequest.setCorpNo(normalizeBusinessNumber(corpRequest.getCorpNo()));
+        corpRequest.setCorpGroupCode(normalizeCorpGroupCode(corpRequest.getCorpGroupCode()));
         if (corpRepo.existsBycorpNo(corpRequest.getCorpNo())) {
             throw new IllegalArgumentException("Business number " + corpRequest.getCorpNo() + " is already registered.");
         }
-        if (!corpRepo.existsCorpGroupById(corpRequest.getCorpGroupId())) {
-            throw new CustomNotFoundException("Corp group was not found with Id: " + corpRequest.getCorpGroupId());
+        if (!corpRepo.existsCorpGroupByCode(corpRequest.getCorpGroupCode())) {
+            throw new CustomNotFoundException("Corp group was not found with code: " + corpRequest.getCorpGroupCode());
         }
         CorpDTO corpDTO = corpRepo.createCorp(corpRequest, corpRequest.getCorpNo());
         CorpDTO createdCorp = corpRepo.getCorpByCorpNo(corpDTO.getCorpNo());

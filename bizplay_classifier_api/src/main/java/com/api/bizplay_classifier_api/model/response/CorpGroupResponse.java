@@ -10,7 +10,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @Builder
 public class CorpGroupResponse {
-    private Long corpGroupId;
     private String corpGroupCode;
 }
 

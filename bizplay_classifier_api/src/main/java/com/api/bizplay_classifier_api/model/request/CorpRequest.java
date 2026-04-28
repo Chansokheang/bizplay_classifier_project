@@ -24,8 +24,8 @@ public class CorpRequest {
     @Schema(example = "1234567890")
     private String corpNo;
 
-    @NotNull(message = "Corp group id can not be null or empty.")
-    @JsonAlias({"corpGroupId", "corp_group_id"})
-    @Schema(example = "1")
-    private Long corpGroupId;
+    @NotBlank(message = "Corp group code can not be blank.")
+    @JsonAlias({"corpGroupCd", "corpGroupCode", "corp_group_cd"})
+    @Schema(example = "GROUP001")
+    private String corpGroupCode;
 }

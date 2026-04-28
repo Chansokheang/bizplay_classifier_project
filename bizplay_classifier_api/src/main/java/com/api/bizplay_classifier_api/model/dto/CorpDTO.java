@@ -21,4 +21,3 @@ public class CorpDTO {
     private Timestamp createdDate;
     private List<RuleDTO> ruleDTOList;
 }
-

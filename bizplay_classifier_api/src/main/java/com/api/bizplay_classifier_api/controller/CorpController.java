@@ -47,18 +47,6 @@ public class CorpController {
         );
     }
 
-    @GetMapping("/corp-groups/{corpGroupId}")
-    public ResponseEntity<ApiResponse<?>> getCorpGroupById(@PathVariable Long corpGroupId) {
-        return ResponseEntity.ok(
-                ApiResponse.<CorpGroupResponse>builder()
-                        .payload(corpService.getCorpGroupById(corpGroupId))
-                        .message("Get corp group successfully.")
-                        .code(200)
-                        .status(HttpStatus.OK)
-                        .build()
-        );
-    }
-
     @PostMapping
     public ResponseEntity<ApiResponse<?>> createCorp(@Valid @RequestBody CorpRequest corpRequest) {
         return ResponseEntity.ok(
@@ -78,6 +66,18 @@ public class CorpController {
                 ApiResponse.<List<CorpResponse>>builder()
                         .payload(corps)
                         .message("Get all corps successfully.")
+                        .code(200)
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
+    @GetMapping("/corp-groups/{corpGroupCode}/corps")
+    public ResponseEntity<ApiResponse<?>> getAllCorpsByCorpGroupCode(@PathVariable String corpGroupCode) {
+        return ResponseEntity.ok(
+                ApiResponse.<List<CorpResponse>>builder()
+                        .payload(corpService.getAllCorpsByCorpGroupCode(corpGroupCode))
+                        .message("Get corps by corp group code successfully.")
                         .code(200)
                         .status(HttpStatus.OK)
                         .build()
@@ -108,4 +108,3 @@ public class CorpController {
         );
     }
 }
-
