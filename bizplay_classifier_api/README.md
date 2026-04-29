@@ -224,6 +224,8 @@ Rules are corp-scoped and keyed by merchant industry metadata.
 
 #### POST `/api/v1/rules/create`
 
+Newly created rules default to `usageStatus = "Y"`.
+
 Canonical request body:
 
 ```json

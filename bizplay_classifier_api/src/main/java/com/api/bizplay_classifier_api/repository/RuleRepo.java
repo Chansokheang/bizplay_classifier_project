@@ -28,6 +28,7 @@ public interface RuleRepo {
             corp_no,
             merchant_industry_name,
             merchant_industry_code,
+            usage_status,
             min_amount,
             max_amount,
             description
@@ -36,6 +37,7 @@ public interface RuleRepo {
             #{rule.corpNo},
             #{rule.merchantIndustryName},
             #{rule.merchantIndustryCode},
+            'Y',
             #{rule.minAmount},
             #{rule.maxAmount},
             #{rule.description}

@@ -667,3 +667,76 @@ Consider defining a bean of type 'com.api.bizplay_classifier_api.service.categor
 2026-04-29T10:21:16.734+09:00  INFO 38088 --- [bizplay_classifier_api] [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
 2026-04-29T10:21:16.737+09:00  INFO 38088 --- [bizplay_classifier_api] [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms
 2026-04-29T10:21:17.893+09:00  INFO 38088 --- [bizplay_classifier_api] [io-8080-exec-10] o.springdoc.api.AbstractOpenApiResource  : Init duration for springdoc-openapi is: 514 ms
+2026-04-29T14:59:25.644+09:00  INFO 38088 --- [bizplay_classifier_api] [   File Watcher] rtingClassPathChangeChangedEventListener : Restarting due to 98 class path changes (0 additions, 98 deletions, 0 modifications)
+2026-04-29T14:59:25.663+09:00  INFO 38088 --- [bizplay_classifier_api] [      Thread-54] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-04-29T14:59:25.672+09:00  INFO 38088 --- [bizplay_classifier_api] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-04-29T14:59:25.679+09:00  INFO 38088 --- [bizplay_classifier_api] [      Thread-54] com.zaxxer.hikari.HikariDataSource       : HikariPool-12 - Shutdown initiated...
+2026-04-29T14:59:25.684+09:00  INFO 38088 --- [bizplay_classifier_api] [      Thread-54] com.zaxxer.hikari.HikariDataSource       : HikariPool-12 - Shutdown completed.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.4.5)
+
+2026-04-29T14:59:25.985+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.api.BizplayApplication               : Starting BizplayApplication using Java 25.0.2 with PID 38088 (C:\Users\user\OneDrive\Documents\02. Master Degree\03. Lab\01. Project\01. WebCash\04. BizPlay\03. Code\bizplay_classifier_api\target\classes started by user in C:\Users\user\OneDrive\Documents\02. Master Degree\03. Lab\01. Project\01. WebCash\04. BizPlay\03. Code\bizplay_classifier_api)
+2026-04-29T14:59:25.986+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.api.BizplayApplication               : No active profile set, falling back to 1 default profile: "default"
+2026-04-29T14:59:26.765+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JDBC repositories in DEFAULT mode.
+2026-04-29T14:59:26.786+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 19 ms. Found 0 JDBC repository interfaces.
+2026-04-29T14:59:27.014+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-04-29T14:59:27.017+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-04-29T14:59:27.018+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.40]
+2026-04-29T14:59:27.071+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.a.c.c.C.[Tomcat-6].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-04-29T14:59:27.071+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 1070 ms
+2026-04-29T14:59:27.090+09:00 ERROR 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.web.embedded.tomcat.TomcatStarter  : Error starting Tomcat context. Exception: org.springframework.beans.factory.UnsatisfiedDependencyException. Message: Error creating bean with name 'jwtAuthFilter' defined in file [C:\Users\user\OneDrive\Documents\02. Master Degree\03. Lab\01. Project\01. WebCash\04. BizPlay\03. Code\bizplay_classifier_api\target\classes\com\api\bizplay_classifier_api\security\JwtAuthFilter.class]: Unsatisfied dependency expressed through constructor parameter 1: No qualifying bean of type 'com.api.bizplay_classifier_api.service.userService.AppUserService' available: expected at least 1 bean which qualifies as autowire candidate. Dependency annotations: {}
+2026-04-29T14:59:27.091+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.apache.catalina.core.StandardService   : Stopping service [Tomcat]
+2026-04-29T14:59:27.093+09:00  WARN 38088 --- [bizplay_classifier_api] [  restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Unable to start web server
+2026-04-29T14:59:27.098+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-04-29T14:59:27.105+09:00 ERROR 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.d.LoggingFailureAnalysisReporter   : 
+
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+Parameter 1 of constructor in com.api.bizplay_classifier_api.security.JwtAuthFilter required a bean of type 'com.api.bizplay_classifier_api.service.userService.AppUserService' that could not be found.
+
+
+Action:
+
+Consider defining a bean of type 'com.api.bizplay_classifier_api.service.userService.AppUserService' in your configuration.
+
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.4.5)
+
+2026-04-29T14:59:31.699+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.api.BizplayApplication               : Starting BizplayApplication using Java 25.0.2 with PID 38088 (C:\Users\user\OneDrive\Documents\02. Master Degree\03. Lab\01. Project\01. WebCash\04. BizPlay\03. Code\bizplay_classifier_api\target\classes started by user in C:\Users\user\OneDrive\Documents\02. Master Degree\03. Lab\01. Project\01. WebCash\04. BizPlay\03. Code\bizplay_classifier_api)
+2026-04-29T14:59:31.699+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.api.BizplayApplication               : No active profile set, falling back to 1 default profile: "default"
+2026-04-29T14:59:32.073+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JDBC repositories in DEFAULT mode.
+2026-04-29T14:59:32.092+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 17 ms. Found 0 JDBC repository interfaces.
+2026-04-29T14:59:32.205+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-04-29T14:59:32.205+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-04-29T14:59:32.206+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.40]
+2026-04-29T14:59:32.244+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.a.c.c.C.[Tomcat-7].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-04-29T14:59:32.245+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 542 ms
+2026-04-29T14:59:32.292+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-13 - Starting...
+2026-04-29T14:59:32.419+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-13 - Added connection org.postgresql.jdbc.PgConnection@11e681d4
+2026-04-29T14:59:32.419+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-13 - Start completed.
+2026-04-29T14:59:32.530+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] c.a.b.s.s.FileStorageServiceImple        : MinIO storage is ready. bucket=bizplay-files
+2026-04-29T14:59:32.674+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name appUserServiceImple
+2026-04-29T14:59:34.086+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-04-29T14:59:34.105+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-04-29T14:59:34.108+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] com.api.BizplayApplication               : Started BizplayApplication in 2.44 seconds (process running for 76039.667)
+2026-04-29T14:59:34.251+09:00  INFO 38088 --- [bizplay_classifier_api] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged
