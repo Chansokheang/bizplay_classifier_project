@@ -340,7 +340,13 @@ Update latest bot config for a corp.
 
 #### GET `/api/v1/bot-configs/prompt-enhancement`
 
-Generate or preview prompt enhancement from the latest training file.
+Generate or preview prompt enhancement from training history for the corp.
+
+Behavior:
+- reads `TRAINING` files for the `corpNo`
+- processes files from newest to oldest
+- collects rows until `sampleRows` is satisfied
+- caps total collected rows at `1000`
 
 ### 5. Data Training
 
@@ -364,6 +370,78 @@ The training flow creates:
 Expected normalized spreadsheet/business columns:
 - `merchant_industry_code`
 - `merchant_industry_name`
+
+#### POST `/api/v1/data/train/body`
+
+Train rules and categories from JSON request data instead of an Excel file.
+
+Request body:
+
+```json
+{
+  "corpNo": "1234567890",
+  "trainingData": [
+    {
+      "승인일자": "20251125",
+      "승인시간": "161309",
+      "가맹점명": "대한항공직판인터넷",
+      "가맹점업종코드": "4078",
+      "가맹점업종명": "인터넷Mall",
+      "가맹점사업자번호": "1108114794",
+      "공급금액": 87700,
+      "부가세액": 0,
+      "과세유형": "일반",
+      "용도코드": "A1004",
+      "용도명": "교통비"
+    },
+    {
+      "승인일자": "20251201",
+      "승인시간": "175010",
+      "가맹점명": "(주)여기어때컴퍼니",
+      "가맹점업종코드": "4076",
+      "가맹점업종명": "인터넷P/G",
+      "가맹점사업자번호": "4118601799",
+      "공급금액": 68000,
+      "부가세액": 0,
+      "과세유형": "일반",
+      "용도코드": "A1005",
+      "용도명": "출장비"
+    }
+  ]
+}
+```
+
+Training uses these columns from each row:
+- `가맹점업종코드`
+- `가맹점업종명`
+- `용도코드`
+- `용도명`
+
+Other columns are accepted and ignored by the training logic.
+
+The request payload is converted to an Excel training file, stored as `TRAINING`, and a training file-history record is created.
+
+Response payload:
+
+```json
+{
+  "summary": {
+    "totalRows": 2,
+    "trainedRows": 2,
+    "skippedRows": 0,
+    "createdRules": 1,
+    "createdCategories": 2,
+    "createdMappings": 2
+  },
+  "file": {
+    "originalFileName": "training-data-1234567890.xlsx",
+    "storedFileName": "training-files/550e8400-e29b-41d4-a716-446655440999.xlsx",
+    "fileUrl": "/api/v1/storage/files/training-files/550e8400-e29b-41d4-a716-446655440999.xlsx",
+    "size": 4096,
+    "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  }
+}
+```
 
 ### 6. Transaction Processing
 

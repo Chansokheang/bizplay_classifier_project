@@ -6,6 +6,8 @@ import com.api.bizplay_classifier_api.model.dto.RuleDTO;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
+import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
+import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
@@ -125,6 +127,7 @@ public class RuleServiceImple implements RuleService {
             int skippedMissingRequired = 0;
             int skippedInvalidUsageCode = 0;
             int skippedInvalidIndustryCode = 0;
+            List<TrainingSeed> trainingSeeds = new ArrayList<>();
 
             for (int rowIndex = headerResult.headerRowIndex() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
                 Row row = sheet.getRow(rowIndex);
@@ -139,79 +142,114 @@ public class RuleServiceImple implements RuleService {
                 String merchantIndustryName = getCellValue(row, headerMap, formatter, "merchant_industry_name");
                 String code = getCellValue(row, headerMap, formatter, "usage_code");
                 String categoryName = getCellValue(row, headerMap, formatter, "usage_name");
-
-                if (merchantIndustryCode == null || merchantIndustryCode.isBlank()
-                        || merchantIndustryName == null || merchantIndustryName.isBlank()
-                        || code == null || code.isBlank()
-                        || categoryName == null || categoryName.isBlank()) {
-                    skippedRows++;
-                    skippedMissingRequired++;
-                    continue;
-                }
-
-                String normalizedCode = code.trim();
-                if (!normalizedCode.matches("^[A-Za-z0-9]{1,50}$")) {
-                    skippedRows++;
-                    skippedInvalidUsageCode++;
-                    continue;
-                }
-                String normalizedIndustryCode = merchantIndustryCode.trim().toUpperCase();
-                // Industry code in source files is not always fixed-length (often not 5 chars).
-                // Keep only alphanumeric characters for stable matching/storage.
-                normalizedIndustryCode = normalizedIndustryCode.replaceAll("[^A-Za-z0-9]", "");
-                if (normalizedIndustryCode.isBlank()) {
-                    skippedRows++;
-                    skippedInvalidIndustryCode++;
-                    continue;
-                }
-                String normalizedIndustryName = merchantIndustryName.trim();
-
-                CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, categoryName.trim());
-                CategoryDTO category = categoryUpsert.category();
-                if (categoryUpsert.created()) {
-                    createdCategories++;
-                }
-
-                RuleDTO rule = ruleRepo.findByCompanyIdAndIndustryCode(companyId, normalizedIndustryCode);
-                if (rule == null) {
-                    rule = ruleRepo.createRule(
-                            RuleRequest.builder()
-                                    .corpNo(companyId)
-                                    .merchantIndustryCode(normalizedIndustryCode)
-                                    .merchantIndustryName(normalizedIndustryName)
-                                    .categoryCodes(List.of())
-                                    .description("trained-from-data")
-                                    .build()
-                    );
-                    createdRules++;
-                }
-
-                int inserted = ruleRepo.createRuleCategoryMappingIgnoreConflict(rule.getRuleId(), category.getCategoryId());
-                if (inserted > 0) {
-                    createdMappings++;
-                }
-
-                categoryRepo.markCategoryAsUsed(category.getCategoryId());
-                trainedRows++;
+                trainingSeeds.add(new TrainingSeed(merchantIndustryCode, merchantIndustryName, code, categoryName));
             }
 
-            log.info(
-                    "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}",
-                    companyId, totalRows, trainedRows, skippedRows, createdRules, createdCategories, createdMappings,
-                    skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode
-            );
-
-            return DataTrainSummaryResponse.builder()
-                    .totalRows(totalRows)
-                    .trainedRows(trainedRows)
-                    .skippedRows(skippedRows)
-                    .createdRules(createdRules)
-                    .createdCategories(createdCategories)
-                    .createdMappings(createdMappings)
-                    .build();
+            return trainRulesFromSeeds(companyId, trainingSeeds, totalRows);
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to read Excel file.", e);
         }
+    }
+
+    @Override
+    @Transactional
+    public DataTrainSummaryResponse trainRulesFromRequestData(TrainingDataTrainRequest trainingDataTrainRequest) {
+        String companyId = trainingDataTrainRequest.getCorpNo();
+        corpService.getCorpByCorpNo(companyId);
+
+        List<TrainingSeed> trainingSeeds = trainingDataTrainRequest.getTrainingData()
+                .stream()
+                .map(row -> new TrainingSeed(
+                        row.getMerchantIndustryCode(),
+                        row.getMerchantIndustryName(),
+                        row.getCategoryCode(),
+                        row.getCategoryName()
+                ))
+                .toList();
+
+        return trainRulesFromSeeds(companyId, trainingSeeds, trainingSeeds.size());
+    }
+
+    private DataTrainSummaryResponse trainRulesFromSeeds(String companyId, List<TrainingSeed> trainingSeeds, int totalRows) {
+        int trainedRows = 0;
+        int skippedRows = 0;
+        int createdRules = 0;
+        int createdCategories = 0;
+        int createdMappings = 0;
+        int skippedMissingRequired = 0;
+        int skippedInvalidUsageCode = 0;
+        int skippedInvalidIndustryCode = 0;
+
+        for (TrainingSeed trainingSeed : trainingSeeds) {
+            if (trainingSeed.merchantIndustryCode() == null || trainingSeed.merchantIndustryCode().isBlank()
+                    || trainingSeed.merchantIndustryName() == null || trainingSeed.merchantIndustryName().isBlank()
+                    || trainingSeed.code() == null || trainingSeed.code().isBlank()
+                    || trainingSeed.categoryName() == null || trainingSeed.categoryName().isBlank()) {
+                skippedRows++;
+                skippedMissingRequired++;
+                continue;
+            }
+
+            String normalizedCode = trainingSeed.code().trim();
+            if (!normalizedCode.matches("^[A-Za-z0-9]{1,50}$")) {
+                skippedRows++;
+                skippedInvalidUsageCode++;
+                continue;
+            }
+
+            String normalizedIndustryCode = trainingSeed.merchantIndustryCode().trim().toUpperCase();
+            normalizedIndustryCode = normalizedIndustryCode.replaceAll("[^A-Za-z0-9]", "");
+            if (normalizedIndustryCode.isBlank()) {
+                skippedRows++;
+                skippedInvalidIndustryCode++;
+                continue;
+            }
+
+            String normalizedIndustryName = trainingSeed.merchantIndustryName().trim();
+
+            CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, trainingSeed.categoryName().trim());
+            CategoryDTO category = categoryUpsert.category();
+            if (categoryUpsert.created()) {
+                createdCategories++;
+            }
+
+            RuleDTO rule = ruleRepo.findByCompanyIdAndIndustryCode(companyId, normalizedIndustryCode);
+            if (rule == null) {
+                rule = ruleRepo.createRule(
+                        RuleRequest.builder()
+                                .corpNo(companyId)
+                                .merchantIndustryCode(normalizedIndustryCode)
+                                .merchantIndustryName(normalizedIndustryName)
+                                .categoryCodes(List.of())
+                                .description("trained-from-data")
+                                .build()
+                );
+                createdRules++;
+            }
+
+            int inserted = ruleRepo.createRuleCategoryMappingIgnoreConflict(rule.getRuleId(), category.getCategoryId());
+            if (inserted > 0) {
+                createdMappings++;
+            }
+
+            categoryRepo.markCategoryAsUsed(category.getCategoryId());
+            trainedRows++;
+        }
+
+        log.info(
+                "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}",
+                companyId, totalRows, trainedRows, skippedRows, createdRules, createdCategories, createdMappings,
+                skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode
+        );
+
+        return DataTrainSummaryResponse.builder()
+                .totalRows(totalRows)
+                .trainedRows(trainedRows)
+                .skippedRows(skippedRows)
+                .createdRules(createdRules)
+                .createdCategories(createdCategories)
+                .createdMappings(createdMappings)
+                .build();
     }
 
     private CategoryUpsertResult findOrCreateCategory(String companyId, String code, String categoryName) {
@@ -476,6 +514,14 @@ public class RuleServiceImple implements RuleService {
     }
 
     private record CategoryUpsertResult(CategoryDTO category, boolean created) {
+    }
+
+    private record TrainingSeed(
+            String merchantIndustryCode,
+            String merchantIndustryName,
+            String code,
+            String categoryName
+    ) {
     }
 
 }

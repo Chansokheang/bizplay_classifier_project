@@ -3,6 +3,7 @@ package com.api.bizplay_classifier_api.service.ruleService;
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
+import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -18,4 +19,6 @@ public interface RuleService {
     List<RuleDTO> getAllRulesByCompanyId(String companyId);
 
     DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, String companyId, String sheetName);
+
+    DataTrainSummaryResponse trainRulesFromRequestData(TrainingDataTrainRequest trainingDataTrainRequest);
 }

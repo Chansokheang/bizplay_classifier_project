@@ -6,6 +6,8 @@ import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
 import com.api.bizplay_classifier_api.model.request.PromptEnhancementRequest;
+import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
+import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.repository.BotConfigRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
@@ -42,8 +44,7 @@ public class BotConfigServiceImple implements BotConfigService {
     private final FileStorageService fileStorageService;
     private final ObjectMapper objectMapper;
     private final AiFallbackService aiFallbackService;
-    // AI model has 8192 token limit, 130 rows = ~8000 tokens (safe limit)
-    private static final int MAX_SAMPLE_ROWS = 130;
+    private static final int MAX_SAMPLE_ROWS = 1000;
 
     @Override
     @Transactional
@@ -131,16 +132,15 @@ public class BotConfigServiceImple implements BotConfigService {
             effectiveSampleRows = Math.min(sampleRows, MAX_SAMPLE_ROWS);
         }
 
-        FileUploadHistoryDTO latestFile = fileUploadHistoryRepo.getLatestTrainingFileByCompanyId(companyId);
-        if (latestFile == null) {
+        List<Map<String, String>> trainingRows = collectTrainingRowsForPrompt(companyId, effectiveSampleRows);
+        if (trainingRows.isEmpty()) {
             throw new CustomNotFoundException("No uploaded training file found for company: " + companyId);
         }
 
         BotConfigRequest.Config baseConfig = resolveBaseConfig(companyId);
         AiProvider provider = request != null && request.getProvider() != null ? request.getProvider() : baseConfig.getProvider();
-        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(
-                latestFile,
-                effectiveSampleRows,
+        PromptBuildResult promptBuild = buildEnhancedPromptFromRows(
+                trainingRows,
                 BotConfigRequest.Config.builder()
                         .provider(provider)
                         .modelName(firstNonBlank(request == null ? null : request.getModelName(), baseConfig.getModelName()))
@@ -202,12 +202,12 @@ public class BotConfigServiceImple implements BotConfigService {
             effectiveSampleRows = Math.min(sampleRows, MAX_SAMPLE_ROWS);
         }
 
-        FileUploadHistoryDTO latestFile = fileUploadHistoryRepo.getLatestTrainingFileByCompanyId(companyId);
-        if (latestFile == null) {
+        List<Map<String, String>> trainingRows = collectTrainingRowsForPrompt(companyId, effectiveSampleRows);
+        if (trainingRows.isEmpty()) {
             throw new CustomNotFoundException("No uploaded training file found for company: " + companyId);
         }
 
-        PromptBuildResult promptBuild = buildEnhancedPromptFromFile(latestFile, effectiveSampleRows, resolveBaseConfig(companyId));
+        PromptBuildResult promptBuild = buildEnhancedPromptFromRows(trainingRows, resolveBaseConfig(companyId));
         return PromptEnhancementResponse.builder()
                 .prompt(promptBuild.prompt())
                 .source(promptBuild.source())
@@ -312,24 +312,53 @@ public class BotConfigServiceImple implements BotConfigService {
         return fallback;
     }
 
-    private PromptBuildResult buildEnhancedPromptFromFile(
-            FileUploadHistoryDTO latestFile,
-            Integer sampleRows,
-            BotConfigRequest.Config aiConfig
-    ) {
-        Resource resource = fileStorageService.loadAsResource(latestFile.getStoredFileName());
+    private List<Map<String, String>> collectTrainingRowsForPrompt(String companyId, Integer sampleRows) {
+        int targetRows = sampleRows == null ? MAX_SAMPLE_ROWS : Math.min(sampleRows, MAX_SAMPLE_ROWS);
+        List<FileUploadHistoryDTO> trainingFiles = fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(
+                companyId,
+                com.api.bizplay_classifier_api.model.enums.FileType.TRAINING
+        );
+        if (trainingFiles == null || trainingFiles.isEmpty()) {
+            return List.of();
+        }
+
+        List<FileUploadHistoryDTO> newestFirst = trainingFiles.stream()
+                .sorted(Comparator.comparing(FileUploadHistoryDTO::getCreatedDate).reversed())
+                .toList();
+
+        List<Map<String, String>> collectedRows = new ArrayList<>();
+        for (FileUploadHistoryDTO trainingFile : newestFirst) {
+            collectedRows.addAll(extractTrainingRowsFromFile(trainingFile, targetRows - collectedRows.size()));
+            if (collectedRows.size() >= targetRows) {
+                break;
+            }
+        }
+
+        return collectedRows;
+    }
+
+    private List<Map<String, String>> extractTrainingRowsFromFile(FileUploadHistoryDTO trainingFile, int remainingRows) {
+        if (remainingRows <= 0) {
+            return List.of();
+        }
+
+        String storedFileName = trainingFile.getStoredFileName();
+        if (storedFileName != null && storedFileName.toLowerCase().endsWith(".json")) {
+            return extractTrainingRowsFromJsonFile(trainingFile, remainingRows);
+        }
+
+        Resource resource = fileStorageService.loadAsResource(trainingFile.getStoredFileName());
         try (InputStream inputStream = resource.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
-
-            Sheet sheet = resolveSheet(workbook, latestFile.getSheetName());
+            Sheet sheet = resolveSheet(workbook, trainingFile.getSheetName());
             DataFormatter formatter = new DataFormatter();
             HeaderParseResult header = findHeaderMap(sheet, formatter);
             Map<String, Integer> headerMap = header.headerMap();
 
-            int maxRow = sheet.getLastRowNum();
             List<Map<String, String>> trainingRows = new ArrayList<>();
+            int maxRow = sheet.getLastRowNum();
             for (int rowIndex = header.headerRowIndex() + 1; rowIndex <= maxRow; rowIndex++) {
-                if (sampleRows != null && trainingRows.size() >= sampleRows) {
+                if (trainingRows.size() >= remainingRows) {
                     break;
                 }
                 Row row = sheet.getRow(rowIndex);
@@ -357,27 +386,73 @@ public class BotConfigServiceImple implements BotConfigService {
                 trainingRows.add(rowData);
             }
 
-            if (trainingRows.isEmpty()) {
-                throw new IllegalArgumentException("No valid training rows found in latest uploaded file.");
-            }
-
-            String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows, aiConfig);
-            if (aiGeneratedPrompt != null && !aiGeneratedPrompt.isBlank()) {
-                String normalized = ensurePromptHasDynamicPlaceholders(stripDynamicPlaceholders(aiGeneratedPrompt));
-                if (!looksLikeRowDumpPrompt(normalized)) {
-                    return new PromptBuildResult(normalized, "AI");
-                }
-            }
-
-            return new PromptBuildResult(buildConcisePromptFromPatterns(trainingRows), "FALLBACK");
+            return trainingRows;
         } catch (Exception e) {
             throw new IllegalArgumentException("Failed to enhance prompt from training file.", e);
         }
     }
 
+    private List<Map<String, String>> extractTrainingRowsFromJsonFile(FileUploadHistoryDTO latestFile, int remainingRows) {
+        Resource resource = fileStorageService.loadAsResource(latestFile.getStoredFileName());
+        try (InputStream inputStream = resource.getInputStream()) {
+            TrainingDataTrainRequest request = objectMapper.readValue(inputStream, TrainingDataTrainRequest.class);
+            List<Map<String, String>> trainingRows = new ArrayList<>();
+
+            if (request.getTrainingData() != null) {
+                for (TrainingDataRowRequest row : request.getTrainingData()) {
+                    if (trainingRows.size() >= remainingRows) {
+                        break;
+                    }
+                    if (row.getMerchantName() == null || row.getMerchantName().isBlank()
+                            || row.getCategoryCode() == null || row.getCategoryCode().isBlank()
+                            || row.getCategoryName() == null || row.getCategoryName().isBlank()) {
+                        continue;
+                    }
+
+                    Map<String, String> rowData = new LinkedHashMap<>();
+                    rowData.put("merchant_name", safeJsonCell(row.getMerchantName()));
+                    rowData.put("merchant_industry_code", safeJsonCell(row.getMerchantIndustryCode()));
+                    rowData.put("merchant_industry_name", safeJsonCell(row.getMerchantIndustryName()));
+                    rowData.put("supply_amount", row.getSupplyAmount() == null ? "" : String.valueOf(row.getSupplyAmount()));
+                    rowData.put("vat_amount", row.getVatAmount() == null ? "" : String.valueOf(row.getVatAmount()));
+                    rowData.put("usage_code", safeJsonCell(row.getCategoryCode()));
+                    rowData.put("usage_name", safeJsonCell(row.getCategoryName()));
+                    trainingRows.add(rowData);
+                }
+            }
+
+            return trainingRows;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to enhance prompt from JSON training data.", e);
+        }
+    }
+
+    private PromptBuildResult buildEnhancedPromptFromRows(
+            List<Map<String, String>> trainingRows,
+            BotConfigRequest.Config aiConfig
+    ) {
+        if (trainingRows == null || trainingRows.isEmpty()) {
+            throw new IllegalArgumentException("No valid training rows found in training history.");
+        }
+
+        String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows, aiConfig);
+        if (aiGeneratedPrompt != null && !aiGeneratedPrompt.isBlank()) {
+            String normalized = ensurePromptHasDynamicPlaceholders(stripDynamicPlaceholders(aiGeneratedPrompt));
+            if (!looksLikeRowDumpPrompt(normalized)) {
+                return new PromptBuildResult(normalized, "AI");
+            }
+        }
+
+        return new PromptBuildResult(buildConcisePromptFromPatterns(trainingRows), "FALLBACK");
+    }
+
     private String safeCell(Row row, Map<String, Integer> headerMap, DataFormatter formatter, String key) {
         String value = getCellValue(row, headerMap, formatter, key);
         return value == null ? "" : value;
+    }
+
+    private String safeJsonCell(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private Sheet resolveSheet(Workbook workbook, String sheetName) {
