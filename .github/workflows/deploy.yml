@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/bizplay-classifier-api
+  IMAGE_NAME: ghcr.io/chansokheang/bizplay-classifier-api
   REMOTE_APP_DIR: /home/sokheang/bizplay_classifier_api
 
 jobs:
