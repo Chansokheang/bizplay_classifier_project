@@ -69,7 +69,6 @@ jobs:
           port: ${{ secrets.SERVER_PORT }}
           source: "bizplay_classifier_api/compose.prod.yaml,bizplay_classifier_api/src/main/resources/schemaV2.sql"
           target: ${{ env.REMOTE_APP_DIR }}
-          strip_components: 2
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
@@ -85,11 +84,11 @@ jobs:
             if [ -f bizplay_classifier_api/compose.prod.yaml ]; then
               cp bizplay_classifier_api/compose.prod.yaml compose.prod.yaml
             fi
-            if [ -f main/resources/schemaV2.sql ]; then
-              cp main/resources/schemaV2.sql schemaV2.sql
-            fi
             if [ -f bizplay_classifier_api/src/main/resources/schemaV2.sql ]; then
               cp bizplay_classifier_api/src/main/resources/schemaV2.sql schemaV2.sql
+            fi
+            if [ -f main/resources/schemaV2.sql ]; then
+              cp main/resources/schemaV2.sql schemaV2.sql
             fi
             find . -maxdepth 4 -type f
             cat > .env <<EOF
