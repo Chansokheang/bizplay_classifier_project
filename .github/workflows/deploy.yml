@@ -69,6 +69,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT }}
           source: "bizplay_classifier_api/compose.prod.yaml,bizplay_classifier_api/src/main/resources/schemaV2.sql"
           target: ${{ env.REMOTE_APP_DIR }}
+          strip_components: 2
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
@@ -80,9 +81,8 @@ jobs:
           script: |
             set -e
             mkdir -p ${{ env.REMOTE_APP_DIR }}
-            cp /home/sokheang/bizplay_classifier_api/compose.prod.yaml ${{ env.REMOTE_APP_DIR }}/compose.prod.yaml || true
-            cp /home/sokheang/bizplay_classifier_api/src/main/resources/schemaV2.sql ${{ env.REMOTE_APP_DIR }}/schemaV2.sql || true
             cd ${{ env.REMOTE_APP_DIR }}
+            find . -maxdepth 3 -type f
             cat > .env <<EOF
             IMAGE_NAME=${{ env.IMAGE_NAME }}
             IMAGE_TAG=latest
@@ -122,6 +122,7 @@ jobs:
             SERVER_MAX_HTTP_REQUEST_HEADER_SIZE=${{ secrets.SERVER_MAX_HTTP_REQUEST_HEADER_SIZE }}
             EOF
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+            ls -la
             docker compose -f compose.prod.yaml pull app
             docker compose -f compose.prod.yaml up -d
             docker image prune -f
