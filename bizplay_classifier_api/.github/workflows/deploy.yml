@@ -1,0 +1,123 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/bizplay-classifier-api
+  REMOTE_APP_DIR: /home/sokheang/bizplay_classifier_api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build application
+        run: ./mvnw -q -DskipTests package
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Copy deployment files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: "compose.prod.yaml,src/main/resources/schemaV2.sql"
+          target: ${{ env.REMOTE_APP_DIR }}
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT }}
+          script: |
+            set -e
+            mkdir -p ${{ env.REMOTE_APP_DIR }}
+            cd ${{ env.REMOTE_APP_DIR }}
+            cat > .env <<EOF
+            IMAGE_NAME=${{ env.IMAGE_NAME }}
+            IMAGE_TAG=latest
+            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}
+            MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}
+            SPRING_DATASOURCE_URL=${{ secrets.SPRING_DATASOURCE_URL }}
+            SPRING_DATASOURCE_USERNAME=${{ secrets.SPRING_DATASOURCE_USERNAME }}
+            SPRING_DATASOURCE_PASSWORD=${{ secrets.SPRING_DATASOURCE_PASSWORD }}
+            APP_ENCRYPTION_BASE64_KEY=${{ secrets.APP_ENCRYPTION_BASE64_KEY }}
+            APP_JWT_BASE64_SECRET=${{ secrets.APP_JWT_BASE64_SECRET }}
+            APP_AUTH_MODE=${{ secrets.APP_AUTH_MODE }}
+            APP_AUTH_STATIC_TOKEN=${{ secrets.APP_AUTH_STATIC_TOKEN }}
+            SPRING_MAIL_HOST=${{ secrets.SPRING_MAIL_HOST }}
+            SPRING_MAIL_PORT=${{ secrets.SPRING_MAIL_PORT }}
+            SPRING_MAIL_USERNAME=${{ secrets.SPRING_MAIL_USERNAME }}
+            SPRING_MAIL_PASSWORD=${{ secrets.SPRING_MAIL_PASSWORD }}
+            APP_STORAGE_MINIO_ENDPOINT=${{ secrets.APP_STORAGE_MINIO_ENDPOINT }}
+            APP_STORAGE_MINIO_ACCESS_KEY=${{ secrets.APP_STORAGE_MINIO_ACCESS_KEY }}
+            APP_STORAGE_MINIO_SECRET_KEY=${{ secrets.APP_STORAGE_MINIO_SECRET_KEY }}
+            APP_STORAGE_MINIO_BUCKET=${{ secrets.APP_STORAGE_MINIO_BUCKET }}
+            APP_STORAGE_MINIO_REQUEST_FOLDER=${{ secrets.APP_STORAGE_MINIO_REQUEST_FOLDER }}
+            APP_STORAGE_MINIO_FAIL_FAST=${{ secrets.APP_STORAGE_MINIO_FAIL_FAST }}
+            APP_STORAGE_PUBLIC_BASE_PATH=${{ secrets.APP_STORAGE_PUBLIC_BASE_PATH }}
+            APP_AI_FALLBACK_ENABLED=${{ secrets.APP_AI_FALLBACK_ENABLED }}
+            APP_AI_FALLBACK_URL=${{ secrets.APP_AI_FALLBACK_URL }}
+            APP_AI_FALLBACK_API_KEY=${{ secrets.APP_AI_FALLBACK_API_KEY }}
+            APP_AI_FALLBACK_CONNECT_TIMEOUT_MS=${{ secrets.APP_AI_FALLBACK_CONNECT_TIMEOUT_MS }}
+            APP_AI_FALLBACK_READ_TIMEOUT_MS=${{ secrets.APP_AI_FALLBACK_READ_TIMEOUT_MS }}
+            APP_AI_FALLBACK_MAX_CONTEXT_CANDIDATES=${{ secrets.APP_AI_FALLBACK_MAX_CONTEXT_CANDIDATES }}
+            APP_AI_FALLBACK_OPENAI_URL=${{ secrets.APP_AI_FALLBACK_OPENAI_URL }}
+            APP_AI_FALLBACK_GEMINI_URL_TEMPLATE=${{ secrets.APP_AI_FALLBACK_GEMINI_URL_TEMPLATE }}
+            APP_AI_FALLBACK_CLAUDE_URL=${{ secrets.APP_AI_FALLBACK_CLAUDE_URL }}
+            SPRING_MVC_ASYNC_REQUEST_TIMEOUT=${{ secrets.SPRING_MVC_ASYNC_REQUEST_TIMEOUT }}
+            SERVER_MAX_HTTP_REQUEST_HEADER_SIZE=${{ secrets.SERVER_MAX_HTTP_REQUEST_HEADER_SIZE }}
+            EOF
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+            docker compose -f compose.prod.yaml pull app
+            docker compose -f compose.prod.yaml up -d
+            docker image prune -f

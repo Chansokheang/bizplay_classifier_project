@@ -19,8 +19,8 @@ import java.util.UUID;
 public interface CategoryRepo {
 
     @Select("""
-        INSERT INTO classifier_categories (corp_no, code, category)
-        VALUES (#{category.corpNo}, #{category.code}, #{category.category})
+        INSERT INTO classifier_categories (corp_no, code, category, is_used)
+        VALUES (#{category.corpNo}, #{category.code}, #{category.category}, COALESCE(#{category.isUsed}, FALSE))
         RETURNING *
     """)
     @Results(id = "categoryMap", value = {
@@ -95,6 +95,22 @@ public interface CategoryRepo {
         WHERE corp_no = #{corpNo}
     """)
     int existsCorpByCorpNo(@Param("corpNo") String corpNo);
+
+    @Update("""
+        UPDATE classifier_categories
+        SET code = #{newCode},
+            category = #{category},
+            is_used = #{isUsed}
+        WHERE corp_no = #{corpNo}
+          AND code = #{currentCode}
+    """)
+    Integer updateCategory(
+            @Param("corpNo") String corpNo,
+            @Param("currentCode") String currentCode,
+            @Param("newCode") String newCode,
+            @Param("category") String category,
+            @Param("isUsed") Boolean isUsed
+    );
 
     @Update("""
         UPDATE classifier_categories

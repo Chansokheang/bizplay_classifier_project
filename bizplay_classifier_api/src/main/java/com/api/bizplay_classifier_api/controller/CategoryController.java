@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.controller;
 
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
+import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
 import com.api.bizplay_classifier_api.service.categoryService.CategoryService;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,7 +24,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/categories")
@@ -40,6 +41,21 @@ public class CategoryController {
                         .message("Category processed successfully. Existing category is returned if duplicate.")
                         .code(HttpStatus.CREATED.value())
                         .status(HttpStatus.CREATED)
+                        .build()
+        );
+    }
+
+    @PutMapping("/update/{code}")
+    public ResponseEntity<ApiResponse<?>> updateCategory(
+            @PathVariable String code,
+            @Valid @RequestBody CategoryUpdateRequest categoryUpdateRequest
+    ) {
+        return ResponseEntity.ok(
+                ApiResponse.<CategoryDTO>builder()
+                        .payload(categoryService.updateCategory(code, categoryUpdateRequest))
+                        .message("Category was updated successfully.")
+                        .code(HttpStatus.OK.value())
+                        .status(HttpStatus.OK)
                         .build()
         );
     }

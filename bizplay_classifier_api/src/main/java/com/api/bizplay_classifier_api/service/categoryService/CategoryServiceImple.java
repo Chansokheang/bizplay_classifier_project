@@ -3,6 +3,7 @@ package com.api.bizplay_classifier_api.service.categoryService;
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
+import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
@@ -56,6 +57,40 @@ public class CategoryServiceImple implements CategoryService {
 //        }
 
         return categoryRepo.createCategory(categoryRequest);
+    }
+
+    @Override
+    public CategoryDTO updateCategory(String currentCode, CategoryUpdateRequest categoryUpdateRequest) {
+        String corpNo = categoryUpdateRequest.getCorpNo().trim();
+        String normalizedCurrentCode = currentCode.trim();
+        String normalizedCode = categoryUpdateRequest.getCode().trim();
+        String normalizedCategory = categoryUpdateRequest.getCategory().trim();
+        boolean normalizedIsUsed = Boolean.TRUE.equals(categoryUpdateRequest.getIsUsed());
+
+        ensureCompanyOwnership(corpNo);
+
+        CategoryDTO existingCategory = categoryRepo.findByCorpNoAndCode(corpNo, normalizedCurrentCode);
+        if (existingCategory == null) {
+            throw new CustomNotFoundException("Category was not found with code: " + normalizedCurrentCode);
+        }
+
+        CategoryDTO categoryWithSameCode = categoryRepo.findByCorpNoAndCode(corpNo, normalizedCode);
+        if (categoryWithSameCode != null && !categoryWithSameCode.getCategoryId().equals(existingCategory.getCategoryId())) {
+            throw new IllegalArgumentException("Category code " + normalizedCode + " already exists.");
+        }
+
+        Integer updatedCount = categoryRepo.updateCategory(
+                corpNo,
+                normalizedCurrentCode,
+                normalizedCode,
+                normalizedCategory,
+                normalizedIsUsed
+        );
+        if (updatedCount == null || updatedCount == 0) {
+            throw new CustomNotFoundException("Category was not found with code: " + normalizedCurrentCode);
+        }
+
+        return categoryRepo.findByCorpNoAndCode(corpNo, normalizedCode);
     }
 
     @Override
