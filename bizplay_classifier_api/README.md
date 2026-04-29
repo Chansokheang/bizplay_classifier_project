@@ -154,7 +154,8 @@ Request:
 {
   "corpNo": "1234567890",
   "code": "MEAL1",
-  "category": "Meal Expense"
+  "category": "Meal Expense",
+  "isUsed": false
 }
 ```
 
@@ -167,6 +168,38 @@ Response payload shape:
   "code": "MEAL1",
   "category": "Meal Expense",
   "isUsed": false
+}
+```
+
+#### PUT `/api/v1/categories/update/{code}`
+
+Update one category by its current `code`.
+
+Because category code uniqueness is scoped by corp, `corpNo` is required in the request body.
+
+Path parameter:
+- `code`: current category code
+
+Request:
+
+```json
+{
+  "corpNo": "1234567890",
+  "code": "MEAL2",
+  "category": "Updated Meal Expense",
+  "isUsed": true
+}
+```
+
+Response payload shape:
+
+```json
+{
+  "categoryId": "550e8400-e29b-41d4-a716-446655440002",
+  "corpNo": "1234567890",
+  "code": "MEAL2",
+  "category": "Updated Meal Expense",
+  "isUsed": true
 }
 ```
 
