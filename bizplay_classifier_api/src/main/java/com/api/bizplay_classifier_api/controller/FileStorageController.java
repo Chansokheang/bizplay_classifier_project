@@ -13,9 +13,11 @@ import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import lombok.AllArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,6 +33,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
 
 @RestController
@@ -92,9 +95,10 @@ public class FileStorageController {
     @GetMapping("/files/by-name/{storedFileName}")
     public ResponseEntity<Resource> downloadFile(@PathVariable String storedFileName) {
         Resource resource = fileStorageService.loadAsResource(storedFileName);
+        String downloadFileName = extractFileName(resource.getFilename());
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachmentDisposition(downloadFileName))
+                .contentType(resolveMediaType(downloadFileName))
                 .body(resource);
     }
 
@@ -106,10 +110,30 @@ public class FileStorageController {
         }
 
         Resource resource = fileStorageService.loadAsResource(fileRecord.getStoredFileName());
+        String downloadFileName = extractFileName(fileRecord.getOriginalFileName());
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileRecord.getOriginalFileName() + "\"")
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachmentDisposition(downloadFileName))
+                .contentType(resolveMediaType(downloadFileName))
                 .body(resource);
+    }
+
+    private MediaType resolveMediaType(String fileName) {
+        return MediaTypeFactory.getMediaType(fileName).orElse(MediaType.APPLICATION_OCTET_STREAM);
+    }
+
+    private String buildAttachmentDisposition(String fileName) {
+        return ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build()
+                .toString();
+    }
+
+    private String extractFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "download";
+        }
+        int lastSlash = Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\'));
+        return lastSlash >= 0 ? fileName.substring(lastSlash + 1) : fileName;
     }
 
     @GetMapping("/files/corp/{corpNo}")

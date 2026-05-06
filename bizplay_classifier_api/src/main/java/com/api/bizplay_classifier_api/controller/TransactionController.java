@@ -4,10 +4,12 @@ import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
+import com.api.bizplay_classifier_api.model.request.SingleTransactionTestRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
+import com.api.bizplay_classifier_api.model.response.SingleTransactionTestResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
@@ -43,12 +45,27 @@ public class TransactionController {
 
     @PostMapping("/test-single-transaction/create")
     public ResponseEntity<ApiResponse<?>> createSingleTransactionForTesting(
-            @Valid @RequestBody TransactionRequest transactionRequest
+            @RequestParam("corpNo") String corpNo,
+            @Valid @RequestBody SingleTransactionTestRequest request
     ) {
-        TransactionUploadSummaryResponse payload =
-                transactionService.createSingleTransactionForTesting(transactionRequest);
+        SingleTransactionTestResponse payload =
+                transactionService.createSingleTransactionForTesting(
+                        corpNo,
+                        TransactionRequest.builder()
+                                .companyId(corpNo)
+                                .approvalDate(request.getApprovalDate())
+                                .approvalTime(request.getApprovalTime())
+                                .merchantName(request.getMerchantName())
+                                .merchantIndustryCode(request.getMerchantIndustryCode())
+                                .merchantIndustryName(request.getMerchantIndustryName())
+                                .merchantBusinessRegistrationNumber(request.getMerchantBusinessRegistrationNumber())
+                                .supplyAmount(request.getSupplyAmount())
+                                .vatAmount(request.getVatAmount())
+                                .taxType(request.getTaxType())
+                                .build()
+                );
         return ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse.<TransactionUploadSummaryResponse>builder()
+                ApiResponse.<SingleTransactionTestResponse>builder()
                         .payload(payload)
                         .message("Single transaction was processed successfully.")
                         .code(HttpStatus.CREATED.value())

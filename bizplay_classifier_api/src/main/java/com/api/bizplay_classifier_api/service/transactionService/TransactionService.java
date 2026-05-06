@@ -5,6 +5,7 @@ import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
+import com.api.bizplay_classifier_api.model.response.SingleTransactionTestResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import org.springframework.web.multipart.MultipartFile;
@@ -14,7 +15,7 @@ import java.util.UUID;
 public interface TransactionService {
     TransactionResponse createTransaction(TransactionRequest transactionRequest);
 
-    TransactionUploadSummaryResponse createSingleTransactionForTesting(TransactionRequest transactionRequest);
+    SingleTransactionTestResponse createSingleTransactionForTesting(String corpNo, TransactionRequest transactionRequest);
 
     TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, String defaultCompanyId, String sheetName);
 

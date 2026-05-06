@@ -1,7 +1,5 @@
 package com.api.bizplay_classifier_api.model.request;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -15,12 +13,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
-public class TransactionRequest {
-    @JsonProperty("corpNo")
-    @JsonAlias("companyId")
-    @Schema(name = "corpNo", example = "1234567890")
-    private String companyId;
-
+public class SingleTransactionTestRequest {
     @NotBlank(message = "Approval date cannot be blank.")
     @Pattern(regexp = "^\\d{8}$", message = "Approval date must be in yyyyMMdd format.")
     @Schema(example = "20251125", defaultValue = "20251125")
@@ -68,19 +61,4 @@ public class TransactionRequest {
     @Builder.Default
     private String taxType = "일반";
 
-    @Size(max = 50, message = "Field name 1 cannot exceed 50 characters.")
-    @Schema(example = "A1001")
-    private String fieldName1;
-
-    @Size(max = 255, message = "PK cannot exceed 255 characters.")
-    @Schema(example = "TEST-PK-001")
-    private String pk;
-
-    @Size(max = 255, message = "User transaction id cannot exceed 255 characters.")
-    @Schema(example = "USER-TX-001")
-    private String userTxId;
-
-    @Size(max = 255, message = "Writer transaction id cannot exceed 255 characters.")
-    @Schema(example = "WRITER-TX-001")
-    private String writerTxId;
 }

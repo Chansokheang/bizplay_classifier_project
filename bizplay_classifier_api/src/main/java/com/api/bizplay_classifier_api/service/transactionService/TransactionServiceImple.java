@@ -13,6 +13,7 @@ import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
+import com.api.bizplay_classifier_api.model.response.SingleTransactionTestResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
@@ -163,24 +164,116 @@ public class TransactionServiceImple implements TransactionService {
 
     @Override
     @Transactional
-    public TransactionUploadSummaryResponse createSingleTransactionForTesting(TransactionRequest transactionRequest) {
+    public SingleTransactionTestResponse createSingleTransactionForTesting(String corpNo, TransactionRequest transactionRequest) {
         if (transactionRequest == null) {
             throw new IllegalArgumentException("Transaction request is required.");
         }
-        if (transactionRequest.getCompanyId() == null) {
-            throw new IllegalArgumentException("Company id is required.");
-        }
+        String companyId = normalizeSingleTransactionCorpNo(corpNo);
+        corpService.getCorpByCorpNo(companyId);
 
-        try {
-            byte[] workbookBytes = buildSingleTransactionWorkbook(transactionRequest);
-            return createTransactionsByExcel(
-                    workbookBytes,
-                    transactionRequest.getCompanyId(),
-                    "Transactions",
-                    "single_transaction_test.xlsx"
+        try (Workbook workbook = new XSSFWorkbook()) {
+            Sheet sheet = workbook.createSheet("Transactions");
+            Row headerRow = sheet.createRow(0);
+            List<String> headers = List.of(
+                    "company_id",
+                    "approval_date",
+                    "approval_time",
+                    "merchant_name",
+                    "merchant_industry_code",
+                    "merchant_industry_name",
+                    "merchant_business_registration_number",
+                    "supply_amount",
+                    "vat_amount",
+                    "tax_type",
+                    "field_name1",
+                    "pk",
+                    "user_tx_id",
+                    "writer_tx_id"
             );
+
+            for (int i = 0; i < headers.size(); i++) {
+                headerRow.createCell(i).setCellValue(headers.get(i));
+            }
+
+            Row dataRow = sheet.createRow(1);
+            writeCell(dataRow, 0, companyId);
+            writeCell(dataRow, 1, transactionRequest.getApprovalDate());
+            writeCell(dataRow, 2, transactionRequest.getApprovalTime());
+            writeCell(dataRow, 3, transactionRequest.getMerchantName());
+            writeCell(dataRow, 4, transactionRequest.getMerchantIndustryCode());
+            writeCell(dataRow, 5, transactionRequest.getMerchantIndustryName());
+            writeCell(dataRow, 6, transactionRequest.getMerchantBusinessRegistrationNumber());
+            writeCell(dataRow, 7, transactionRequest.getSupplyAmount());
+            writeCell(dataRow, 8, transactionRequest.getVatAmount());
+            writeCell(dataRow, 9, transactionRequest.getTaxType());
+            writeCell(dataRow, 10, transactionRequest.getFieldName1());
+            writeCell(dataRow, 11, transactionRequest.getPk());
+            writeCell(dataRow, 12, transactionRequest.getUserTxId());
+            writeCell(dataRow, 13, transactionRequest.getWriterTxId());
+
+            DataFormatter formatter = new DataFormatter();
+            Map<String, Integer> headerMap = parseHeaderMap(headerRow, formatter);
+
+            Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
+            Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
+            Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Set<String> usedRuleKeys = new HashSet<>();
+
+            UsageValue usageValue = resolveUsageValueByMerchantName(
+                    dataRow,
+                    headerMap,
+                    formatter,
+                    companyId,
+                    rulesCache,
+                    usedRuleKeys
+            );
+            boolean disambiguateMultiCode = hasMultiLabel(usageValue.usageCode());
+            boolean shouldCallAi = !usageValue.matchedByRule()
+                    || usageValue.usageCode() == null || usageValue.usageCode().isBlank()
+                    || usageValue.usageName() == null || usageValue.usageName().isBlank()
+                    || disambiguateMultiCode;
+            if (shouldCallAi) {
+                UsageValue aiUsageValue = resolveUsageValueByAi(
+                        dataRow,
+                        headerMap,
+                        formatter,
+                        companyId,
+                        rulesCache,
+                        botConfigCache,
+                        aiResultCache,
+                        usageValue,
+                        disambiguateMultiCode
+                );
+                if (aiUsageValue != null) {
+                    usageValue = aiUsageValue;
+                }
+            }
+
+            ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
+            applyUsageValueToSheet(dataRow, headerMap, usageValue);
+
+            FileStorageResponse enrichedFile = storeEnrichedWorkbook(workbook, "Transactions", "single_transaction_test.xlsx");
+            com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
+                    FileUploadHistoryRequest.builder()
+                            .companyId(companyId)
+                            .originalFileName("single_transaction_test.xlsx")
+                            .storedFileName(enrichedFile.getStoredFileName())
+                            .fileUrl(enrichedFile.getFileUrl())
+                            .sheetName("Transactions")
+                            .fileType(com.api.bizplay_classifier_api.model.enums.FileType.OUTPUT)
+                            .build()
+            );
+
+            return SingleTransactionTestResponse.builder()
+                    .fileId(fileRecord.getFileId())
+                    .corpNo(companyId)
+                    .categoryNo(usageValue.usageCode())
+                    .categoryName(usageValue.usageName())
+                    .method(usageValue.method())
+                    .reason(usageValue.description())
+                    .build();
         } catch (IOException e) {
-            throw new IllegalStateException("Unable to build single transaction workbook.", e);
+            throw new IllegalStateException("Unable to process single transaction test request.", e);
         }
     }
 
@@ -1327,6 +1420,13 @@ public class TransactionServiceImple implements TransactionService {
             workbook.write(outputStream);
             return outputStream.toByteArray();
         }
+    }
+
+    private String normalizeSingleTransactionCorpNo(String requestParamCorpNo) {
+        if (requestParamCorpNo == null || requestParamCorpNo.isBlank()) {
+            throw new IllegalArgumentException("corpNo is required.");
+        }
+        return normalizeCompanyBusinessNumber(requestParamCorpNo, 0);
     }
 
     private void writeCell(Row row, int columnIndex, String value) {

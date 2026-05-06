@@ -28,6 +28,14 @@ import java.util.regex.Pattern;
 @Slf4j
 public class AiFallbackServiceImple implements AiFallbackService {
     private static final Pattern CODE_PATTERN = Pattern.compile("(?i)\\b([A-Z0-9]{5})\\b");
+    private static final int MAX_AI_CONTEXTS = 40;
+    private static final String AI_RESPONSE_SCHEMA = """
+            {
+              "code": "A1004",
+              "category": "CATEGORY_NAME",
+              "reason": "short reason"
+            }
+            """;
     private static final String DEFAULT_PROMPT_TEMPLATE = """
             당신은 기업 회계 전문가입니다. 주어진 거래 내역을 분석하여 해당 회사의 계정과목 체계에 맞는 계정과목을 정확하게 분류하세요.
 
@@ -138,48 +146,38 @@ public class AiFallbackServiceImple implements AiFallbackService {
             return null;
         }
 
-        String systemPrompt = buildSystemPrompt(promptTemplate, allContexts);
-        String userPrompt = buildUserPrompt(rowData, allContexts);
+        List<Map<String, String>> aiContexts = selectRelevantContexts(rowData, allContexts);
+        String systemPrompt = buildSystemPrompt(promptTemplate, aiContexts);
+        String userPrompt = buildUserPrompt(rowData, aiContexts);
         try {
             String messageContent = executePrompt(systemPrompt, userPrompt, resolvedConfig);
             if (messageContent == null || messageContent.isBlank()) {
-                return null;
+                log.warn("AI fallback returned empty content on first attempt. provider={}, model={}, contextCount={}/{}",
+                        resolvedConfig.provider(), resolvedConfig.modelName(), aiContexts.size(), allContexts.size());
+                messageContent = executePrompt(systemPrompt, buildRetryUserPrompt(rowData, aiContexts), resolvedConfig);
             }
 
-            JsonNode json = parseJsonObject(messageContent);
-            if (json == null) {
-                return null;
+            ParseOutcome outcome = parseClassificationResult(messageContent, allContexts);
+            if (outcome.result() != null) {
+                return outcome.result();
             }
 
-            String code = asText(json, "code");
-            String category = asText(json, "category");
-            String reason = asText(json, "reason");
+            log.warn("AI fallback returned unusable content. reason={}, provider={}, model={}, content={}",
+                    outcome.failureReason(), resolvedConfig.provider(), resolvedConfig.modelName(), abbreviate(messageContent));
 
-            if (code == null && category == null) {
-                return null;
+            String repairedContent = executePrompt(
+                    systemPrompt,
+                    buildRepairUserPrompt(rowData, aiContexts, messageContent, outcome.failureReason()),
+                    resolvedConfig
+            );
+            ParseOutcome repairedOutcome = parseClassificationResult(repairedContent, allContexts);
+            if (repairedOutcome.result() != null) {
+                return repairedOutcome.result();
             }
 
-            List<String> codeValues = extractCodes(code);
-            if (codeValues.isEmpty()) {
-                codeValues = extractCodes(category);
-            }
-            List<String> categoryValues = splitMultiValue(category);
-            if (codeValues.isEmpty() && categoryValues.isEmpty()) {
-                return null;
-            }
-
-            List<Pair> pairs = resolvePairs(codeValues, categoryValues, allContexts);
-            if (pairs.isEmpty()) {
-                return null;
-            }
-
-            String normalizedCodes = joinDistinct(pairs.stream().map(Pair::code).toList());
-            String normalizedCategories = joinDistinct(pairs.stream().map(Pair::name).toList());
-            if (normalizedCodes == null || normalizedCategories == null) {
-                return null;
-            }
-
-            return new AiFallbackResult(normalizedCodes, normalizedCategories, reason);
+            log.warn("AI fallback repair attempt failed. reason={}, provider={}, model={}, content={}",
+                    repairedOutcome.failureReason(), resolvedConfig.provider(), resolvedConfig.modelName(), abbreviate(repairedContent));
+            return null;
         } catch (Exception e) {
             log.warn("AI fallback classification failed: {}", e.getMessage());
             return null;
@@ -197,7 +195,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
         }
 
         String trainingData = trainingRows.stream()
-                .map(row -> "- 가맹점명: %s | 가맹점업종코드: %s | 가맹점업종명: %s | 공급금액: %s | 부가세액: %s | 용도코드: %s | 용도명: %s"
+                .map(row -> "- ???ル봿???轅붽틓??????類?꼥?? %s | ???ル봿???轅붽틓?????????ㅼ굣?????썹땟???? %s | ???ル봿???轅붽틓?????????ㅼ굣???? %s | ?????雅?퍔瑗??믩궪????ㅻ깹?? %s | ????뉖????ル봿????꿔꺂????壤? %s | ??癲ル슢???????썹땟???? %s | ??癲ル슢???影琉대돗? %s"
                         .formatted(
                                 row.getOrDefault("merchant_name", ""),
                                 row.getOrDefault("merchant_industry_code", ""),
@@ -210,22 +208,22 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         String systemMessage = """
-                당신은 기업 회계 분류 AI 시스템의 프롬프트 생성 전문가입니다.
-                아래 학습 데이터를 분석하여, 거래 내역을 계정과목으로 자동 분류하는 시스템 프롬프트를 생성하세요.
+                ??????? ??????壤굿?怨밸뻸?????????怨쀫뮝力?遊븀빊?AI ??癲?嶺??癲ル슢???먮뙀??????밸븶?????袁ｋ쨨營?????袁⑸즴????????쇈궘?癲???????뽯쨦??
+                ?????밸븶??????? ?????????? ???怨쀫뮝力???癲ル슢???援? ?轅몄뫅??????????욱룑?????壤굿??????롪퍓肉??潁?????????????癲????怨쀫뮝力?遊븀빊???棺堉?댆洹ⓦ럹???癲?嶺???????밸븶?????袁ｋ쨨營??????袁⑸즴????癲ル슢?ｅ젆???
 
-                ## 요구사항
-                1. 학습 데이터의 패턴(가맹점명, 가맹점업종명, 공급금액, 부가세액 등)을 분석하여 분류 규칙과 힌트를 도출하세요.
-                2. 생성할 프롬프트는 AI가 거래 내역을 입력받아 용도코드와 용도명을 예측하는 데 사용됩니다.
-                3. 반드시 다음 두 플레이스홀더를 정확히 이 형식 그대로 포함하세요:
-                   - {{accounts_list}}: 이 위치에 회사 계정과목 목록이 삽입됩니다
-                   - {{examples}}: 이 위치에 규칙 기반 예시가 삽입됩니다
-                4. 한국어로 작성하세요.
-                5. 시스템 프롬프트 텍스트만 출력하고 다른 설명이나 마크다운 코드블록은 추가하지 마세요.
+                ## ????거??????
+                1. ????? ???????????????????????ル봿???轅붽틓??????類?꼥?? ???ル봿???轅붽틓?????????ㅼ굣???? ?????雅?퍔瑗??믩궪????ㅻ깹?? ????뉖????ル봿????꿔꺂????壤????????怨쀫뮝力???癲ル슢???援????怨쀫뮝力?遊븀빊?????????룰눋???????살퓢????????밸븶???癲ル슢?ｅ젆???
+                2. ???袁⑸즴?????????밸븶?????袁ｋ쨨營???AI???ル봿?? ?轅몄뫅??????????욱룑????????⑤챷竊??ш끽維뽳쭩??룸챶猶????癲ル슢???????썹땟????? ??癲ル슢???影琉대돗?????????????棺堉?댆洹ⓦ럹????????癲ル슢?????
+                3. ??ш끽維뽳쭩???щ쾪??????濚밸Ŧ援?????????????욱룏嶺????? ??꿔꺂?€??⑤슣瑗??????꿔꺂??틝???놁뗄?????얠뺏癲????????癲ル슢?ｅ젆???
+                   - {{accounts_list}}: ???????밸븶??????????壤굿??????롪퍓肉??潁????轅붽틓??熬곥끇釉띄춯誘좊???????????癲ル슢?????
+                   - {{examples}}: ???????밸븶????????????????泳?뿀???????ㅻ쿋????ル봿?? ???????癲ル슢?????
+                4. ???怨뚮뼺??곷㎨???嚥????????癲ル슢?ｅ젆???
+                5. ??癲?嶺???????밸븶?????袁ｋ쨨營??????筌뤾쑬已??꿔꺂????븍툖???????????????롪퍓肉???????遊붋???????몄쐾??????轅붽틓??????窺???濚밸Ŧ援? ????썹땟???????癰귙끆????レ죶?? ????살퓢????? ?轅붽틓??????명뒌??
                 """;
 
-        String userMessage = "## 학습 데이터 (%d건)\n".formatted(trainingRows.size())
+        String userMessage = "## ????? ?????????(%d??\n".formatted(trainingRows.size())
                 + trainingData
-                + "\n\n위 학습 데이터를 기반으로 시스템 프롬프트를 생성하세요.";
+                + "\n\n??????? ?????????? ???????泳?뿀???????????癲?嶺???????밸븶?????袁ｋ쨨營??????袁⑸즴????癲ル슢?ｅ젆???";
 
         try {
             log.info("AI generatePrompt calling: provider={}, url={}, model={}", resolvedConfig.provider(), resolvedConfig.url(), resolvedConfig.modelName());
@@ -287,7 +285,12 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 .body(byte[].class);
 
         String rawResponse = decodeResponseBody(rawResponseBytes);
-        return extractProviderMessageContent(rawResponse, config.provider());
+        String messageContent = extractProviderMessageContent(rawResponse, config.provider());
+        if ((messageContent == null || messageContent.isBlank()) && rawResponse != null && !rawResponse.isBlank()) {
+            log.warn("AI provider returned raw response without usable message content. provider={}, model={}, raw={}",
+                    config.provider(), config.modelName(), abbreviate(rawResponse));
+        }
+        return messageContent;
     }
 
     private void applyHeaders(org.springframework.http.HttpHeaders headers, ResolvedAiConfig config) {
@@ -306,14 +309,16 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private Map<String, Object> buildRequestBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {
         return switch (config.provider()) {
             case OPENAI -> buildOpenAiStyleBody(systemPrompt, userPrompt, config);
-            case EXAONE -> buildExaoneBody(systemPrompt, userPrompt);
+            case EXAONE -> buildExaoneBody(systemPrompt, userPrompt, config);
             case GEMINI -> buildGeminiBody(systemPrompt, userPrompt, config);
             case CLAUDE -> buildClaudeBody(systemPrompt, userPrompt, config);
         };
     }
 
-    private Map<String, Object> buildExaoneBody(String systemPrompt, String userPrompt) {
+    private Map<String, Object> buildExaoneBody(String systemPrompt, String userPrompt, ResolvedAiConfig config) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", config.modelName());
+        body.put("temperature", config.temperature());
         body.put("stream", false);
         body.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),
@@ -401,22 +406,74 @@ public class AiFallbackServiceImple implements AiFallbackService {
 
     private String buildUserPrompt(Map<String, String> rowData, List<Map<String, String>> contexts) {
         return """
-                아래 거래 내역을 분류하세요.
+                Classify the transaction below.
 
-                거래 내역(JSON):
+                Transaction row (JSON):
                 %s
 
-                규칙 컨텍스트(JSON):
+                Allowed account contexts (JSON):
                 %s
 
-                반드시 JSON만 반환하세요.
-                형식:
-                {"code":"XXXXX","category":"계정명","reason":"선택 이유"}
-                - 여러 계정이 필요하면: {"code":"XXXXX,YYYYY","category":"계정명1,계정명2","reason":"선택 이유"}
-                - code/category는 같은 순서로 매핑하세요.
-                - code는 반드시 제공된 회사 계정과목 목록의 코드만 사용하세요.
-                - category도 반드시 해당 코드에 대응되는 값만 사용하세요.
-                """.formatted(toJson(rowData), toJson(contexts));
+                Output structure:
+                %s
+
+                Rules:
+                - Return exactly one JSON object and nothing else.
+                - No markdown, no code block, no prose.
+                - code must use only codes from the provided contexts.
+                - category must match the selected code exactly from the provided contexts.
+                - If multiple results are required, join code values with commas and join category values with commas in the same order.
+                - reason must be short and concrete.
+                """.formatted(toJson(rowData), toJson(contexts), AI_RESPONSE_SCHEMA);
+    }
+
+    private String buildRetryUserPrompt(Map<String, String> rowData, List<Map<String, String>> contexts) {
+        return buildUserPrompt(rowData, contexts) + """
+
+
+                Previous response was empty or invalid.
+                Return exactly one JSON object with no extra text.
+                """;
+    }
+
+    private String buildRepairUserPrompt(
+            Map<String, String> rowData,
+            List<Map<String, String>> contexts,
+            String invalidContent,
+            String failureReason
+    ) {
+        return """
+                The previous AI response was invalid. Rewrite it.
+
+                Failure reason:
+                %s
+
+                Previous response:
+                %s
+
+                Transaction row (JSON):
+                %s
+
+                Allowed account contexts (JSON):
+                %s
+
+                Output structure:
+                %s
+
+                Rules:
+                - Return exactly one JSON object and nothing else.
+                - No markdown, no code block, no prose.
+                - code must use only codes from the provided contexts.
+                - category must match the selected code exactly from the provided contexts.
+                - If multiple results are required, join code values with commas and join category values with commas in the same order.
+                - reason must be short and concrete.
+                """.formatted(
+                failureReason == null ? "unknown" : failureReason,
+                invalidContent == null ? "" : invalidContent,
+                toJson(rowData),
+                toJson(contexts),
+                AI_RESPONSE_SCHEMA
+        );
     }
 
     private String buildAccountsList(List<Map<String, String>> contexts) {
@@ -434,6 +491,78 @@ public class AiFallbackServiceImple implements AiFallbackService {
         return String.join("\n", entries);
     }
 
+    private List<Map<String, String>> selectRelevantContexts(
+            Map<String, String> rowData,
+            List<Map<String, String>> allContexts
+    ) {
+        if (allContexts.size() <= MAX_AI_CONTEXTS) {
+            return allContexts;
+        }
+
+        String merchantIndustryCode = safe(firstNonBlank(
+                rowData.get("merchantIndustryCode"),
+                rowData.get("merchant_industry_code")
+        ));
+        String merchantIndustryName = safe(firstNonBlank(
+                rowData.get("merchantIndustryName"),
+                rowData.get("merchant_industry_name")
+        ));
+        String merchantName = safe(firstNonBlank(
+                rowData.get("merchantName"),
+                rowData.get("merchant_name")
+        ));
+        String description = safe(firstNonBlank(
+                rowData.get("description"),
+                rowData.get("merchantDescription")
+        ));
+
+        List<Map<String, String>> prioritized = allContexts.stream()
+                .sorted((left, right) -> Integer.compare(
+                        scoreContext(right, merchantIndustryCode, merchantIndustryName, merchantName, description),
+                        scoreContext(left, merchantIndustryCode, merchantIndustryName, merchantName, description)
+                ))
+                .limit(MAX_AI_CONTEXTS)
+                .toList();
+
+        log.info("AI fallback reduced contexts from {} to {} for merchantName={}, merchantIndustryCode={}, merchantIndustryName={}",
+                allContexts.size(), prioritized.size(), merchantName, merchantIndustryCode, merchantIndustryName);
+        return prioritized;
+    }
+
+    private int scoreContext(
+            Map<String, String> context,
+            String merchantIndustryCode,
+            String merchantIndustryName,
+            String merchantName,
+            String description
+    ) {
+        int score = 0;
+        String contextCode = safe(context.get("merchantIndustryCode"));
+        String contextIndustryName = safe(context.get("merchantIndustryName"));
+        String contextDescription = safe(context.get("description"));
+        String contextCategory = safe(context.get("category"));
+
+        if (!merchantIndustryCode.isBlank() && merchantIndustryCode.equalsIgnoreCase(contextCode)) {
+            score += 100;
+        }
+        if (!merchantIndustryName.isBlank() && merchantIndustryName.equalsIgnoreCase(contextIndustryName)) {
+            score += 80;
+        }
+        if (!merchantIndustryName.isBlank() && contextIndustryName.toLowerCase().contains(merchantIndustryName.toLowerCase())) {
+            score += 35;
+        }
+        if (!merchantName.isBlank() && contextDescription.toLowerCase().contains(merchantName.toLowerCase())) {
+            score += 25;
+        }
+        if (!description.isBlank() && contextDescription.toLowerCase().contains(description.toLowerCase())) {
+            score += 15;
+        }
+        if (!merchantIndustryName.isBlank() && contextCategory.toLowerCase().contains(merchantIndustryName.toLowerCase())) {
+            score += 10;
+        }
+        return score;
+    }
+
     private String buildExamples(List<Map<String, String>> contexts) {
         List<String> lines = contexts.stream()
                 .map(c -> {
@@ -442,14 +571,14 @@ public class AiFallbackServiceImple implements AiFallbackService {
                     String description = c.getOrDefault("description", "");
                     String code = c.getOrDefault("code", "");
                     String category = c.getOrDefault("category", "");
-                    return "- 가맹점업종코드: %s | 가맹점업종명: %s | 설명: %s | 추천: %s %s"
+                    return "- merchantIndustryCode: %s | merchantIndustryName: %s | description: %s | recommendation: %s %s"
                             .formatted(merchantIndustryCode, merchantIndustryName, description, code, category);
                 })
                 .toList();
         if (lines.isEmpty()) {
-            return "## 예시\n- (no examples)";
+            return "## Examples\n- (no examples)";
         }
-        return "## 예시\n" + String.join("\n", lines);
+        return "## Examples\n" + String.join("\n", lines);
     }
 
     private String safe(String value) {
@@ -602,11 +731,20 @@ public class AiFallbackServiceImple implements AiFallbackService {
         List<Pair> resolved = new ArrayList<>();
 
         if (!codes.isEmpty() && !categories.isEmpty()) {
-            List<Pair> aiPairs = pairCodesAndNames(codes, categories);
-            for (Pair pair : aiPairs) {
-                Pair matched = matchCandidatePair(pair.code(), pair.name(), contexts);
-                if (matched != null) {
-                    resolved.add(matched);
+            if (codes.size() == categories.size()) {
+                List<Pair> aiPairs = pairCodesAndNames(codes, categories);
+                for (Pair pair : aiPairs) {
+                    Pair matched = matchCandidatePair(pair.code(), pair.name(), contexts);
+                    if (matched != null) {
+                        resolved.add(matched);
+                    }
+                }
+            } else {
+                for (String code : codes) {
+                    Pair matched = matchCandidatePair(code, null, contexts);
+                    if (matched != null) {
+                        resolved.add(matched);
+                    }
                 }
             }
         } else if (!codes.isEmpty()) {
@@ -705,7 +843,59 @@ public class AiFallbackServiceImple implements AiFallbackService {
         return String.join(",", merged);
     }
 
+    private ParseOutcome parseClassificationResult(String messageContent, List<Map<String, String>> allContexts) {
+        if (messageContent == null || messageContent.isBlank()) {
+            return new ParseOutcome(null, "empty_message_content");
+        }
+
+        JsonNode json = parseJsonObject(messageContent);
+        if (json == null) {
+            return new ParseOutcome(null, "json_parse_failed");
+        }
+
+        String code = asText(json, "code");
+        String category = asText(json, "category");
+        String reason = asText(json, "reason");
+
+        if (code == null && category == null) {
+            return new ParseOutcome(null, "missing_code_and_category");
+        }
+
+        List<String> codeValues = extractCodes(code);
+        if (codeValues.isEmpty()) {
+            codeValues = extractCodes(category);
+        }
+        List<String> categoryValues = splitMultiValue(category);
+        if (codeValues.isEmpty() && categoryValues.isEmpty()) {
+            return new ParseOutcome(null, "no_extractable_code_or_category_values");
+        }
+
+        List<Pair> pairs = resolvePairs(codeValues, categoryValues, allContexts);
+        if (pairs.isEmpty()) {
+            return new ParseOutcome(null, "no_context_pairs_matched");
+        }
+
+        String normalizedCodes = joinDistinct(pairs.stream().map(Pair::code).toList());
+        String normalizedCategories = joinDistinct(pairs.stream().map(Pair::name).toList());
+        if (normalizedCodes == null || normalizedCategories == null) {
+            return new ParseOutcome(null, "normalized_values_empty");
+        }
+
+        return new ParseOutcome(new AiFallbackResult(normalizedCodes, normalizedCategories, reason), null);
+    }
+
+    private String abbreviate(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.length() <= 500 ? trimmed : trimmed.substring(0, 500) + "...";
+    }
+
     private record Pair(String code, String name) {
+    }
+
+    private record ParseOutcome(AiFallbackResult result, String failureReason) {
     }
 
     private record ResolvedAiConfig(
