@@ -103,6 +103,7 @@ public class RuleServiceImple implements RuleService {
                 .corpNo(companyId)
                 .page(page)
                 .limit(limit)
+                .totalRows(totalRows)
                 .items(items)
                 .build();
     }

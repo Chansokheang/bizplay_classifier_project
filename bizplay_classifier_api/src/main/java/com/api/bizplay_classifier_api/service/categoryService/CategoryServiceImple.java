@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.service.categoryService;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
+import com.api.bizplay_classifier_api.model.request.CategoryBatchItemRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadPayloadResponse;
@@ -38,26 +39,34 @@ public class CategoryServiceImple implements CategoryService {
     @Override
     public CategoryDTO createCategory(CategoryRequest categoryRequest) {
         ensureCompanyOwnership(categoryRequest.getCorpNo());
-        categoryRequest.setCode(categoryRequest.getCode().trim());
-        categoryRequest.setCategory(categoryRequest.getCategory().trim());
+        return createCategoryInternal(categoryRequest);
+    }
 
-        CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(
-                categoryRequest.getCorpNo(),
-                categoryRequest.getCode()
-        );
-        if (existedByCode != null) {
-            throw new IllegalArgumentException("Category code " + categoryRequest.getCode() + " already exists.");
+    @Override
+    @Transactional
+    public List<CategoryDTO> createCategories(String corpNo, List<CategoryBatchItemRequest> categoryRequests) {
+        if (categoryRequests == null || categoryRequests.isEmpty()) {
+            throw new IllegalArgumentException("Category list can not be empty.");
         }
 
-//        CategoryDTO existedByCategory = categoryRepo.findBycorpNoAndCategory(
-//                categoryRequest.getcorpNo(),
-//                categoryRequest.getCategory()
-//        );
-//        if (existedByCategory != null) {
-//            return existedByCategory;
-//        }
+        String normalizedCorpNo = corpNo == null ? null : corpNo.trim();
+        ensureCompanyOwnership(normalizedCorpNo);
 
-        return categoryRepo.createCategory(categoryRequest);
+        List<CategoryDTO> createdCategories = new ArrayList<>();
+        for (CategoryBatchItemRequest categoryRequest : categoryRequests) {
+            createdCategories.add(
+                    createCategoryInternal(
+                            CategoryRequest.builder()
+                                    .corpNo(normalizedCorpNo)
+                                    .code(categoryRequest.getCode())
+                                    .category(categoryRequest.getCategory())
+                                    .isUsed(Boolean.TRUE.equals(categoryRequest.getIsUsed()))
+                                    .build()
+                    )
+            );
+        }
+
+        return createdCategories;
     }
 
     @Override
@@ -188,6 +197,23 @@ public class CategoryServiceImple implements CategoryService {
         if (exists == 0) {
             throw new CustomNotFoundException("Company was not found with Id: " + corpNo);
         }
+    }
+
+    private CategoryDTO createCategoryInternal(CategoryRequest categoryRequest) {
+        categoryRequest.setCorpNo(categoryRequest.getCorpNo().trim());
+        categoryRequest.setCode(categoryRequest.getCode().trim());
+        categoryRequest.setCategory(categoryRequest.getCategory().trim());
+        categoryRequest.setIsUsed(Boolean.TRUE.equals(categoryRequest.getIsUsed()));
+
+        CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(
+                categoryRequest.getCorpNo(),
+                categoryRequest.getCode()
+        );
+        if (existedByCode != null) {
+            throw new IllegalArgumentException("Category code " + categoryRequest.getCode() + " already exists.");
+        }
+
+        return categoryRepo.createCategory(categoryRequest);
     }
 
     private Sheet resolveSheet(Workbook workbook, String sheetName) {

@@ -1,6 +1,7 @@
 package com.api.bizplay_classifier_api.controller;
 
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
+import com.api.bizplay_classifier_api.model.request.CategoryBatchItemRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
@@ -39,6 +40,21 @@ public class CategoryController {
                 ApiResponse.<CategoryDTO>builder()
                         .payload(categoryService.createCategory(categoryRequest))
                         .message("Category processed successfully. Existing category is returned if duplicate.")
+                        .code(HttpStatus.CREATED.value())
+                        .status(HttpStatus.CREATED)
+                        .build()
+        );
+    }
+
+    @PostMapping("/create/batch")
+    public ResponseEntity<ApiResponse<?>> createCategories(
+            @RequestParam("corpNo") String corpNo,
+            @Valid @RequestBody List<@Valid CategoryBatchItemRequest> categoryRequests
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<List<CategoryDTO>>builder()
+                        .payload(categoryService.createCategories(corpNo, categoryRequests))
+                        .message("Categories were created successfully.")
                         .code(HttpStatus.CREATED.value())
                         .status(HttpStatus.CREATED)
                         .build()

@@ -16,5 +16,6 @@ public class RulePageResponse {
     private String corpNo;
     private int page;
     private int limit;
+    private int totalRows;
     private List<RuleDTO> items;
 }
