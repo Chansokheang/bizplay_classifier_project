@@ -83,7 +83,7 @@ public class RuleServiceImple implements RuleService {
     }
 
     @Override
-    public RulePageResponse getAllRulesByCompanyId(String companyId, int page, int limit) {
+    public RulePageResponse getAllRulesByCompanyId(String companyId, String usageStatus, int page, int limit) {
         if (page < 1) {
             throw new IllegalArgumentException("page must be >= 1.");
         }
@@ -91,13 +91,14 @@ public class RuleServiceImple implements RuleService {
             throw new IllegalArgumentException("limit must be between 1 and 1000.");
         }
 
+        String normalizedUsageStatus = normalizeUsageStatus(usageStatus);
         corpService.getCorpByCorpNo(companyId);
-        int totalRows = ruleRepo.countRulesByCompanyId(companyId);
+        int totalRows = ruleRepo.countRulesByCompanyId(companyId, normalizedUsageStatus);
         int totalPages = totalRows == 0 ? 0 : (int) Math.ceil((double) totalRows / limit);
         int offset = (page - 1) * limit;
         List<RuleDTO> items = offset >= totalRows
                 ? List.of()
-                : ruleRepo.getRulesByCompanyIdPaged(companyId, offset, limit);
+                : ruleRepo.getRulesByCompanyIdPaged(companyId, normalizedUsageStatus, offset, limit);
 
         return RulePageResponse.builder()
                 .corpNo(companyId)
@@ -106,6 +107,18 @@ public class RuleServiceImple implements RuleService {
                 .totalRows(totalRows)
                 .items(items)
                 .build();
+    }
+
+    private String normalizeUsageStatus(String usageStatus) {
+        if (usageStatus == null || usageStatus.isBlank()) {
+            return null;
+        }
+
+        String normalized = usageStatus.trim().toUpperCase();
+        if (!normalized.equals("Y") && !normalized.equals("N")) {
+            throw new IllegalArgumentException("usageStatus must be Y, N, or omitted.");
+        }
+        return normalized;
     }
 
     @Override

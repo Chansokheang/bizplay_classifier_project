@@ -64,12 +64,13 @@ public class RuleController {
     @GetMapping("/{corpNo}")
     public ResponseEntity<ApiResponse<?>> getAllRulesByCorpNo(
             @PathVariable String corpNo,
+            @RequestParam(value = "usageStatus", required = false) String usageStatus,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "limit", defaultValue = "100") int limit
     ) {
         return ResponseEntity.ok(
                 ApiResponse.<RulePageResponse>builder()
-                        .payload(ruleService.getAllRulesByCompanyId(corpNo, page, limit))
+                        .payload(ruleService.getAllRulesByCompanyId(corpNo, usageStatus, page, limit))
                         .message("Rules was retrieved successfully.")
                         .code(200)
                         .status(HttpStatus.OK)

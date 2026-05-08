@@ -68,23 +68,34 @@ public interface RuleRepo {
     @ResultMap("ruleMap")
     List<RuleDTO> getAllRulesByCorpNo(@Param("corpNo") String corpNo);
 
-    @Select("""
-        SELECT COUNT(*)
-        FROM classifier_rules
-        WHERE corp_no = #{corpNo}
-    """)
-    int countRulesByCorpNo(@Param("corpNo") String corpNo);
+    @Select({
+            "<script>",
+            "SELECT COUNT(*)",
+            "FROM classifier_rules",
+            "WHERE corp_no = #{corpNo}",
+            "<if test='usageStatus != null'>",
+            "  AND usage_status = #{usageStatus}",
+            "</if>",
+            "</script>"
+    })
+    int countRulesByCorpNo(@Param("corpNo") String corpNo, @Param("usageStatus") String usageStatus);
 
-    @Select("""
-        SELECT *
-        FROM classifier_rules
-        WHERE corp_no = #{corpNo}
-        ORDER BY created_date DESC, rule_id DESC
-        LIMIT #{limit} OFFSET #{offset}
-    """)
+    @Select({
+            "<script>",
+            "SELECT *",
+            "FROM classifier_rules",
+            "WHERE corp_no = #{corpNo}",
+            "<if test='usageStatus != null'>",
+            "  AND usage_status = #{usageStatus}",
+            "</if>",
+            "ORDER BY created_date DESC, rule_id DESC",
+            "LIMIT #{limit} OFFSET #{offset}",
+            "</script>"
+    })
     @ResultMap("ruleMap")
     List<RuleDTO> getRulesByCorpNoPaged(
             @Param("corpNo") String corpNo,
+            @Param("usageStatus") String usageStatus,
             @Param("offset") int offset,
             @Param("limit") int limit
     );
@@ -181,12 +192,12 @@ public interface RuleRepo {
         return getAllRulesByCorpNo(companyId);
     }
 
-    default int countRulesByCompanyId(String companyId) {
-        return countRulesByCorpNo(companyId);
+    default int countRulesByCompanyId(String companyId, String usageStatus) {
+        return countRulesByCorpNo(companyId, usageStatus);
     }
 
-    default List<RuleDTO> getRulesByCompanyIdPaged(String companyId, int offset, int limit) {
-        return getRulesByCorpNoPaged(companyId, offset, limit);
+    default List<RuleDTO> getRulesByCompanyIdPaged(String companyId, String usageStatus, int offset, int limit) {
+        return getRulesByCorpNoPaged(companyId, usageStatus, offset, limit);
     }
 
     default RuleDTO findByCompanyIdAndIndustryCode(String companyId, String merchantIndustryCode) {
