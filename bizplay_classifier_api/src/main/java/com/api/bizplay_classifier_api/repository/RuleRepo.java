@@ -60,10 +60,34 @@ public interface RuleRepo {
     RuleDTO createRule(@Param("rule") RuleRequest ruleRequest);
 
     @Select("""
-        SELECT * FROM classifier_rules WHERE corp_no = #{corpNo}
+        SELECT *
+        FROM classifier_rules
+        WHERE corp_no = #{corpNo}
+        ORDER BY created_date DESC, rule_id DESC
     """)
     @ResultMap("ruleMap")
     List<RuleDTO> getAllRulesByCorpNo(@Param("corpNo") String corpNo);
+
+    @Select("""
+        SELECT COUNT(*)
+        FROM classifier_rules
+        WHERE corp_no = #{corpNo}
+    """)
+    int countRulesByCorpNo(@Param("corpNo") String corpNo);
+
+    @Select("""
+        SELECT *
+        FROM classifier_rules
+        WHERE corp_no = #{corpNo}
+        ORDER BY created_date DESC, rule_id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    """)
+    @ResultMap("ruleMap")
+    List<RuleDTO> getRulesByCorpNoPaged(
+            @Param("corpNo") String corpNo,
+            @Param("offset") int offset,
+            @Param("limit") int limit
+    );
 
     @Select("""
         SELECT *
@@ -155,6 +179,14 @@ public interface RuleRepo {
 
     default List<RuleDTO> getAllRulesByCompanyId(String companyId) {
         return getAllRulesByCorpNo(companyId);
+    }
+
+    default int countRulesByCompanyId(String companyId) {
+        return countRulesByCorpNo(companyId);
+    }
+
+    default List<RuleDTO> getRulesByCompanyIdPaged(String companyId, int offset, int limit) {
+        return getRulesByCorpNoPaged(companyId, offset, limit);
     }
 
     default RuleDTO findByCompanyIdAndIndustryCode(String companyId, String merchantIndustryCode) {

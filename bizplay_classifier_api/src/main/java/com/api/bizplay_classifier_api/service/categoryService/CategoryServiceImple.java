@@ -4,7 +4,7 @@ import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
-import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
+import com.api.bizplay_classifier_api.model.response.CategoryUploadPayloadResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
 import lombok.AllArgsConstructor;
@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -106,7 +107,7 @@ public class CategoryServiceImple implements CategoryService {
 
     @Override
     @Transactional
-    public CategoryUploadSummaryResponse createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName) {
+    public List<CategoryUploadPayloadResponse> createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");
         }
@@ -122,17 +123,12 @@ public class CategoryServiceImple implements CategoryService {
             Map<String, Integer> headerMap = headerResult.headerMap();
             validateRequiredHeaders(headerMap);
 
-            int totalRows = 0;
-            int insertedRows = 0;
-            int skippedRows = 0;
-            int alreadyExistedRows = 0;
+            List<CategoryUploadPayloadResponse> uploadedCategories = new ArrayList<>();
 
             for (int rowIndex = headerResult.headerRowIndex() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
                 Row row = sheet.getRow(rowIndex);
-                totalRows++;
 
                 if (isRowEmpty(row, formatter)) {
-                    skippedRows++;
                     continue;
                 }
 
@@ -141,7 +137,6 @@ public class CategoryServiceImple implements CategoryService {
                 String isUsedRaw = getCellValue(row, headerMap, formatter, HEADER_IS_USED);
 
                 if (code == null || code.isBlank() || category == null || category.isBlank()) {
-                    skippedRows++;
                     continue;
                 }
 
@@ -153,6 +148,7 @@ public class CategoryServiceImple implements CategoryService {
                 }
 
                 String normalizedCategory = category.trim();
+                boolean isUsed = parseBooleanValue(isUsedRaw);
                 CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(corpNo, normalizedCode);
                 CategoryDTO existedByCategory = categoryRepo.findByCorpNoAndCategory(corpNo, normalizedCategory);
                 CategoryDTO target = existedByCode != null ? existedByCode : existedByCategory;
@@ -163,24 +159,25 @@ public class CategoryServiceImple implements CategoryService {
                                     .corpNo(corpNo)
                                     .code(normalizedCode)
                                     .category(normalizedCategory)
+                                    .isUsed(isUsed)
                                     .build()
                     );
-                    insertedRows++;
-                } else {
-                    alreadyExistedRows++;
                 }
 
-                if (parseBooleanValue(isUsedRaw)) {
+                if (isUsed && !Boolean.TRUE.equals(target.getIsUsed())) {
                     categoryRepo.markCategoryAsUsed(target.getCategoryId());
                 }
+
+                uploadedCategories.add(
+                        CategoryUploadPayloadResponse.builder()
+                                .category(normalizedCategory)
+                                .code(normalizedCode)
+                                .isUsed(isUsed)
+                                .build()
+                );
             }
 
-            return CategoryUploadSummaryResponse.builder()
-                    .totalRows(totalRows)
-                    .insertedRows(insertedRows)
-                    .skippedRows(skippedRows)
-                    .alreadyExistedRows(alreadyExistedRows)
-                    .build();
+            return uploadedCategories;
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to read Excel file.", e);
         }

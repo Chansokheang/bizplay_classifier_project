@@ -31,8 +31,10 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -290,7 +292,7 @@ public class BotConfigServiceImple implements BotConfigService {
                 .provider(resolvedProvider)
                 .modelName(resolvedModelName)
                 .temperature(source.getTemperature())
-                .apiKey(source.getApiKey())
+                .apiKey(firstNonBlank(source.getApiKey(), buildDefaultConfig().getApiKey()))
                 .systemPrompt(source.getSystemPrompt())
                 .build();
     }
@@ -313,7 +315,6 @@ public class BotConfigServiceImple implements BotConfigService {
     }
 
     private List<Map<String, String>> collectTrainingRowsForPrompt(String companyId, Integer sampleRows) {
-        int targetRows = sampleRows == null ? MAX_SAMPLE_ROWS : Math.min(sampleRows, MAX_SAMPLE_ROWS);
         List<FileUploadHistoryDTO> trainingFiles = fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(
                 companyId,
                 com.api.bizplay_classifier_api.model.enums.FileType.TRAINING
@@ -326,15 +327,79 @@ public class BotConfigServiceImple implements BotConfigService {
                 .sorted(Comparator.comparing(FileUploadHistoryDTO::getCreatedDate).reversed())
                 .toList();
 
-        List<Map<String, String>> collectedRows = new ArrayList<>();
+        List<Map<String, String>> allValidRows = new ArrayList<>();
         for (FileUploadHistoryDTO trainingFile : newestFirst) {
-            collectedRows.addAll(extractTrainingRowsFromFile(trainingFile, targetRows - collectedRows.size()));
-            if (collectedRows.size() >= targetRows) {
+            allValidRows.addAll(extractTrainingRowsFromFile(trainingFile, MAX_SAMPLE_ROWS - allValidRows.size()));
+            if (allValidRows.size() >= MAX_SAMPLE_ROWS) {
                 break;
             }
         }
 
-        return collectedRows;
+        return selectRowsEnsuringAccountCoverage(allValidRows, sampleRows);
+    }
+
+    private List<Map<String, String>> selectRowsEnsuringAccountCoverage(
+            List<Map<String, String>> allValidRows,
+            Integer sampleRows
+    ) {
+        if (allValidRows == null || allValidRows.isEmpty()) {
+            return List.of();
+        }
+
+        int requestedRows = sampleRows == null ? MAX_SAMPLE_ROWS : Math.min(sampleRows, MAX_SAMPLE_ROWS);
+        LinkedHashMap<String, Map<String, String>> firstRowPerAccount = new LinkedHashMap<>();
+        for (Map<String, String> row : allValidRows) {
+            firstRowPerAccount.putIfAbsent(accountKey(row), row);
+        }
+
+        int minimumCoverageRows = Math.min(firstRowPerAccount.size(), MAX_SAMPLE_ROWS);
+        int targetRows = Math.max(requestedRows, minimumCoverageRows);
+
+        List<Map<String, String>> selectedRows = new ArrayList<>();
+        Set<String> selectedFingerprints = new HashSet<>();
+
+        for (Map<String, String> row : firstRowPerAccount.values()) {
+            if (selectedRows.size() >= targetRows) {
+                break;
+            }
+            addRowIfAbsent(selectedRows, selectedFingerprints, row);
+        }
+
+        for (Map<String, String> row : allValidRows) {
+            if (selectedRows.size() >= targetRows) {
+                break;
+            }
+            addRowIfAbsent(selectedRows, selectedFingerprints, row);
+        }
+
+        return selectedRows;
+    }
+
+    private void addRowIfAbsent(
+            List<Map<String, String>> selectedRows,
+            Set<String> selectedFingerprints,
+            Map<String, String> row
+    ) {
+        String fingerprint = rowFingerprint(row);
+        if (selectedFingerprints.add(fingerprint)) {
+            selectedRows.add(row);
+        }
+    }
+
+    private String accountKey(Map<String, String> row) {
+        return safeJsonCell(row.get("usage_code")) + "|" + safeJsonCell(row.get("usage_name"));
+    }
+
+    private String rowFingerprint(Map<String, String> row) {
+        return String.join("|",
+                safeJsonCell(row.get("merchant_name")),
+                safeJsonCell(row.get("merchant_industry_code")),
+                safeJsonCell(row.get("merchant_industry_name")),
+                safeJsonCell(row.get("supply_amount")),
+                safeJsonCell(row.get("vat_amount")),
+                safeJsonCell(row.get("usage_code")),
+                safeJsonCell(row.get("usage_name"))
+        );
     }
 
     private List<Map<String, String>> extractTrainingRowsFromFile(FileUploadHistoryDTO trainingFile, int remainingRows) {
@@ -568,7 +633,7 @@ public class BotConfigServiceImple implements BotConfigService {
     private String ensurePromptHasDynamicPlaceholders(String basePrompt) {
         String prompt = basePrompt == null ? "" : basePrompt.strip();
         if (!prompt.contains("{{accounts_list}}")) {
-            prompt += "\n\n## 회사 계정과목 목록\n{{accounts_list}}";
+            prompt += "\n\n## Company Account List\n{{accounts_list}}";
         }
         if (!prompt.contains("{{examples}}")) {
             prompt += "\n\n{{examples}}";
@@ -583,7 +648,7 @@ public class BotConfigServiceImple implements BotConfigService {
         int rowLikeLines = 0;
         for (String line : prompt.split("\\R")) {
             String t = line.trim();
-            if (t.startsWith("- 가맹점명:") || t.startsWith("- merchant_name:")) {
+            if (t.startsWith("- 媛留뱀젏紐?") || t.startsWith("- merchant_name:")) {
                 rowLikeLines++;
             }
             if (rowLikeLines >= 5) {
@@ -617,8 +682,8 @@ public class BotConfigServiceImple implements BotConfigService {
                 .toList();
 
         StringBuilder sb = new StringBuilder();
-        sb.append("당신은 기업 회계 전문가입니다. 주어진 거래 내역을 분석하여 해당 회사의 계정과목 체계에 맞는 계정과목을 추천하세요.\n\n");
-        sb.append("## 분류 규칙\n\n");
+        sb.append("You are a corporate accounting assistant. Analyze transactions and recommend the most appropriate company account.\n\n");
+        sb.append("## Classification Rules\n\n");
 
         int sectionCount = 0;
         for (PatternBucket bucket : sorted) {
@@ -629,29 +694,29 @@ public class BotConfigServiceImple implements BotConfigService {
             String industries = topJoined(bucket.industryCounts, 4);
             String merchants = topJoined(bucket.merchantCounts, 4);
             if (!industries.isBlank()) {
-                sb.append("- 주요 업종: ").append(industries).append("\n");
+                sb.append("- Common industries: ").append(industries).append("\n");
             }
             if (!merchants.isBlank()) {
-                sb.append("- 주요 가맹점: ").append(merchants).append("\n");
+                sb.append("- Common merchants: ").append(merchants).append("\n");
             }
             if (bucket.amountCount > 0) {
                 long avg = bucket.amountSum / bucket.amountCount;
-                sb.append("- 금액 경향: 평균 ").append(avg).append("원");
+                sb.append("- Amount trend: avg ").append(avg);
                 if (bucket.amountMin != Long.MAX_VALUE && bucket.amountMax != Long.MIN_VALUE) {
-                    sb.append(" (범위 ").append(bucket.amountMin).append("~").append(bucket.amountMax).append("원)");
+                    sb.append(" (range ").append(bucket.amountMin).append("~").append(bucket.amountMax).append(")");
                 }
                 sb.append("\n");
             }
-            sb.append("- 학습 빈도: ").append(bucket.count).append("건\n\n");
+            sb.append("- Training frequency: ").append(bucket.count).append("\n\n");
             sectionCount++;
         }
 
-        sb.append("## 중요 판단 기준\n");
-        sb.append("1. 가맹점업종명과 가맹점명을 우선 기준으로 분류합니다.\n");
-        sb.append("2. 용도코드와 용도명 매핑은 학습 데이터에서 관측된 조합을 우선 적용합니다.\n");
-        sb.append("3. 금액은 보조 신호로만 사용하고, 업종/가맹점 신호와 충돌하면 업종/가맹점을 우선합니다.\n");
-        sb.append("4. 반드시 아래 회사 계정과목 목록에서만 선택합니다.\n\n");
-        sb.append("## 회사 계정과목 목록\n{{accounts_list}}\n\n{{examples}}");
+        sb.append("## Important Guidance\n");
+        sb.append("1. Prioritize merchant industry and merchant name when selecting an account.\n");
+        sb.append("2. Use learned usage_code and usage_name patterns from training data.\n");
+        sb.append("3. Use amount only as supporting evidence.\n");
+        sb.append("4. Choose only from the company account list.\n\n");
+        sb.append("## Company Account List\n{{accounts_list}}\n\n{{examples}}");
 
         return sb.toString();
     }
@@ -732,3 +797,5 @@ public class BotConfigServiceImple implements BotConfigService {
     private record PromptBuildResult(String prompt, String source) {
     }
 }
+
+

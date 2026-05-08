@@ -9,6 +9,7 @@ import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
+import com.api.bizplay_classifier_api.model.response.RulePageResponse;
 import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.RuleRepo;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
@@ -82,9 +83,28 @@ public class RuleServiceImple implements RuleService {
     }
 
     @Override
-    public List<RuleDTO> getAllRulesByCompanyId(String companyId) {
+    public RulePageResponse getAllRulesByCompanyId(String companyId, int page, int limit) {
+        if (page < 1) {
+            throw new IllegalArgumentException("page must be >= 1.");
+        }
+        if (limit < 1 || limit > 1000) {
+            throw new IllegalArgumentException("limit must be between 1 and 1000.");
+        }
+
         corpService.getCorpByCorpNo(companyId);
-        return ruleRepo.getAllRulesByCompanyId(companyId);
+        int totalRows = ruleRepo.countRulesByCompanyId(companyId);
+        int totalPages = totalRows == 0 ? 0 : (int) Math.ceil((double) totalRows / limit);
+        int offset = (page - 1) * limit;
+        List<RuleDTO> items = offset >= totalRows
+                ? List.of()
+                : ruleRepo.getRulesByCompanyIdPaged(companyId, offset, limit);
+
+        return RulePageResponse.builder()
+                .corpNo(companyId)
+                .page(page)
+                .limit(limit)
+                .items(items)
+                .build();
     }
 
     @Override

@@ -4,7 +4,7 @@ import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
 import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
-import com.api.bizplay_classifier_api.model.response.CategoryUploadSummaryResponse;
+import com.api.bizplay_classifier_api.model.response.CategoryUploadPayloadResponse;
 import com.api.bizplay_classifier_api.service.categoryService.CategoryService;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -78,9 +78,9 @@ public class CategoryController {
             @RequestParam("corpNo") String corpNo,
             @RequestParam(value = "sheetName", required = false) String sheetName
     ) {
-        CategoryUploadSummaryResponse payload = categoryService.createCategoriesByExcel(file, corpNo, sheetName);
+        List<CategoryUploadPayloadResponse> payload = categoryService.createCategoriesByExcel(file, corpNo, sheetName);
         return ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse.<CategoryUploadSummaryResponse>builder()
+                ApiResponse.<List<CategoryUploadPayloadResponse>>builder()
                         .payload(payload)
                         .message("Categories were created successfully from Excel.")
                         .code(HttpStatus.CREATED.value())

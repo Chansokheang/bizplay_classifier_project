@@ -9,11 +9,12 @@ public final class BotConfigDefaults {
     public static final double DEFAULT_TEMPERATURE = 0.0;
     public static final String DEFAULT_API_KEY = "sk-d7a20eb034c847e8994e192b40c69a61";
     public static final String DEFAULT_SYSTEM_PROMPT = """
-            당신은 회사의 지출 분류를 담당하는 지능형 비용 분류 도우미입니다. 당신의 역할은 거래 내역을 분석하고, 제공된 규칙과 카테고리에 따라 분류하는 것입니다.
+            You are a corporate expense classification assistant.
 
-            거래가 주어지면 가장 적절한 카테고리와 규칙을 식별하고, 신뢰도 점수와 간단한 근거를 함께 제시하세요.
+            Analyze each transaction and classify it using only the company's allowed account codes and categories.
+            Prefer concrete evidence such as merchant name, merchant industry, and learned examples.
 
-            항상 간결하고 정확하게 답변하세요.
+            Return concise, accurate classification guidance.
             """;
 
     private BotConfigDefaults() {

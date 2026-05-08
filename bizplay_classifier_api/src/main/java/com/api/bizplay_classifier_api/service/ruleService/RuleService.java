@@ -5,6 +5,7 @@ import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.DataTrainSummaryResponse;
+import com.api.bizplay_classifier_api.model.response.RulePageResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -16,7 +17,7 @@ public interface RuleService {
 
     void deleteRuleByRuleId(UUID ruleId);
 
-    List<RuleDTO> getAllRulesByCompanyId(String companyId);
+    RulePageResponse getAllRulesByCompanyId(String companyId, int page, int limit);
 
     DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, String companyId, String sheetName);
 

@@ -47,12 +47,8 @@ public class BotConfigController {
                     }
             ))
             @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
-            @RequestParam(value = "apiKey", defaultValue = "sk-d7a20eb034c847e8994e192b40c69a61") String apiKey,
             @Valid @RequestBody BotConfigRequest botConfigRequest
     ) {
-        if (botConfigRequest.getConfig().getApiKey() == null || botConfigRequest.getConfig().getApiKey().isBlank()) {
-            botConfigRequest.getConfig().setApiKey(apiKey);
-        }
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<BotConfigDTO>builder()
                         .payload(botConfigService.createBotConfig(botConfigRequest, provider, modelName))
@@ -89,12 +85,8 @@ public class BotConfigController {
                     }
             ))
             @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
-            @RequestParam(value = "apiKey", defaultValue = "sk-d7a20eb034c847e8994e192b40c69a61") String apiKey,
             @RequestBody @Valid BotConfigRequest.Config config
     ) {
-        if (config.getApiKey() == null || config.getApiKey().isBlank()) {
-            config.setApiKey(apiKey);
-        }
         BotConfigDTO payload = botConfigService.upsertBotConfig(corpNo, config, provider, modelName);
         return ResponseEntity.ok(
                 ApiResponse.<BotConfigDTO>builder()
