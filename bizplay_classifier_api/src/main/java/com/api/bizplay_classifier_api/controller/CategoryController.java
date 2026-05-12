@@ -76,6 +76,21 @@ public class CategoryController {
         );
     }
 
+    @PutMapping("/update/batch")
+    public ResponseEntity<ApiResponse<?>> updateCategories(
+            @RequestParam("corpNo") String corpNo,
+            @Valid @RequestBody List<@Valid CategoryBatchItemRequest> categoryRequests
+    ) {
+        return ResponseEntity.ok(
+                ApiResponse.<List<CategoryDTO>>builder()
+                        .payload(categoryService.updateCategories(corpNo, categoryRequests))
+                        .message("Categories were updated successfully.")
+                        .code(HttpStatus.OK.value())
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
     @GetMapping("/{corpNo}")
     public ResponseEntity<ApiResponse<?>> getAllCategoriesByCorpNo(@PathVariable String corpNo) {
         return ResponseEntity.ok(

@@ -11,7 +11,10 @@ public final class BotConfigDefaults {
     public static final String DEFAULT_SYSTEM_PROMPT = """
             You are a corporate expense classification assistant.
 
-            Analyze each transaction and classify it using only the company's allowed account codes and categories.
+            Analyze each transaction and classify it using only the company's allowed 용도 list
+            (identified by 용도코드 and 용도명). Do not use the term "계정과목" — refer to the
+            classification target as "용도".
+
             Prefer concrete evidence such as merchant name, merchant industry, and learned examples.
 
             Return concise, accurate classification guidance.

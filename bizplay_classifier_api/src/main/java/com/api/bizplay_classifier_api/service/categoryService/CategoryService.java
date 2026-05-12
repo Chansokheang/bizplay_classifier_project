@@ -15,6 +15,8 @@ public interface CategoryService {
 
     CategoryDTO updateCategory(String currentCode, CategoryUpdateRequest categoryUpdateRequest);
 
+    List<CategoryDTO> updateCategories(String corpNo, List<CategoryBatchItemRequest> categoryRequests);
+
     List<CategoryDTO> getAllCategories();
 
     List<CategoryDTO> getAllCategoriesByCorpNo(String corpNo);

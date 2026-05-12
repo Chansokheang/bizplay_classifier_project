@@ -39,17 +39,17 @@ public class AiFallbackServiceImple implements AiFallbackService {
         private static final String DEFAULT_PROMPT_TEMPLATE = """
             You are a corporate accounting assistant.
 
-            Classify each transaction into the most appropriate account using only the allowed company accounts.
+            Classify each transaction into the most appropriate 용도 using only the allowed company 용도 list.
 
             ## Priority Rules
 
             1. Use merchant name and merchant industry as the strongest evidence.
             2. Use learned examples and rule context as supporting evidence.
             3. Use amount and other numeric fields only as supporting evidence.
-            4. Select only from the allowed account list.
-            5. If no exact match exists, choose the closest valid account and explain the reason briefly.
+            4. Select only from the allowed 용도 list (용도코드 and 용도명).
+            5. If no exact match exists, choose the closest valid 용도 and explain the reason briefly.
 
-            ## Company Account List
+            ## 회사 용도 목록
             {{accounts_list}}
 
             {{examples}}
@@ -188,11 +188,22 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 You create a reusable system prompt for a corporate expense classification assistant.
 
                 Build a concise, practical prompt from the training rows.
-                The prompt should help classify future transactions into the company's account categories.
+                The prompt should help classify future transactions into the company's usage categories
+                (Korean term: 용도, identified by 용도코드 and 용도명).
+
+                Terminology requirements (CRITICAL):
+                - When writing in Korean, ALWAYS refer to the classification target as "용도" (with
+                  "용도코드" for the code and "용도명" for the name).
+                - NEVER use the term "계정과목" anywhere in the generated prompt. Do not use it as a
+                  section heading, description, example label, or rule wording.
+                - The accounts/usage list section heading, if written in Korean, must read
+                  "## 회사 용도 목록" (not "## 회사 계정과목 목록").
+                - When writing in English, use "usage code / usage name" instead of "account code /
+                  account category".
 
                 Requirements:
                 1. Summarize the strongest patterns from merchant name, merchant industry, and repeated examples.
-                2. Include clear selection guidance for account code and category decisions.
+                2. Include clear selection guidance for 용도코드 and 용도명 decisions.
                 3. Keep the prompt concise and operational, not verbose.
                 4. Preserve these placeholders exactly as written:
                    - {{accounts_list}}

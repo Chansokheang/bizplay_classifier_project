@@ -70,6 +70,44 @@ public class CategoryServiceImple implements CategoryService {
     }
 
     @Override
+    @Transactional
+    public List<CategoryDTO> updateCategories(String corpNo, List<CategoryBatchItemRequest> categoryRequests) {
+        if (categoryRequests == null || categoryRequests.isEmpty()) {
+            throw new IllegalArgumentException("Category list can not be empty.");
+        }
+
+        String normalizedCorpNo = corpNo == null ? null : corpNo.trim();
+        ensureCompanyOwnership(normalizedCorpNo);
+
+        List<CategoryDTO> updatedCategories = new ArrayList<>();
+        for (CategoryBatchItemRequest categoryRequest : categoryRequests) {
+            String normalizedCode = categoryRequest.getCode().trim();
+            String normalizedCategory = categoryRequest.getCategory().trim();
+            boolean normalizedIsUsed = Boolean.TRUE.equals(categoryRequest.getIsUsed());
+
+            CategoryDTO existingCategory = categoryRepo.findByCorpNoAndCode(normalizedCorpNo, normalizedCode);
+            if (existingCategory == null) {
+                throw new CustomNotFoundException("Category was not found with code: " + normalizedCode);
+            }
+
+            Integer updatedCount = categoryRepo.updateCategory(
+                    normalizedCorpNo,
+                    normalizedCode,
+                    normalizedCode,
+                    normalizedCategory,
+                    normalizedIsUsed
+            );
+            if (updatedCount == null || updatedCount == 0) {
+                throw new CustomNotFoundException("Category was not found with code: " + normalizedCode);
+            }
+
+            updatedCategories.add(categoryRepo.findByCorpNoAndCode(normalizedCorpNo, normalizedCode));
+        }
+
+        return updatedCategories;
+    }
+
+    @Override
     public CategoryDTO updateCategory(String currentCode, CategoryUpdateRequest categoryUpdateRequest) {
         String corpNo = categoryUpdateRequest.getCorpNo().trim();
         String normalizedCurrentCode = currentCode.trim();

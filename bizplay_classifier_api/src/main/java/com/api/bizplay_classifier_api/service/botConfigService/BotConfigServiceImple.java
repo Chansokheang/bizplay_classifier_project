@@ -633,7 +633,7 @@ public class BotConfigServiceImple implements BotConfigService {
     private String ensurePromptHasDynamicPlaceholders(String basePrompt) {
         String prompt = basePrompt == null ? "" : basePrompt.strip();
         if (!prompt.contains("{{accounts_list}}")) {
-            prompt += "\n\n## Company Account List\n{{accounts_list}}";
+            prompt += "\n\n## 회사 용도 목록\n{{accounts_list}}";
         }
         if (!prompt.contains("{{examples}}")) {
             prompt += "\n\n{{examples}}";
@@ -682,7 +682,7 @@ public class BotConfigServiceImple implements BotConfigService {
                 .toList();
 
         StringBuilder sb = new StringBuilder();
-        sb.append("You are a corporate accounting assistant. Analyze transactions and recommend the most appropriate company account.\n\n");
+        sb.append("You are a corporate expense classification assistant. Analyze transactions and recommend the most appropriate 용도 (용도코드 + 용도명) from the company list.\n\n");
         sb.append("## Classification Rules\n\n");
 
         int sectionCount = 0;
@@ -712,11 +712,11 @@ public class BotConfigServiceImple implements BotConfigService {
         }
 
         sb.append("## Important Guidance\n");
-        sb.append("1. Prioritize merchant industry and merchant name when selecting an account.\n");
-        sb.append("2. Use learned usage_code and usage_name patterns from training data.\n");
+        sb.append("1. Prioritize merchant industry and merchant name when selecting a 용도.\n");
+        sb.append("2. Use learned 용도코드 (usage_code) and 용도명 (usage_name) patterns from training data.\n");
         sb.append("3. Use amount only as supporting evidence.\n");
-        sb.append("4. Choose only from the company account list.\n\n");
-        sb.append("## Company Account List\n{{accounts_list}}\n\n{{examples}}");
+        sb.append("4. Choose only from the company 용도 list.\n\n");
+        sb.append("## 회사 용도 목록\n{{accounts_list}}\n\n{{examples}}");
 
         return sb.toString();
     }
