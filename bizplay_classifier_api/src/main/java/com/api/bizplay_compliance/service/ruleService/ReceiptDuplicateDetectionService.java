@@ -59,7 +59,11 @@ public class ReceiptDuplicateDetectionService {
         }
 
         try {
-            String messageContent = executePrompt(buildReceiptRequestBody(receiptNumber, receiptFile));
+            String messageContent = executePrompt(buildReceiptRequestBody(
+                    receiptNumber,
+                    receiptFile.getContentType(),
+                    receiptFile.getBytes()
+            ));
             if (messageContent == null || messageContent.isBlank()) {
                 throw new IllegalStateException("Receipt comparison AI returned empty content.");
             }
@@ -88,6 +92,44 @@ public class ReceiptDuplicateDetectionService {
         }
     }
 
+    public ReceiptComparisonResult compareReceiptNumber(String receiptNumber, ReceiptFileRegistryService.ReceiptFileContent receiptFile) {
+        if (receiptNumber == null || receiptNumber.isBlank()) {
+            throw new IllegalArgumentException("Receipt number is required.");
+        }
+        if (receiptFile == null || receiptFile.bytes() == null || receiptFile.bytes().length == 0) {
+            throw new IllegalArgumentException("Receipt file is required.");
+        }
+
+        String messageContent = executePrompt(buildReceiptRequestBody(
+                receiptNumber,
+                receiptFile.contentType(),
+                receiptFile.bytes()
+        ));
+        if (messageContent == null || messageContent.isBlank()) {
+            throw new IllegalStateException("Receipt comparison AI returned empty content.");
+        }
+
+        ReceiptAiResponse aiResponse = parseReceiptAiResponse(messageContent);
+        String expectedNormalized = normalizeAlphaNumeric(receiptNumber);
+        String detectedNormalized = normalizeAlphaNumeric(aiResponse.detectedReceiptNumber());
+        boolean numberDetected = !detectedNormalized.isBlank();
+        boolean matches = !expectedNormalized.isBlank()
+                && numberDetected
+                && expectedNormalized.equals(detectedNormalized);
+
+        return new ReceiptComparisonResult(
+                receiptNumber,
+                aiResponse.detectedReceiptNumber(),
+                aiResponse.detectedFieldLabel(),
+                expectedNormalized,
+                detectedNormalized,
+                numberDetected,
+                matches,
+                aiResponse.confidence(),
+                aiResponse.reason()
+        );
+    }
+
     public CardComparisonResult compareCardNumber(String cardNumber, MultipartFile receiptFile) {
         if (cardNumber == null || cardNumber.isBlank()) {
             throw new IllegalArgumentException("Card number is required.");
@@ -97,19 +139,24 @@ public class ReceiptDuplicateDetectionService {
         }
 
         try {
-            String messageContent = executePrompt(buildCardRequestBody(cardNumber, receiptFile));
+            String messageContent = executePrompt(buildCardRequestBody(
+                    cardNumber,
+                    receiptFile.getContentType(),
+                    receiptFile.getBytes()
+            ));
             if (messageContent == null || messageContent.isBlank()) {
                 throw new IllegalStateException("Card comparison AI returned empty content.");
             }
 
             CardAiResponse aiResponse = parseCardAiResponse(messageContent);
             String inputCardDigits = normalizeDigits(cardNumber);
-            String detectedPattern = normalizeCardPattern(aiResponse.detectedCardPattern());
+            String detectedPattern = resolveTrustedCardPattern(aiResponse);
             CardPatternAnalysis patternAnalysis = analyzeCardPattern(inputCardDigits, detectedPattern);
 
             return new CardComparisonResult(
                     cardNumber,
-                    aiResponse.detectedCardPattern(),
+                    detectedPattern,
+                    aiResponse.detectedCardLine(),
                     aiResponse.detectedFieldLabel(),
                     detectedPattern,
                     patternAnalysis.visibleDigitsFound(),
@@ -120,6 +167,41 @@ public class ReceiptDuplicateDetectionService {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to read receipt file.", exception);
         }
+    }
+
+    public CardComparisonResult compareCardNumber(String cardNumber, ReceiptFileRegistryService.ReceiptFileContent receiptFile) {
+        if (cardNumber == null || cardNumber.isBlank()) {
+            throw new IllegalArgumentException("Card number is required.");
+        }
+        if (receiptFile == null || receiptFile.bytes() == null || receiptFile.bytes().length == 0) {
+            throw new IllegalArgumentException("Receipt file is required.");
+        }
+
+        String messageContent = executePrompt(buildCardRequestBody(
+                cardNumber,
+                receiptFile.contentType(),
+                receiptFile.bytes()
+        ));
+        if (messageContent == null || messageContent.isBlank()) {
+            throw new IllegalStateException("Card comparison AI returned empty content.");
+        }
+
+        CardAiResponse aiResponse = parseCardAiResponse(messageContent);
+        String inputCardDigits = normalizeDigits(cardNumber);
+        String detectedPattern = resolveTrustedCardPattern(aiResponse);
+        CardPatternAnalysis patternAnalysis = analyzeCardPattern(inputCardDigits, detectedPattern);
+
+        return new CardComparisonResult(
+                cardNumber,
+                detectedPattern,
+                aiResponse.detectedCardLine(),
+                aiResponse.detectedFieldLabel(),
+                detectedPattern,
+                patternAnalysis.visibleDigitsFound(),
+                patternAnalysis.matches(),
+                aiResponse.confidence(),
+                aiResponse.reason()
+        );
     }
 
     private String executePrompt(Map<String, Object> requestBody) {
@@ -135,11 +217,9 @@ public class ReceiptDuplicateDetectionService {
         return extractMessageContent(decodeResponseBody(rawResponseBytes));
     }
 
-    private Map<String, Object> buildReceiptRequestBody(String receiptNumber, MultipartFile receiptFile) throws IOException {
+    private Map<String, Object> buildReceiptRequestBody(String receiptNumber, String contentType, byte[] fileBytes) {
         String prompt = """
-                Read the uploaded receipt image and extract the most appropriate receipt identifier number.
-
-                Compare the detected receipt number to the expected receipt number: %s
+                Read the uploaded receipt image and extract exactly one receipt identifier number.
 
                 Return exactly one JSON object and nothing else:
                 {
@@ -150,52 +230,57 @@ public class ReceiptDuplicateDetectionService {
                 }
 
                 Rules:
-                - Look for Korean receipt identifier labels such as "승인번호", "전표번호", "일련번호", "거래번호", "매출전표번호", "영수증번호", "승인", or similar labels.
-                - If a clearly labeled identifier exists, prefer it over card number, merchant number, terminal number, business number, phone number, date, or amount.
-                - If there is no explicit label, choose the number that most likely acts as the receipt or approval identifier for card settlement.
+                - Choose only one receipt number. Do not return multiple candidates.
+                - Use document meaning, not a fixed rule order, to decide which single number is the true receipt identifier.
+                - Consider labels such as "승인번호", "전표번호", "일련번호", "거래번호", "매출전표번호", "영수증번호", "승인", or similar labels, but choose the one that best functions as the actual receipt or transaction identifier on that specific receipt.
+                - Prefer the number that represents the transaction or receipt itself, not merchant number, business number, terminal number, phone number, card number, date, or amount.
+                - If several labeled numbers exist, think about which one is most likely the real receipt identifier in context and return only that one.
+                - Do not infer, correct, or rewrite digits. Return only digits that are actually visible in the receipt image.
+                - Do not use any external expected value. Base the answer only on the image content.
+                - If there is no explicit label, do not guess from unrelated printed numbers unless it is the only strong receipt identifier candidate.
                 - Set detectedFieldLabel to the label text you used. If there is no label, use "INFERRED". If nothing reliable exists, use an empty string.
                 - If multiple candidate numbers exist and none is clearly best, set detectedReceiptNumber to an empty string and confidence to LOW.
                 - If the number cannot be read confidently, set detectedReceiptNumber to an empty string.
                 - Do not include markdown or extra prose.
-                """.formatted(receiptNumber);
+                """;
 
-        return buildImageRequestBody(prompt, receiptFile);
+        return buildImageRequestBody(prompt, contentType, fileBytes);
     }
 
-    private Map<String, Object> buildCardRequestBody(String cardNumber, MultipartFile receiptFile) throws IOException {
+    private Map<String, Object> buildCardRequestBody(String cardNumber, String contentType, byte[] fileBytes) {
         String prompt = """
                 Read the uploaded receipt image and extract the card number pattern shown on the receipt.
-
-                Compare the detected card pattern to this expected card number: %s
 
                 Return exactly one JSON object and nothing else:
                 {
                   "detectedCardPattern": "string",
+                  "detectedCardLine": "string",
                   "detectedFieldLabel": "string",
                   "confidence": "HIGH|MEDIUM|LOW",
                   "reason": "short explanation"
                 }
 
                 Rules:
-                - Look for labels such as "카드번호", "카드 번호", or similar card-number labels.
-                - Receipts often mask middle digits using characters like "*", "x", or "#". Keep that masking pattern in detectedCardPattern.
-                - Prefer the card number shown on the receipt over approval number, receipt number, merchant number, phone number, business number, date, or amount.
-                - If no card number is visible, set detectedCardPattern to an empty string and confidence to LOW.
-                - If a masked card number is visible, return the masked value exactly as seen except you may normalize whitespace and separator characters.
-                - Do not guess digits hidden behind masks.
+                - Find the line labeled "카드번호" or the closest equivalent card-number label.
+                - Set detectedCardLine to that exact line.
+                - Set detectedCardPattern to only the value on that same line.
+                - Keep visible digits and mask characters exactly as shown, with only minor separator or spacing normalization allowed.
+                - If the line shows both a visible prefix and suffix, include both. Do not shorten to only the last 4 digits.
+                - Do not mix in digits from phone numbers, business numbers, approval numbers, serial numbers, voucher numbers, dates, or amounts.
+                - Do not infer, correct, or guess hidden digits.
+                - If no reliable card-number line is visible, return an empty detectedCardPattern and LOW confidence.
                 - Do not include markdown or extra prose.
-                """.formatted(cardNumber);
+                """;
 
-        return buildImageRequestBody(prompt, receiptFile);
+        return buildImageRequestBody(prompt, contentType, fileBytes);
     }
 
-    private Map<String, Object> buildImageRequestBody(String prompt, MultipartFile receiptFile) throws IOException {
-        String contentType = receiptFile.getContentType();
+    private Map<String, Object> buildImageRequestBody(String prompt, String contentType, byte[] fileBytes) {
         if (contentType == null || contentType.isBlank()) {
             contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
         }
 
-        String dataUrl = "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(receiptFile.getBytes());
+        String dataUrl = "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(fileBytes);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", modelName);
@@ -235,6 +320,7 @@ public class ReceiptDuplicateDetectionService {
 
         return new CardAiResponse(
                 readText(root, "detectedCardPattern"),
+                readText(root, "detectedCardLine"),
                 readText(root, "detectedFieldLabel"),
                 normalizeConfidence(readText(root, "confidence")),
                 readText(root, "reason")
@@ -335,6 +421,106 @@ public class ReceiptDuplicateDetectionService {
         return builder.toString();
     }
 
+    private String resolveTrustedCardPattern(CardAiResponse aiResponse) {
+        String llmPattern = normalizeCardPattern(aiResponse.detectedCardPattern());
+        if (isCardFieldLabel(aiResponse.detectedFieldLabel()) && looksLikeCardPattern(llmPattern)) {
+            return llmPattern;
+        }
+
+        String linePattern = extractCardPatternFromLine(aiResponse.detectedCardLine());
+        if (!linePattern.isBlank()) {
+            return linePattern;
+        }
+
+        return "";
+    }
+
+    private boolean isCardFieldLabel(String fieldLabel) {
+        if (fieldLabel == null || fieldLabel.isBlank()) {
+            return false;
+        }
+
+        String normalized = fieldLabel.replaceAll("\\s+", "");
+        return normalized.contains("카드번호") || normalized.contains("카드");
+    }
+
+    private String extractCardPatternFromLine(String detectedCardLine) {
+        if (detectedCardLine == null || detectedCardLine.isBlank()) {
+            return "";
+        }
+
+        StringBuilder currentToken = new StringBuilder();
+        String bestToken = "";
+
+        for (char character : detectedCardLine.toCharArray()) {
+            if (Character.isDigit(character)
+                    || character == '*'
+                    || character == 'x'
+                    || character == 'X'
+                    || character == '#'
+                    || character == '-'
+                    || Character.isWhitespace(character)) {
+                currentToken.append(character);
+                continue;
+            }
+
+            bestToken = chooseBetterCardToken(bestToken, currentToken.toString());
+            currentToken.setLength(0);
+        }
+
+        bestToken = chooseBetterCardToken(bestToken, currentToken.toString());
+        return normalizeCardPattern(bestToken);
+    }
+
+    private String chooseBetterCardToken(String currentBest, String candidate) {
+        String normalizedCandidate = normalizeCardPattern(candidate);
+        if (!looksLikeCardPattern(normalizedCandidate)) {
+            return currentBest;
+        }
+
+        String normalizedBest = normalizeCardPattern(currentBest);
+        if (!looksLikeCardPattern(normalizedBest) || normalizedCandidate.length() > normalizedBest.length()) {
+            return candidate;
+        }
+
+        return currentBest;
+    }
+
+    private boolean looksLikeCardPattern(String normalizedPattern) {
+        if (normalizedPattern.isBlank()) {
+            return false;
+        }
+
+        int digitCount = 0;
+        int maskCount = 0;
+        int visibleChunkCount = 0;
+        boolean inVisibleChunk = false;
+        for (char character : normalizedPattern.toCharArray()) {
+            if (Character.isDigit(character)) {
+                digitCount++;
+                if (!inVisibleChunk) {
+                    visibleChunkCount++;
+                    inVisibleChunk = true;
+                }
+            } else if (character == '*') {
+                maskCount++;
+                inVisibleChunk = false;
+            } else {
+                inVisibleChunk = false;
+            }
+        }
+
+        if (digitCount < 4 || (digitCount + maskCount) < 8) {
+            return false;
+        }
+
+        if (visibleChunkCount >= 2) {
+            return true;
+        }
+
+        return digitCount >= 6 && !normalizedPattern.startsWith("*");
+    }
+
     private CardPatternAnalysis analyzeCardPattern(String inputCardDigits, String detectedPattern) {
         if (inputCardDigits.isBlank() || detectedPattern.isBlank()) {
             return new CardPatternAnalysis(false, false);
@@ -396,6 +582,7 @@ public class ReceiptDuplicateDetectionService {
 
     private record CardAiResponse(
             String detectedCardPattern,
+            String detectedCardLine,
             String detectedFieldLabel,
             String confidence,
             String reason
@@ -424,6 +611,7 @@ public class ReceiptDuplicateDetectionService {
     public record CardComparisonResult(
             String expectedCardNumber,
             String detectedCardPattern,
+            String detectedCardLine,
             String detectedFieldLabel,
             String normalizedDetectedCardPattern,
             boolean visibleDigitsFound,

@@ -7,6 +7,7 @@ import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.SingleTransactionTestRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
+import com.api.bizplay_classifier_api.model.response.BatchTransactionResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.SingleTransactionTestResponse;
@@ -68,6 +69,37 @@ public class TransactionController {
                 ApiResponse.<SingleTransactionTestResponse>builder()
                         .payload(payload)
                         .message("Single transaction was processed successfully.")
+                        .code(HttpStatus.CREATED.value())
+                        .status(HttpStatus.CREATED)
+                        .build()
+        );
+    }
+
+    @PostMapping("/transaction/batch")
+    public ResponseEntity<ApiResponse<?>> createBatchTransactions(
+            @RequestParam("corpNo") String corpNo,
+            @Valid @RequestBody List<@Valid SingleTransactionTestRequest> requests
+    ) {
+        List<TransactionRequest> transactionRequests = requests.stream()
+                .map(request -> TransactionRequest.builder()
+                        .companyId(corpNo)
+                        .approvalDate(request.getApprovalDate())
+                        .approvalTime(request.getApprovalTime())
+                        .merchantName(request.getMerchantName())
+                        .merchantIndustryCode(request.getMerchantIndustryCode())
+                        .merchantIndustryName(request.getMerchantIndustryName())
+                        .merchantBusinessRegistrationNumber(request.getMerchantBusinessRegistrationNumber())
+                        .supplyAmount(request.getSupplyAmount())
+                        .vatAmount(request.getVatAmount())
+                        .taxType(request.getTaxType())
+                        .build())
+                .toList();
+
+        BatchTransactionResponse payload = transactionService.createBatchTransactions(corpNo, transactionRequests);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<BatchTransactionResponse>builder()
+                        .payload(payload)
+                        .message("Batch transactions were processed successfully.")
                         .code(HttpStatus.CREATED.value())
                         .status(HttpStatus.CREATED)
                         .build()

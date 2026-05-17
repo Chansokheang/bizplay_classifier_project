@@ -1,5 +1,7 @@
 package com.api.bizplay_compliance.service.ruleService;
 
+import com.api.bizplay_compliance.model.response.ComplianceRunAllResponse;
+import com.api.bizplay_compliance.model.response.RuleStatusResponse;
 import com.api.bizplay_compliance.service.corpService.BusinessStatusLookupService;
 import com.api.bizplay_compliance.service.corpService.HolidayInfoLookupService;
 import com.api.bizplay_compliance.service.corpService.LocationGeocodeService;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
@@ -84,18 +87,24 @@ public class RuleEngineService {
     private final LocationGeocodeService locationGeocodeService;
     private final HolidayInfoLookupService holidayInfoLookupService;
     private final ReceiptDuplicateDetectionService receiptDuplicateDetectionService;
+    private final ReceiptFileRegistryService receiptFileRegistryService;
+    private final ComplianceAssessmentService complianceAssessmentService;
     private final ConcurrentLinkedDeque<CachedAmountEntry> splitPaymentTestCache = new ConcurrentLinkedDeque<>();
 
     public RuleEngineService(
             BusinessStatusLookupService businessStatusLookupService,
             LocationGeocodeService locationGeocodeService,
             HolidayInfoLookupService holidayInfoLookupService,
-            ReceiptDuplicateDetectionService receiptDuplicateDetectionService
+            ReceiptDuplicateDetectionService receiptDuplicateDetectionService,
+            ReceiptFileRegistryService receiptFileRegistryService,
+            ComplianceAssessmentService complianceAssessmentService
     ) {
         this.businessStatusLookupService = businessStatusLookupService;
         this.locationGeocodeService = locationGeocodeService;
         this.holidayInfoLookupService = holidayInfoLookupService;
         this.receiptDuplicateDetectionService = receiptDuplicateDetectionService;
+        this.receiptFileRegistryService = receiptFileRegistryService;
+        this.complianceAssessmentService = complianceAssessmentService;
         ruleCheckMap.put("R01", this::checkSplitPayment);
         ruleCheckMap.put("R02", this::checkNighttime);
         ruleCheckMap.put("R03", this::checkLimitExceed);
@@ -162,58 +171,7 @@ public class RuleEngineService {
     public RuleResult checkDuplicateReceiptUpload(String receiptNumber, MultipartFile receiptFile) {
         ReceiptDuplicateDetectionService.ReceiptComparisonResult comparisonResult =
                 receiptDuplicateDetectionService.compareReceiptNumber(receiptNumber, receiptFile);
-
-        String detail;
-        if (!comparisonResult.numberDetected()) {
-            detail = "Could not detect a reliable receipt number from the uploaded receipt.";
-            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
-                detail += " " + comparisonResult.reason();
-            }
-            return new RuleResult(
-                    "R05",
-                    "Duplicate Receipt",
-                    0,
-                    detail
-            );
-        }
-
-        String detectedFieldText = comparisonResult.detectedFieldLabel() != null
-                && !comparisonResult.detectedFieldLabel().isBlank()
-                ? " Field: \"" + comparisonResult.detectedFieldLabel() + "\"."
-                : "";
-        String confidenceText = comparisonResult.confidence() != null
-                && !comparisonResult.confidence().isBlank()
-                ? " Confidence: " + comparisonResult.confidence() + "."
-                : "";
-
-        if (comparisonResult.matches()) {
-            detail = "Uploaded receipt matches receipt number \""
-                    + comparisonResult.expectedReceiptNumber()
-                    + "\". Detected receipt number: \""
-                    + comparisonResult.detectedReceiptNumber()
-                    + "\"."
-                    + detectedFieldText
-                    + confidenceText;
-        } else {
-            detail = "Uploaded receipt does not match the provided receipt number. Expected: \""
-                    + comparisonResult.expectedReceiptNumber()
-                    + "\", detected: \""
-                    + comparisonResult.detectedReceiptNumber()
-                    + "\"."
-                    + detectedFieldText
-                    + confidenceText;
-        }
-
-        if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
-            detail += " " + comparisonResult.reason();
-        }
-
-        return new RuleResult(
-                "R05",
-                "Duplicate Receipt",
-                0,
-                detail
-        );
+        return toReceiptDuplicateResult(comparisonResult);
     }
 
     public RuleResult checkCardMismatch(String cardNumber, String receiptCardNumber) {
@@ -244,7 +202,7 @@ public class RuleEngineService {
         }
 
         String fieldText = comparisonResult.detectedFieldLabel() != null && !comparisonResult.detectedFieldLabel().isBlank()
-                ? " Field: \"" + comparisonResult.detectedFieldLabel() + "\"."
+                ? " Field Label: \"" + comparisonResult.detectedFieldLabel() + "\"."
                 : "";
         String confidenceText = comparisonResult.confidence() != null && !comparisonResult.confidence().isBlank()
                 ? " Confidence: " + comparisonResult.confidence() + "."
@@ -277,44 +235,12 @@ public class RuleEngineService {
             throw new IllegalArgumentException("Amount is required.");
         }
 
-        LocalDateTime currentTime = LocalDateTime.now();
-        pruneSplitPaymentTestCache(currentTime);
-
-        List<Integer> nearbyAmounts = splitPaymentTestCache.stream()
-                .map(CachedAmountEntry::amount)
-                .toList();
-
-        splitPaymentTestCache.addLast(new CachedAmountEntry(amount, currentTime));
-
-        if (nearbyAmounts.isEmpty()) {
-            return null;
-        }
-
-        int splitAmountRangeStart = 49_000;
-        int splitAmountRangeEnd = 49_999;
-        boolean isCurrentTransactionInSplitAmountRange = amount >= splitAmountRangeStart && amount <= splitAmountRangeEnd;
-
-        long suspiciousTransactionCountInWindow = nearbyAmounts.stream()
-                .filter(cachedAmount -> cachedAmount >= splitAmountRangeStart && cachedAmount <= splitAmountRangeEnd)
-                .count();
-
-        if (isCurrentTransactionInSplitAmountRange || suspiciousTransactionCountInWindow > 0) {
+        if (amount > 50_000) {
             return new RuleResult(
                     "R01",
                     "Split Payment Detection",
                     0,
-                    "Cached split-payment pattern detected within 30 minutes for " + (nearbyAmounts.size() + 1)
-                            + " transactions. Amount is near the 50,000 threshold."
-            );
-        }
-
-        if (nearbyAmounts.size() >= 2) {
-            return new RuleResult(
-                    "R01",
-                    "Split Payment Detection",
-                    0,
-                    "Cached split-payment pattern detected within 30 minutes for " + (nearbyAmounts.size() + 1)
-                            + " transactions."
+                    "Amount exceeds the dummy R01 threshold of 50,000. Amount: " + formatAmount(amount) + "."
             );
         }
 
@@ -397,49 +323,184 @@ public class RuleEngineService {
         return runPipeline(request, null);
     }
 
-    public List<RuleResult> runPipeline(PipelineRequest request, MultipartFile receiptFile) {
+    public List<RuleResult> runPipeline(PipelineRequest request, UUID fileId) {
+        return evaluatePipeline(request, fileId).stream()
+                .filter(ruleStatus -> "Failed".equals(ruleStatus.status()))
+                .map(ruleStatus -> new RuleResult(
+                        ruleStatus.ruleId(),
+                        ruleStatus.ruleName(),
+                        0,
+                        ruleStatus.info()
+                ))
+                .toList();
+    }
+
+    public ComplianceRunAllResponse runAllWithAssessment(PipelineRequest request, UUID fileId) {
+        List<RuleStatusResponse> rules = evaluatePipeline(request, fileId);
+        ComplianceAssessmentService.ComplianceAssessment assessment = complianceAssessmentService.assess(rules);
+        return new ComplianceRunAllResponse(
+                assessment.complianceStatus(),
+                assessment.confidenceLevel(),
+                rules
+        );
+    }
+
+    public List<RuleStatusResponse> evaluatePipeline(PipelineRequest request, UUID fileId) {
         Transaction transaction = resolveTransaction(request);
         RuleDataAccess dataAccess = emptyRuleDataAccess();
-        List<RuleResult> detections = new ArrayList<>();
+        List<RuleStatusResponse> ruleStatuses = new ArrayList<>();
+        ReceiptFileRegistryService.ReceiptFileContent receiptFile = loadReceiptFile(fileId);
 
-        addIfPresent(detections, testSplitPaymentAmount(request.amount()));
-        addIfPresent(detections, runRule("R02", transaction, buildRule("R02", null, null, Map.of()), dataAccess));
-        addIfPresent(detections, runRule("R03", transaction, buildRule("R03", null, null, Map.of(
+        addRuleStatus(ruleStatuses, buildRule("R01", null, null, Map.of()), testSplitPaymentAmount(request.amount()));
+        addRuleStatus(ruleStatuses, buildRule("R02", null, null, Map.of()), runRule("R02", transaction, buildRule("R02", null, null, Map.of()), dataAccess));
+        addRuleStatus(ruleStatuses, buildRule("R03", null, null, Map.of(
+                "limits", R03_DUMMY_LIMITS,
+                "default", R03_DUMMY_LIMITS.get("OTHER"),
+                "isDummyRule", true
+        )), runRule("R03", transaction, buildRule("R03", null, null, Map.of(
                 "limits", R03_DUMMY_LIMITS,
                 "default", R03_DUMMY_LIMITS.get("OTHER"),
                 "isDummyRule", true
         )), dataAccess));
-        addIfPresent(detections, runRule("R04", transaction, buildRule("R04", null, null, Map.of(
+        addRuleStatus(ruleStatuses, buildRule("R04", null, null, Map.of(
+                "blocked", R04_DUMMY_BLOCKED_MCC_CODES,
+                "isDummyRule", true
+        )), runRule("R04", transaction, buildRule("R04", null, null, Map.of(
                 "blocked", R04_DUMMY_BLOCKED_MCC_CODES,
                 "isDummyRule", true
         )), dataAccess));
 
-        if (receiptFile != null && !receiptFile.isEmpty() && request.receiptNumber() != null && !request.receiptNumber().isBlank()) {
-            addIfPresent(detections, checkDuplicateReceiptUpload(request.receiptNumber(), receiptFile));
+        if (receiptFile != null && request.receiptNumber() != null && !request.receiptNumber().isBlank()) {
+            addRuleStatus(ruleStatuses, buildRule("R05", null, null, Map.of()), checkDuplicateReceiptByFileId(request.receiptNumber(), fileId));
+        } else {
+            addRuleStatus(ruleStatuses, buildRule("R05", null, null, Map.of()), null);
         }
 
-        if (receiptFile != null && !receiptFile.isEmpty() && request.cardNumber() != null && !request.cardNumber().isBlank()) {
-            addIfPresent(detections, checkCardMismatchUpload(request.cardNumber(), receiptFile));
+        if (receiptFile != null && request.cardNumber() != null && !request.cardNumber().isBlank()) {
+            ruleStatuses.add(evaluateCardMismatchRuleStatus(request.cardNumber(), fileId));
         } else {
-            addIfPresent(detections, runRule("R06", transaction, buildRule("R06", null, null, Map.of(
+            addRuleStatus(ruleStatuses, buildRule("R06", null, null, Map.of(
+                    "cardNumber", request.cardNumber(),
+                    "receiptCardNumber", request.receiptCardNumber()
+            )), runRule("R06", transaction, buildRule("R06", null, null, Map.of(
                     "cardNumber", request.cardNumber(),
                     "receiptCardNumber", request.receiptCardNumber()
             )), dataAccess));
         }
 
-        addIfPresent(detections, runRule("R07", transaction, buildRule("R07", null, null, Map.of(
+        addRuleStatus(ruleStatuses, buildRule("R07", null, null, Map.of(
+                "businessNumber", request.businessNumber()
+        )), runRule("R07", transaction, buildRule("R07", null, null, Map.of(
                 "businessNumber", request.businessNumber()
         )), dataAccess));
-        addIfPresent(detections, runRule("R08", transaction, buildRule("R08", null, null, Map.of(
+        addRuleStatus(ruleStatuses, buildRule("R08", null, null, Map.of(
+                "address", request.address()
+        )), runRule("R08", transaction, buildRule("R08", null, null, Map.of(
                 "address", request.address()
         )), dataAccess));
-        addIfPresent(detections, runRule("R09", transaction, buildRule("R09", null, null, Map.of()), dataAccess));
-        addIfPresent(detections, runRule("R10", transaction, buildRule("R10", null, null, Map.of(
+        addRuleStatus(ruleStatuses, buildRule("R09", null, null, Map.of()), runRule("R09", transaction, buildRule("R09", null, null, Map.of()), dataAccess));
+        addRuleStatus(ruleStatuses, buildRule("R10", null, null, Map.of(
+                "requisitionId", request.requisitionId(),
+                "transactionReference", request.transactionReference()
+        )), runRule("R10", transaction, buildRule("R10", null, null, Map.of(
                 "requisitionId", request.requisitionId(),
                 "transactionReference", request.transactionReference()
         )), dataAccess));
 
-        return detections;
+        return ruleStatuses;
+    }
+
+    public RuleResult checkDuplicateReceiptByFileId(String receiptNumber, UUID fileId) {
+        ReceiptFileRegistryService.ReceiptFileContent receiptFile = receiptFileRegistryService.loadReceipt(fileId);
+        ReceiptDuplicateDetectionService.ReceiptComparisonResult comparisonResult =
+                receiptDuplicateDetectionService.compareReceiptNumber(receiptNumber, receiptFile);
+        return toReceiptDuplicateResult(comparisonResult);
+    }
+
+    public RuleResult checkCardMismatchByFileId(String cardNumber, UUID fileId) {
+        ReceiptFileRegistryService.ReceiptFileContent receiptFile = receiptFileRegistryService.loadReceipt(fileId);
+        ReceiptDuplicateDetectionService.CardComparisonResult comparisonResult =
+                receiptDuplicateDetectionService.compareCardNumber(cardNumber, receiptFile);
+
+        if (!comparisonResult.visibleDigitsFound()) {
+            String detail = "Could not detect a reliable card number pattern from the uploaded receipt.";
+            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+                detail += " " + comparisonResult.reason();
+            }
+            return new RuleResult("R06", "Card Mismatch", 0, detail);
+        }
+
+        String fieldText = comparisonResult.detectedFieldLabel() != null && !comparisonResult.detectedFieldLabel().isBlank()
+                ? " Field Label: \"" + comparisonResult.detectedFieldLabel() + "\"."
+                : "";
+        String confidenceText = comparisonResult.confidence() != null && !comparisonResult.confidence().isBlank()
+                ? " Confidence: " + comparisonResult.confidence() + "."
+                : "";
+
+        String detail;
+        if (comparisonResult.matches()) {
+            detail = "Uploaded receipt card pattern matches the provided card number. Detected pattern: \""
+                    + comparisonResult.detectedCardPattern()
+                    + "\"."
+                    + fieldText
+                    + confidenceText;
+        } else {
+            detail = "Uploaded receipt card pattern does not match the provided card number. Detected pattern: \""
+                    + comparisonResult.detectedCardPattern()
+                    + "\"."
+                    + fieldText
+                    + confidenceText;
+        }
+
+        if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+            detail += " " + comparisonResult.reason();
+        }
+
+        return new RuleResult("R06", "Card Mismatch", 0, detail);
+    }
+
+    private RuleStatusResponse evaluateCardMismatchRuleStatus(String cardNumber, UUID fileId) {
+        ReceiptFileRegistryService.ReceiptFileContent receiptFile = receiptFileRegistryService.loadReceipt(fileId);
+        ReceiptDuplicateDetectionService.CardComparisonResult comparisonResult =
+                receiptDuplicateDetectionService.compareCardNumber(cardNumber, receiptFile);
+
+        if (!comparisonResult.visibleDigitsFound()) {
+            String detail = "Could not detect a reliable card number pattern from the uploaded receipt.";
+            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+                detail += " " + comparisonResult.reason();
+            }
+            return new RuleStatusResponse("R06", "Card Mismatch", "Failed", detail);
+        }
+
+        String fieldText = comparisonResult.detectedFieldLabel() != null && !comparisonResult.detectedFieldLabel().isBlank()
+                ? " Field: \"" + comparisonResult.detectedFieldLabel() + "\"."
+                : "";
+        String confidenceText = comparisonResult.confidence() != null && !comparisonResult.confidence().isBlank()
+                ? " Confidence: " + comparisonResult.confidence() + "."
+                : "";
+
+        String detail;
+        if (comparisonResult.matches()) {
+            detail = "Uploaded receipt card pattern matches the provided card number. Detected pattern: \""
+                    + comparisonResult.detectedCardPattern()
+                    + "\"."
+                    + fieldText
+                    + confidenceText;
+            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+                detail += " " + comparisonResult.reason();
+            }
+            return new RuleStatusResponse("R06", "Card Mismatch", "Pass", detail);
+        }
+
+        detail = "Uploaded receipt card pattern does not match the provided card number. Detected pattern: \""
+                + comparisonResult.detectedCardPattern()
+                + "\"."
+                + fieldText
+                + confidenceText;
+        if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+            detail += " " + comparisonResult.reason();
+        }
+        return new RuleStatusResponse("R06", "Card Mismatch", "Failed", detail);
     }
 
     public RuleResult runRule(String ruleCode, Transaction transaction, Rule rule, RuleDataAccess dataAccess) {
@@ -573,7 +634,10 @@ public class RuleEngineService {
                                 && transaction.amount() <= splitAmountRangeEnd)
                 .count();
 
-        if (isCurrentTransactionInSplitAmountRange || suspiciousTransactionCountInWindow > 0) {
+        long suspiciousTransactionCountIncludingCurrent =
+                suspiciousTransactionCountInWindow + (isCurrentTransactionInSplitAmountRange ? 1 : 0);
+
+        if (suspiciousTransactionCountIncludingCurrent >= 2) {
             return new RuleResult(
                     rule.id(),
                     rule.name(),
@@ -1099,6 +1163,89 @@ public class RuleEngineService {
         if (result != null) {
             detections.add(result);
         }
+    }
+
+    private RuleResult toReceiptDuplicateResult(ReceiptDuplicateDetectionService.ReceiptComparisonResult comparisonResult) {
+        String detectedFieldText = comparisonResult.detectedFieldLabel() != null
+                && !comparisonResult.detectedFieldLabel().isBlank()
+                ? " Field: \"" + comparisonResult.detectedFieldLabel() + "\"."
+                : "";
+        String confidenceText = comparisonResult.confidence() != null
+                && !comparisonResult.confidence().isBlank()
+                ? " Confidence: " + comparisonResult.confidence() + "."
+                : "";
+
+        String detail;
+        if (!comparisonResult.numberDetected()) {
+            detail = "Could not detect a reliable receipt number from the uploaded receipt.";
+            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+                detail += " " + comparisonResult.reason();
+            }
+            return new RuleResult("R05", "Duplicate Receipt", 0, detail);
+        }
+
+        if (!isTrustedReceiptField(comparisonResult.detectedFieldLabel())) {
+            detail = "Uploaded receipt does not provide a trusted labeled receipt number match. Expected: \""
+                    + comparisonResult.expectedReceiptNumber()
+                    + "\", detected: \""
+                    + comparisonResult.detectedReceiptNumber()
+                    + "\"."
+                    + detectedFieldText
+                    + confidenceText;
+            if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+                detail += " " + comparisonResult.reason();
+            }
+            return new RuleResult("R05", "Duplicate Receipt", 0, detail);
+        }
+
+        if (comparisonResult.matches()) {
+            detail = "Uploaded receipt matches receipt number \""
+                    + comparisonResult.expectedReceiptNumber()
+                    + "\". Detected receipt number: \""
+                    + comparisonResult.detectedReceiptNumber()
+                    + "\"."
+                    + detectedFieldText
+                    + confidenceText;
+        } else {
+            detail = "Uploaded receipt does not match the provided receipt number. Expected: \""
+                    + comparisonResult.expectedReceiptNumber()
+                    + "\", detected: \""
+                    + comparisonResult.detectedReceiptNumber()
+                    + "\"."
+                    + detectedFieldText
+                    + confidenceText;
+        }
+
+        if (comparisonResult.reason() != null && !comparisonResult.reason().isBlank()) {
+            detail += " " + comparisonResult.reason();
+        }
+
+        return new RuleResult("R05", "Duplicate Receipt", 0, detail);
+    }
+
+    private boolean isTrustedReceiptField(String detectedFieldLabel) {
+        if (detectedFieldLabel == null || detectedFieldLabel.isBlank()) {
+            return false;
+        }
+
+        String normalized = detectedFieldLabel.trim().toUpperCase();
+        return !"INFERRED".equals(normalized);
+    }
+
+    private void addRuleStatus(List<RuleStatusResponse> rules, Rule rule, RuleResult result) {
+        if (result == null) {
+            rules.add(new RuleStatusResponse(rule.id(), rule.name(), "Pass", "No issue detected."));
+            return;
+        }
+
+        rules.add(new RuleStatusResponse(rule.id(), rule.name(), "Failed", result.detail()));
+    }
+
+    private ReceiptFileRegistryService.ReceiptFileContent loadReceiptFile(UUID fileId) {
+        if (fileId == null) {
+            return null;
+        }
+        return receiptFileRegistryService.loadReceipt(fileId);
     }
 
     private void pruneSplitPaymentTestCache(LocalDateTime currentTime) {

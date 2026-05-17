@@ -10,6 +10,7 @@ import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
 import com.api.bizplay_classifier_api.model.request.FileUploadHistoryRequest;
+import com.api.bizplay_classifier_api.model.response.BatchTransactionResponse;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
@@ -274,6 +275,137 @@ public class TransactionServiceImple implements TransactionService {
                     .build();
         } catch (IOException e) {
             throw new IllegalStateException("Unable to process single transaction test request.", e);
+        }
+    }
+
+    @Override
+    @Transactional
+    public BatchTransactionResponse createBatchTransactions(String corpNo, List<TransactionRequest> transactionRequests) {
+        if (transactionRequests == null || transactionRequests.isEmpty()) {
+            throw new IllegalArgumentException("Transaction list can not be empty.");
+        }
+        String companyId = normalizeSingleTransactionCorpNo(corpNo);
+        corpService.getCorpByCorpNo(companyId);
+
+        try (Workbook workbook = new XSSFWorkbook()) {
+            Sheet sheet = workbook.createSheet("Transactions");
+            Row headerRow = sheet.createRow(0);
+            List<String> headers = List.of(
+                    "company_id",
+                    "approval_date",
+                    "approval_time",
+                    "merchant_name",
+                    "merchant_industry_code",
+                    "merchant_industry_name",
+                    "merchant_business_registration_number",
+                    "supply_amount",
+                    "vat_amount",
+                    "tax_type",
+                    "field_name1",
+                    "pk",
+                    "user_tx_id",
+                    "writer_tx_id"
+            );
+
+            for (int i = 0; i < headers.size(); i++) {
+                headerRow.createCell(i).setCellValue(headers.get(i));
+            }
+
+            DataFormatter formatter = new DataFormatter();
+            Map<String, Integer> headerMap = parseHeaderMap(headerRow, formatter);
+
+            Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
+            Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
+            Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Set<String> usedRuleKeys = new HashSet<>();
+
+            List<UsageValue> usageValues = new ArrayList<>(transactionRequests.size());
+            for (int i = 0; i < transactionRequests.size(); i++) {
+                TransactionRequest request = transactionRequests.get(i);
+                if (request == null) {
+                    throw new IllegalArgumentException("Transaction request at index " + i + " is null.");
+                }
+
+                Row dataRow = sheet.createRow(i + 1);
+                writeCell(dataRow, 0, companyId);
+                writeCell(dataRow, 1, request.getApprovalDate());
+                writeCell(dataRow, 2, request.getApprovalTime());
+                writeCell(dataRow, 3, request.getMerchantName());
+                writeCell(dataRow, 4, request.getMerchantIndustryCode());
+                writeCell(dataRow, 5, request.getMerchantIndustryName());
+                writeCell(dataRow, 6, request.getMerchantBusinessRegistrationNumber());
+                writeCell(dataRow, 7, request.getSupplyAmount());
+                writeCell(dataRow, 8, request.getVatAmount());
+                writeCell(dataRow, 9, request.getTaxType());
+                writeCell(dataRow, 10, request.getFieldName1());
+                writeCell(dataRow, 11, request.getPk());
+                writeCell(dataRow, 12, request.getUserTxId());
+                writeCell(dataRow, 13, request.getWriterTxId());
+
+                UsageValue usageValue = resolveUsageValueByMerchantName(
+                        dataRow,
+                        headerMap,
+                        formatter,
+                        companyId,
+                        rulesCache,
+                        usedRuleKeys
+                );
+                boolean disambiguateMultiCode = hasMultiLabel(usageValue.usageCode());
+                boolean shouldCallAi = !usageValue.matchedByRule()
+                        || usageValue.usageCode() == null || usageValue.usageCode().isBlank()
+                        || usageValue.usageName() == null || usageValue.usageName().isBlank()
+                        || disambiguateMultiCode;
+                if (shouldCallAi) {
+                    UsageValue aiUsageValue = resolveUsageValueByAi(
+                            dataRow,
+                            headerMap,
+                            formatter,
+                            companyId,
+                            rulesCache,
+                            botConfigCache,
+                            aiResultCache,
+                            usageValue,
+                            disambiguateMultiCode
+                    );
+                    if (aiUsageValue != null) {
+                        usageValue = aiUsageValue;
+                    }
+                }
+
+                ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
+                applyUsageValueToSheet(dataRow, headerMap, usageValue);
+                usageValues.add(usageValue);
+            }
+
+            FileStorageResponse enrichedFile = storeEnrichedWorkbook(workbook, "Transactions", "batch_transactions.xlsx");
+            com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
+                    FileUploadHistoryRequest.builder()
+                            .companyId(companyId)
+                            .originalFileName("batch_transactions.xlsx")
+                            .storedFileName(enrichedFile.getStoredFileName())
+                            .fileUrl(enrichedFile.getFileUrl())
+                            .sheetName("Transactions")
+                            .fileType(com.api.bizplay_classifier_api.model.enums.FileType.OUTPUT)
+                            .build()
+            );
+
+            List<BatchTransactionResponse.Item> items = new ArrayList<>(usageValues.size());
+            for (UsageValue usageValue : usageValues) {
+                items.add(BatchTransactionResponse.Item.builder()
+                        .categoryNo(usageValue.usageCode())
+                        .categoryName(usageValue.usageName())
+                        .method(usageValue.method())
+                        .reason(usageValue.description())
+                        .build());
+            }
+
+            return BatchTransactionResponse.builder()
+                    .fileId(fileRecord.getFileId())
+                    .corpNo(companyId)
+                    .items(items)
+                    .build();
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to process batch transaction request.", e);
         }
     }
 

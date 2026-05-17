@@ -2,7 +2,9 @@ package com.api.bizplay_compliance.controller;
 
 import com.api.bizplay_compliance.model.request.*;
 import com.api.bizplay_compliance.model.response.ApiResponse;
+import com.api.bizplay_compliance.model.response.ComplianceRunAllResponse;
 import com.api.bizplay_compliance.model.response.RuleCheckResponse;
+import com.api.bizplay_compliance.service.ruleService.ReceiptFileRegistryService;
 import com.api.bizplay_compliance.service.ruleService.RuleEngineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @AllArgsConstructor
@@ -32,16 +35,17 @@ import java.util.List;
 public class RuleEngineController {
 
     private final RuleEngineService ruleEngineService;
+    private final ReceiptFileRegistryService receiptFileRegistryService;
 
     @PostMapping("/r01")
     @Operation(
             summary = "R01 - Split payment detection",
-            description = "Stores the submitted amount in a short-lived in-memory test cache and checks whether repeated amounts near the 50,000 threshold indicate a split-payment pattern."
+            description = "Dummy R01 test rule. Fails when the submitted amount exceeds 50,000 and passes otherwise."
     )
     public ResponseEntity<ApiResponse<RuleCheckResponse>> checkR01(@RequestBody SplitPaymentCheckRequest request) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.testSplitPaymentAmount(request.amount())))
+                        .payload(toResponse("R01", ruleEngineService.testSplitPaymentAmount(request.amount())))
                         .message("Run R01 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -57,7 +61,7 @@ public class RuleEngineController {
     public ResponseEntity<ApiResponse<RuleCheckResponse>> checkR02(@RequestBody NighttimeTransactionCheckRequest request) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkNighttimeTransaction(request.transactionDate())))
+                        .payload(toResponse("R02", ruleEngineService.checkNighttimeTransaction(request.transactionDate())))
                         .message("Run R02 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -76,10 +80,7 @@ public class RuleEngineController {
     ) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkLimitExceedAmount(
-                                amount,
-                                category
-                        )))
+                        .payload(toResponse("R03", ruleEngineService.checkLimitExceedAmount(amount, category)))
                         .message("Run R03 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -103,10 +104,7 @@ public class RuleEngineController {
     ) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkProhibitedMcc(
-                                mccCode,
-                                blockedMccCodes
-                        )))
+                        .payload(toResponse("R04", ruleEngineService.checkProhibitedMcc(mccCode, blockedMccCodes)))
                         .message("Run R04 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -125,10 +123,7 @@ public class RuleEngineController {
     ) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkDuplicateReceiptUpload(
-                                receiptNumber,
-                                file
-                        )))
+                        .payload(toResponse("R05", ruleEngineService.checkDuplicateReceiptUpload(receiptNumber, file)))
                         .message("Run R05 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -147,10 +142,7 @@ public class RuleEngineController {
     ) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkCardMismatchUpload(
-                                cardNumber,
-                                file
-                        )))
+                        .payload(toResponse("R06", ruleEngineService.checkCardMismatchUpload(cardNumber, file)))
                         .message("Run R06 successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -219,7 +211,7 @@ public class RuleEngineController {
     public ResponseEntity<ApiResponse<RuleCheckResponse>> checkR10(@RequestBody RequisitionMismatchCheckRequest request) {
         return ResponseEntity.ok(
                 ApiResponse.<RuleCheckResponse>builder()
-                        .payload(toResponse(ruleEngineService.checkRequisitionMismatch(
+                        .payload(toResponse("R10", ruleEngineService.checkRequisitionMismatch(
                                 request.requisitionId(),
                                 request.transactionReference()
                         )))
@@ -230,46 +222,69 @@ public class RuleEngineController {
         );
     }
 
-    @PostMapping(value = "/run-all", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/receipt/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(
+            summary = "Upload receipt",
+            description = "Uploads a receipt image and returns a fileId that can be referenced in JSON request bodies such as run-all."
+    )
+    public ResponseEntity<ApiResponse<ReceiptFileRegistryService.ReceiptFileRecord>> uploadReceipt(
+            @RequestPart("file") MultipartFile file
+    ) {
+        ReceiptFileRegistryService.ReceiptFileRecord uploaded = receiptFileRegistryService.uploadReceipt(file);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<ReceiptFileRegistryService.ReceiptFileRecord>builder()
+                        .payload(uploaded)
+                        .fileUrl(uploaded.fileUrl())
+                        .message("Receipt uploaded successfully.")
+                        .code(HttpStatus.CREATED.value())
+                        .status(HttpStatus.CREATED)
+                        .build()
+        );
+    }
+
+    @PostMapping("/run-all")
     @Operation(
             summary = "Run all rules",
-            description = "Runs the flat rule pipeline for one transaction input and returns every detected rule result. Send a JSON `payload` part and optionally a receipt image `file` part for R05 and R06."
+            description = "Runs the flat JSON rule pipeline for one transaction input and returns every detected rule result. Use the fileId request parameter from /receipt/upload for image-based checks."
     )
-    public ResponseEntity<ApiResponse<List<RuleCheckResponse>>> runAllRules(
-            @Parameter(
-                    description = "JSON payload part for R01-R10.",
-                    content = @Content(
-                            mediaType = MediaType.APPLICATION_JSON_VALUE,
-                            schema = @Schema(implementation = RuleEngineService.PipelineRequest.class),
-                            examples = @ExampleObject(
-                                    name = "RunAllPayload",
-                                    value = """
-                                            {
-                                              "id": "tx-2026-0512-001",
-                                              "employeeId": "EMP-1001",
-                                              "merchantId": "3150140032",
-                                              "transactionDate": "2026-05-12T12:46:52",
-                                              "amount": 70000,
-                                              "category": "MEAL",
-                                              "mccCode": "5812",
-                                              "receiptNumber": "03712301",
-                                              "cardNumber": "5327501212342536",
-                                              "receiptCardNumber": "5327-50**-****-2536",
-                                              "businessNumber": "3158300467",
-                                              "address": "충북 청주시 흥덕구 복대동 1657",
-                                              "requisitionId": "REQ-2026-0512-001",
-                                              "transactionReference": "03712301"
-                                            }
-                                            """
-                            )
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            required = true,
+            content = @Content(
+                    schema = @Schema(implementation = RuleEngineService.PipelineRequest.class),
+                    examples = @ExampleObject(
+                            name = "RunAllPayload",
+                            value = """
+                                    {
+                                      "id": "tx-2026-0512-001",
+                                      "employeeId": "EMP-1001",
+                                      "merchantId": "3150140032",
+                                      "transactionDate": "2026-05-12T12:46:52",
+                                      "amount": 70000,
+                                      "category": "MEAL",
+                                      "mccCode": "5812",
+                                      "receiptNumber": "03712301",
+                                      "cardNumber": "5327501212342536",
+                                      "receiptCardNumber": "5327-50**-****-2536",
+                                      "businessNumber": "3158300467",
+                                      "address": "충북 청주시 흥덕구 복대동 1657",
+                                      "requisitionId": "REQ-2026-0512-001",
+                                      "transactionReference": "03712301"
+                                    }
+                                    """
                     )
             )
-            @RequestPart("payload") RuleEngineService.PipelineRequest request,
-            @RequestPart(value = "file", required = false) MultipartFile file
+    )
+    public ResponseEntity<ApiResponse<ComplianceRunAllResponse>> runAllRules(
+            @Parameter(
+                    description = "Optional uploaded receipt fileId returned by /receipt/upload. Used by R05 and R06.",
+                    example = "6e669a86-da5c-477d-8d81-18aef3caf597"
+            )
+            @RequestParam(required = false) UUID fileId,
+            @RequestBody RuleEngineService.PipelineRequest request
     ) {
         return ResponseEntity.ok(
-                ApiResponse.<List<RuleCheckResponse>>builder()
-                        .payload(ruleEngineService.runPipeline(request, file).stream().map(this::toResponse).toList())
+                ApiResponse.<ComplianceRunAllResponse>builder()
+                        .payload(ruleEngineService.runAllWithAssessment(request, fileId))
                         .message("Run all rules successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
@@ -277,15 +292,62 @@ public class RuleEngineController {
         );
     }
 
-    private RuleCheckResponse toResponse(RuleEngineService.RuleResult result) {
+    private RuleCheckResponse toResponse(String ruleId, RuleEngineService.RuleResult result) {
         if (result == null) {
-            return null;
+            return new RuleCheckResponse(
+                    ruleId,
+                    defaultRuleName(ruleId),
+                    "Pass",
+                    "No issue detected."
+            );
         }
 
         return new RuleCheckResponse(
                 result.ruleId(),
                 result.ruleName(),
+                deriveRuleStatus(result),
                 result.detail()
         );
+    }
+
+    private String deriveRuleStatus(RuleEngineService.RuleResult result) {
+        if (result == null || result.detail() == null) {
+            return null;
+        }
+
+        String detail = result.detail().toLowerCase();
+
+        if ("R05".equals(result.ruleId())) {
+            if (detail.contains("matches receipt number")) {
+                return "Pass";
+            }
+            if (detail.contains("does not match") || detail.contains("could not detect") || detail.contains("does not provide a trusted")) {
+                return "Failed";
+            }
+        }
+
+        if ("R06".equals(result.ruleId())) {
+            if (detail.contains("matches the provided card number")) {
+                return "Pass";
+            }
+            if (detail.contains("does not match") || detail.contains("could not detect")) {
+                return "Failed";
+            }
+        }
+
+        return "Failed";
+    }
+
+    private String defaultRuleName(String ruleId) {
+        return switch (ruleId) {
+            case "R01" -> "Split Payment Detection";
+            case "R02" -> "Nighttime Transaction";
+            case "R03" -> "Limit Exceed";
+            case "R04" -> "MCC Prohibited";
+            case "R05" -> "Duplicate Receipt";
+            case "R06" -> "Card Mismatch";
+            case "R10" -> "Requisition Mismatch";
+            default -> "Rule Check";
+        };
     }
 }

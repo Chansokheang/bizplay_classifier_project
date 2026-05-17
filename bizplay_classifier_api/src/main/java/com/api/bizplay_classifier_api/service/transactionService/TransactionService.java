@@ -3,6 +3,7 @@ package com.api.bizplay_classifier_api.service.transactionService;
 import com.api.bizplay_classifier_api.model.dto.FileClassifySummaryDTO;
 import com.api.bizplay_classifier_api.model.request.FileRowPatchRequest;
 import com.api.bizplay_classifier_api.model.request.TransactionRequest;
+import com.api.bizplay_classifier_api.model.response.BatchTransactionResponse;
 import com.api.bizplay_classifier_api.model.response.FileRowPatchResponse;
 import com.api.bizplay_classifier_api.model.response.FileTransactionsPageResponse;
 import com.api.bizplay_classifier_api.model.response.SingleTransactionTestResponse;
@@ -10,12 +11,15 @@ import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface TransactionService {
     TransactionResponse createTransaction(TransactionRequest transactionRequest);
 
     SingleTransactionTestResponse createSingleTransactionForTesting(String corpNo, TransactionRequest transactionRequest);
+
+    BatchTransactionResponse createBatchTransactions(String corpNo, List<TransactionRequest> transactionRequests);
 
     TransactionUploadSummaryResponse createTransactionsByExcel(MultipartFile file, String defaultCompanyId, String sheetName);
 
