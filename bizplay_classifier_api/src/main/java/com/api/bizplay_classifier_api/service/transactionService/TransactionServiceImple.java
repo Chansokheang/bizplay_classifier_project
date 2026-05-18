@@ -375,6 +375,7 @@ public class TransactionServiceImple implements TransactionService {
 
                 ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
                 applyUsageValueToSheet(dataRow, headerMap, usageValue);
+                markResolvedCategoriesAsUsed(companyId, usageValue);
                 usageValues.add(usageValue);
             }
 
