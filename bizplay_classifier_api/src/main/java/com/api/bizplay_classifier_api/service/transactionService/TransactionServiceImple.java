@@ -252,6 +252,7 @@ public class TransactionServiceImple implements TransactionService {
 
             ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
             applyUsageValueToSheet(dataRow, headerMap, usageValue);
+            markResolvedCategoriesAsUsed(companyId, usageValue);
 
             FileStorageResponse enrichedFile = storeEnrichedWorkbook(workbook, "Transactions", "single_transaction_test.xlsx");
             com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO fileRecord = fileUploadHistoryRepo.createFileRecord(
@@ -1372,8 +1373,27 @@ public class TransactionServiceImple implements TransactionService {
                         .corpNo(companyId)
                         .code(code)
                         .category(categoryName)
-                        .build()
+                .build()
         );
+    }
+
+    private void markResolvedCategoriesAsUsed(String companyId, UsageValue usageValue) {
+        if (companyId == null || companyId.isBlank() || usageValue == null) {
+            return;
+        }
+
+        List<String> codes = splitMultiValue(usageValue.usageCode());
+        List<String> names = splitMultiValue(usageValue.usageName());
+        for (int i = 0; i < codes.size(); i++) {
+            String code = codes.get(i);
+            String categoryName = i < names.size() ? names.get(i) : null;
+            if (code == null || code.isBlank() || !code.matches("^[A-Za-z0-9]{1,50}$")) {
+                continue;
+            }
+
+            CategoryDTO category = findOrCreateCategory(companyId, code, categoryName);
+            categoryRepo.markCategoryAsUsed(category.getCategoryId());
+        }
     }
 
     private List<String> splitMultiValue(String value) {
