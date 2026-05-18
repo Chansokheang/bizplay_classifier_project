@@ -6,6 +6,7 @@ import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CorpResponse;
 import com.api.bizplay_classifier_api.model.response.CorpGroupResponse;
 import com.api.bizplay_classifier_api.service.corpService.CorpService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
@@ -16,7 +17,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 @Log4j2
 @RestController
-@RequestMapping("/api/v1/corps")
+@RequestMapping("/classifier/api/v1/corps")
+@Tag(
+        name = "Corporations",
+        description = "Corporation and corporation group endpoints for managing tenant company records used by classification workflows."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class CorpController {

@@ -7,6 +7,7 @@ import com.api.bizplay_classifier_api.model.request.CategoryUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.CategoryUploadPayloadResponse;
 import com.api.bizplay_classifier_api.service.categoryService.CategoryService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,7 +28,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/categories")
+@RequestMapping("/classifier/api/v1/categories")
+@Tag(
+        name = "Categories",
+        description = "Category management endpoints for creating, updating, listing, and importing transaction classification categories."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class CategoryController {

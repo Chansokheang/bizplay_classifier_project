@@ -20,6 +20,7 @@ public class LegacySchemaMigration implements ApplicationRunner {
         migrateClassifierTableTypos();
         migrateCategoryCodeScope();
         ensureSpringSessionTables();
+        ensureChatbotSupportTables();
     }
 
     private void migrateCorpColumns() {
@@ -236,6 +237,52 @@ public class LegacySchemaMigration implements ApplicationRunner {
                 CONSTRAINT SPRING_SESSION_ATTRIBUTES_FK FOREIGN KEY (SESSION_PRIMARY_ID)
                     REFERENCES SPRING_SESSION (PRIMARY_ID) ON DELETE CASCADE
             );
+        """);
+    }
+
+    private void ensureChatbotSupportTables() {
+        jdbcTemplate.execute("""
+            CREATE EXTENSION IF NOT EXISTS vector;
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS vector_store (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                content TEXT,
+                metadata JSONB,
+                embedding vector(1024)
+            );
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS vector_store_embedding_idx
+            ON vector_store USING hnsw (embedding vector_cosine_ops);
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS vector_store_bot_id_idx
+            ON vector_store ((metadata->>'bot_id'));
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                session_id UUID,
+                bot_id UUID,
+                query TEXT NOT NULL,
+                accessed_doc_ids TEXT,
+                created_at TIMESTAMP
+            );
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id
+            ON audit_logs(session_id);
+        """);
+
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_bot_id
+            ON audit_logs(bot_id);
         """);
     }
 }

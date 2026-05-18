@@ -15,6 +15,7 @@ import com.api.bizplay_classifier_api.model.response.TransactionResponse;
 import com.api.bizplay_classifier_api.model.response.TransactionUploadSummaryResponse;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.transactionService.TransactionService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.http.MediaType;
@@ -36,7 +37,11 @@ import java.util.UUID;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/transactions")
+@RequestMapping("/classifier/api/v1/transactions")
+@Tag(
+        name = "Transactions",
+        description = "Transaction endpoints for uploading, creating, updating, and reviewing classified transaction data."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class TransactionController {

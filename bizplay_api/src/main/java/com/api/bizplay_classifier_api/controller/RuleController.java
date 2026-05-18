@@ -6,6 +6,7 @@ import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.RulePageResponse;
 import com.api.bizplay_classifier_api.service.ruleService.RuleService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
@@ -17,7 +18,11 @@ import java.util.UUID;
 
 @Log4j2
 @RestController
-@RequestMapping("/api/v1/rules")
+@RequestMapping("/classifier/api/v1/rules")
+@Tag(
+        name = "Rules",
+        description = "Rule management endpoints for creating, updating, deleting, and listing transaction classification rules."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class RuleController {

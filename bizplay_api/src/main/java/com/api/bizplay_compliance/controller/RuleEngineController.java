@@ -27,7 +27,7 @@ import java.util.UUID;
 @AllArgsConstructor
 @Log4j2
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
-@RequestMapping("/compliance/api/rule-engine")
+@RequestMapping("/compliance/api/v1/rule-engine")
 @Tag(
         name = "Rule Engine",
         description = "Compliance rule test endpoints for validating individual rules and the full rule pipeline."

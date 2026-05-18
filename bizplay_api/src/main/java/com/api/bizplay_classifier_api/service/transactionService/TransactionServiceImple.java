@@ -160,7 +160,7 @@ public class TransactionServiceImple implements TransactionService {
     @Override
     @Transactional
     public TransactionResponse createTransaction(TransactionRequest transactionRequest) {
-        throw new IllegalArgumentException("Transaction table persistence is disabled. Use /api/v1/transactions/upload for file processing only.");
+        throw new IllegalArgumentException("Transaction table persistence is disabled. Use /classifier/api/v1/transactions/upload for file processing only.");
     }
 
     @Override

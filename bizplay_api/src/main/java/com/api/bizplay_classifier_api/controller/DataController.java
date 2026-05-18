@@ -14,6 +14,7 @@ import com.api.bizplay_classifier_api.service.ruleService.RuleService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.apache.poi.ss.usermodel.Row;
@@ -37,7 +38,11 @@ import java.io.IOException;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/data")
+@RequestMapping("/classifier/api/v1/data")
+@Tag(
+        name = "Training Data",
+        description = "Training data endpoints for submitting rule training rows, uploading training files, and refreshing generated bot prompts."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class DataController {

@@ -5,13 +5,21 @@ import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
 import jakarta.annotation.PostConstruct;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.FullyQualifiedAnnotationBeanNameGenerator;
 
 import java.time.ZoneId;
 import java.util.TimeZone;
 
-@SpringBootApplication
+@SpringBootApplication(
+        nameGenerator = FullyQualifiedAnnotationBeanNameGenerator.class,
+        exclude = {
+        OpenAiChatAutoConfiguration.class,
+        OpenAiEmbeddingAutoConfiguration.class
+})
 @MapperScan("com.api.bizplay_classifier_api.repository")
 //@MapperScan("com.api.bizplay_compliance.repository")
 @SecurityScheme(

@@ -11,6 +11,7 @@ import com.api.bizplay_classifier_api.model.response.FileStorageResponse;
 import com.api.bizplay_classifier_api.repository.FileClassifySummaryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.AllArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -37,7 +38,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/v1/storage")
+@RequestMapping("/classifier/api/v1/storage")
+@Tag(
+        name = "File Storage",
+        description = "File storage endpoints for uploading, downloading, listing, and deleting training or transaction files."
+)
 @AllArgsConstructor
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
 public class FileStorageController {
