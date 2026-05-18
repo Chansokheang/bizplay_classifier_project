@@ -35,3 +35,7 @@ build/
 ### Project-specific ###
 src/main/resources/docs/
 src/main/resources/data/
+
+### Secrets ###
+.env
+
