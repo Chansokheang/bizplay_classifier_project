@@ -50,9 +50,6 @@ public class RuleServiceImple implements RuleService {
         RuleDTO createdRule = ruleRepo.createRule(ruleRequest);
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(createdRule.getRuleId(), categoryIds);
-            for (UUID categoryId : categoryIds) {
-                categoryRepo.markCategoryAsUsed(categoryId);
-            }
         }
         return createdRule;
     }
@@ -65,9 +62,6 @@ public class RuleServiceImple implements RuleService {
         List<UUID> categoryIds = resolveCategoryIds(updatedRule.getCorpNo(), ruleUpdateRequest.getCategoryCodes());
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(ruleId, categoryIds);
-            for (UUID categoryId : categoryIds) {
-                categoryRepo.markCategoryAsUsed(categoryId);
-            }
         }
         return updatedRule;
     }
@@ -221,7 +215,6 @@ public class RuleServiceImple implements RuleService {
         int skippedMissingRequired = 0;
         int skippedInvalidUsageCode = 0;
         int skippedInvalidIndustryCode = 0;
-        int skippedInactiveCategory = 0;
 
         for (TrainingSeed trainingSeed : trainingSeeds) {
             if (trainingSeed.merchantIndustryCode() == null || trainingSeed.merchantIndustryCode().isBlank()
@@ -251,11 +244,6 @@ public class RuleServiceImple implements RuleService {
             String normalizedIndustryName = trainingSeed.merchantIndustryName().trim();
 
             CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, trainingSeed.categoryName().trim());
-            if (!categoryUpsert.trainable() || categoryUpsert.category() == null) {
-                skippedRows++;
-                skippedInactiveCategory++;
-                continue;
-            }
             CategoryDTO category = categoryUpsert.category();
             if (categoryUpsert.created()) {
                 createdCategories++;
@@ -284,9 +272,9 @@ public class RuleServiceImple implements RuleService {
         }
 
         log.info(
-                "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}, skippedInactiveCategory={}",
+                "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}",
                 companyId, totalRows, trainedRows, skippedRows, createdRules, createdCategories, createdMappings,
-                skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode, skippedInactiveCategory
+                skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode
         );
 
         return DataTrainSummaryResponse.builder()
@@ -302,12 +290,12 @@ public class RuleServiceImple implements RuleService {
     private CategoryUpsertResult findOrCreateCategory(String companyId, String code, String categoryName) {
         CategoryDTO byCode = categoryRepo.findByCorpNoAndCode(companyId, code);
         if (byCode != null) {
-            return new CategoryUpsertResult(byCode, false, isTrainableCategory(byCode));
+            return new CategoryUpsertResult(byCode, false);
         }
 
         CategoryDTO byCategory = categoryRepo.findByCorpNoAndCategory(companyId, categoryName);
         if (byCategory != null) {
-            return new CategoryUpsertResult(byCategory, false, isTrainableCategory(byCategory));
+            return new CategoryUpsertResult(byCategory, false);
         }
 
         CategoryDTO created = categoryRepo.createCategory(
@@ -315,14 +303,9 @@ public class RuleServiceImple implements RuleService {
                         .corpNo(companyId)
                         .code(code)
                         .category(categoryName)
-                        .isUsed(true)
                         .build()
         );
-        return new CategoryUpsertResult(created, true, true);
-    }
-
-    private boolean isTrainableCategory(CategoryDTO category) {
-        return category != null && !Boolean.FALSE.equals(category.getIsUsed());
+        return new CategoryUpsertResult(created, true);
     }
 
     private List<UUID> resolveCategoryIds(String companyId, List<String> categoryCodes) {
@@ -565,7 +548,7 @@ public class RuleServiceImple implements RuleService {
     private record HeaderParseResult(int headerRowIndex, Map<String, Integer> headerMap) {
     }
 
-    private record CategoryUpsertResult(CategoryDTO category, boolean created, boolean trainable) {
+    private record CategoryUpsertResult(CategoryDTO category, boolean created) {
     }
 
     private record TrainingSeed(
