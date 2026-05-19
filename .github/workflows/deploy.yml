@@ -133,8 +133,28 @@ jobs:
             SPRING_MVC_ASYNC_REQUEST_TIMEOUT=${{ secrets.SPRING_MVC_ASYNC_REQUEST_TIMEOUT }}
             SERVER_MAX_HTTP_REQUEST_HEADER_SIZE=${{ secrets.SERVER_MAX_HTTP_REQUEST_HEADER_SIZE }}
             EOF
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+            for attempt in 1 2 3; do
+              if echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "GHCR login failed after 3 attempts."
+                exit 1
+              fi
+              echo "GHCR login failed. Retrying in 10 seconds... (attempt $attempt/3)"
+              sleep 10
+            done
             ls -la
-            docker compose -f compose.prod.yaml pull app
+            for attempt in 1 2 3; do
+              if docker compose -f compose.prod.yaml pull app; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "Docker image pull failed after 3 attempts."
+                exit 1
+              fi
+              echo "Docker image pull failed. Retrying in 15 seconds... (attempt $attempt/3)"
+              sleep 15
+            done
             docker compose -f compose.prod.yaml up -d
             docker image prune -f
