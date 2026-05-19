@@ -39,3 +39,5 @@ src/main/resources/data/
 ### Secrets ###
 .env
 
+# Uploaded documents (store on a mounted volume in production)
+uploads/
