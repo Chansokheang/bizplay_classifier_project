@@ -83,6 +83,14 @@ public class RuleServiceImple implements RuleService {
     }
 
     @Override
+    @Transactional
+    public void deleteRulesByCorpNo(String corpNo) {
+        corpService.getCorpByCorpNo(corpNo);
+        ruleRepo.deleteRuleCategoryMappingsByCorpNo(corpNo);
+        ruleRepo.deleteRulesByCorpNo(corpNo);
+    }
+
+    @Override
     public RulePageResponse getAllRulesByCompanyId(String companyId, String usageStatus, int page, int limit) {
         if (page < 1) {
             throw new IllegalArgumentException("page must be >= 1.");

@@ -182,6 +182,22 @@ public interface RuleRepo {
     """)
     Integer deleteRuleByRuleId(@Param("ruleId") UUID ruleId);
 
+    @Delete("""
+        DELETE FROM rule_category_map
+        WHERE rule_id IN (
+            SELECT rule_id
+            FROM classifier_rules
+            WHERE corp_no = #{corpNo}
+        )
+    """)
+    Integer deleteRuleCategoryMappingsByCorpNo(@Param("corpNo") String corpNo);
+
+    @Delete("""
+        DELETE FROM classifier_rules
+        WHERE corp_no = #{corpNo}
+    """)
+    Integer deleteRulesByCorpNo(@Param("corpNo") String corpNo);
+
     @Insert("""
         INSERT INTO rule_category_map (rule_id, category_id)
         VALUES (#{ruleId}, #{categoryId})
