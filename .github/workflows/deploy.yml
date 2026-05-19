@@ -29,7 +29,7 @@ jobs:
           cache: maven
 
       - name: Build application
-        working-directory: bizplay_classifier_api
+        working-directory: bizplay_api
         run: ./mvnw -q -DskipTests package
 
       - name: Set up Docker Buildx
@@ -54,8 +54,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./bizplay_classifier_api
-          file: ./bizplay_classifier_api/Dockerfile
+          context: ./bizplay_api
+          file: ./bizplay_api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -67,7 +67,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
-          source: "bizplay_classifier_api/compose.prod.yaml,bizplay_classifier_api/src/main/resources/schemaV2.sql"
+          source: "bizplay_api/compose.prod.yaml,bizplay_api/src/main/resources/schemaV2.sql"
           target: ${{ env.REMOTE_APP_DIR }}
 
       - name: Deploy on server
@@ -81,11 +81,11 @@ jobs:
             set -e
             mkdir -p ${{ env.REMOTE_APP_DIR }}
             cd ${{ env.REMOTE_APP_DIR }}
-            if [ -f bizplay_classifier_api/compose.prod.yaml ]; then
-              cp bizplay_classifier_api/compose.prod.yaml compose.prod.yaml
+            if [ -f bizplay_api/compose.prod.yaml ]; then
+              cp bizplay_api/compose.prod.yaml compose.prod.yaml
             fi
-            if [ -f bizplay_classifier_api/src/main/resources/schemaV2.sql ]; then
-              cp bizplay_classifier_api/src/main/resources/schemaV2.sql schemaV2.sql
+            if [ -f bizplay_api/src/main/resources/schemaV2.sql ]; then
+              cp bizplay_api/src/main/resources/schemaV2.sql schemaV2.sql
             fi
             if [ -f main/resources/schemaV2.sql ]; then
               cp main/resources/schemaV2.sql schemaV2.sql
