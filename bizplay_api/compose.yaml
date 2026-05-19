@@ -1,13 +1,13 @@
 services:
   postgres:
-    image: postgres:16
-    container_name: bizplay-postgres
+    image: pgvector/pgvector:pg16
+    container_name: bizplay-postgres-v2
     environment:
       POSTGRES_DB: bizplay
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: 123
     ports:
-      - "9005:5432"
+      - "9011:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/main/resources/schemaV2.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -19,14 +19,14 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: bizplay-minio
+    container_name: bizplay-minio-v2
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9006:9000"
-      - "9007:9001"
+      - "9009:9000"
+      - "9010:9001"
     volumes:
       - minio_data:/data
 
@@ -34,14 +34,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bizplay-api
+    container_name: bizplay-api-v2
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_started
     ports:
-      - "9008:8080"
+      - "9012:8080"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bizplay
       SPRING_DATASOURCE_USERNAME: postgres

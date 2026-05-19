@@ -7,7 +7,9 @@ import io.swagger.v3.oas.models.tags.Tag;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,13 +24,21 @@ public class OpenApiConfig {
      *  sits directly below Telegram on purpose — both are channel-integration
      *  sections and operators expect to find them adjacent. */
     private static final List<String> TAG_ORDER = List.of(
-            "Bots",
-            "Documents",
-            "RAG Chat",
-            "Corp Groups",
-            "Corporations",
-            "Telegram integration",
-            "Kakao integration"
+            "Classifier / Bot Configurations",
+            "Classifier / Categories",
+            "Classifier / Corporations",
+            "Classifier / File Storage",
+            "Classifier / Rules",
+            "Classifier / Training Data",
+            "Classifier / Transactions",
+            "Chatbot / Bots",
+            "Chatbot / Documents",
+            "Chatbot / RAG Chat",
+            "Chatbot / Corp Groups",
+            "Chatbot / Corporations",
+            "Chatbot / Telegram integration",
+            "Chatbot / Kakao integration",
+            "Compliance / Rule Engine"
     );
 
     @Bean
@@ -51,6 +61,55 @@ public class OpenApiConfig {
                 .servers(List.of(new Server().url("/")));
     }
 
+    @Bean
+    @Order(0)
+    public OpenApiCustomizer projectTagPrefixCustomizer() {
+        return openApi -> {
+            if (openApi.getPaths() == null) return;
+
+            LinkedHashMap<String, Tag> prefixedTagsByName = new LinkedHashMap<>();
+
+            openApi.getPaths().forEach((path, pathItem) -> {
+                String prefix = projectPrefix(path);
+                if (prefix == null || pathItem == null) return;
+
+                pathItem.readOperations().forEach(operation -> {
+                    if (operation.getTags() == null || operation.getTags().isEmpty()) return;
+
+                    List<String> prefixedTags = operation.getTags().stream()
+                            .map(tag -> prefixTag(prefix, tag))
+                            .toList();
+
+                    for (int i = 0; i < operation.getTags().size(); i++) {
+                        String prefixedName = prefixedTags.get(i);
+                        prefixedTagsByName.putIfAbsent(
+                                prefixedName,
+                                new Tag().name(prefixedName));
+                    }
+
+                    operation.setTags(prefixedTags);
+                });
+            });
+
+            if (!prefixedTagsByName.isEmpty()) {
+                openApi.setTags(new ArrayList<>(prefixedTagsByName.values()));
+            }
+        };
+    }
+
+    private String projectPrefix(String path) {
+        if (path.startsWith("/classifier/")) return "Classifier";
+        if (path.startsWith("/chatbot/")) return "Chatbot";
+        if (path.startsWith("/compliance/")) return "Compliance";
+        return null;
+    }
+
+    private String prefixTag(String prefix, String tag) {
+        String expectedPrefix = prefix + " / ";
+        if (tag.startsWith(expectedPrefix)) return tag;
+        return expectedPrefix + tag;
+    }
+
     /**
      * Runs after SpringDoc has finished assembling the OpenAPI doc.
      * Deduplicates tags by name (SpringDoc 2.8 leaves duplicates when a tag
@@ -59,6 +118,7 @@ public class OpenApiConfig {
      * the controllers' @Tag annotations are preserved.
      */
     @Bean
+    @Order(1)
     public OpenApiCustomizer tagOrderingCustomizer() {
         return openApi -> {
             if (openApi.getTags() == null || openApi.getTags().isEmpty()) return;
