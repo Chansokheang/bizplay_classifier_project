@@ -56,6 +56,17 @@ public interface CategoryRepo {
     @ResultMap("categoryMap")
     CategoryDTO findByCorpNoAndCode(@Param("corpNo") String corpNo, @Param("code") String code);
 
+    @Select("""
+        SELECT *
+        FROM classifier_categories
+        WHERE corp_no = #{corpNo}
+          AND code = #{code}
+          AND is_used = TRUE
+        LIMIT 1
+    """)
+    @ResultMap("categoryMap")
+    CategoryDTO findActiveByCorpNoAndCode(@Param("corpNo") String corpNo, @Param("code") String code);
+
     @Select({
             "<script>",
             "SELECT *",
@@ -78,6 +89,16 @@ public interface CategoryRepo {
     """)
     @ResultMap("categoryMap")
     List<CategoryDTO> getAllCategoriesByRuleId(@Param("ruleId") UUID ruleId);
+
+    @Select("""
+        SELECT *
+        FROM classifier_categories
+        WHERE corp_no = #{corpNo}
+          AND is_used = TRUE
+        ORDER BY category
+    """)
+    @ResultMap("categoryMap")
+    List<CategoryDTO> getActiveCategoriesByCorpNo(@Param("corpNo") String corpNo);
 
     @Select("""
         SELECT *

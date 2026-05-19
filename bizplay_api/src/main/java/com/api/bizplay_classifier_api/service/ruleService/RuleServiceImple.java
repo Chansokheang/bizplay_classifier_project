@@ -213,6 +213,7 @@ public class RuleServiceImple implements RuleService {
         int skippedMissingRequired = 0;
         int skippedInvalidUsageCode = 0;
         int skippedInvalidIndustryCode = 0;
+        int skippedInactiveCategory = 0;
 
         for (TrainingSeed trainingSeed : trainingSeeds) {
             if (trainingSeed.merchantIndustryCode() == null || trainingSeed.merchantIndustryCode().isBlank()
@@ -242,6 +243,11 @@ public class RuleServiceImple implements RuleService {
             String normalizedIndustryName = trainingSeed.merchantIndustryName().trim();
 
             CategoryUpsertResult categoryUpsert = findOrCreateCategory(companyId, normalizedCode, trainingSeed.categoryName().trim());
+            if (!categoryUpsert.trainable() || categoryUpsert.category() == null) {
+                skippedRows++;
+                skippedInactiveCategory++;
+                continue;
+            }
             CategoryDTO category = categoryUpsert.category();
             if (categoryUpsert.created()) {
                 createdCategories++;
@@ -266,14 +272,13 @@ public class RuleServiceImple implements RuleService {
                 createdMappings++;
             }
 
-            categoryRepo.markCategoryAsUsed(category.getCategoryId());
             trainedRows++;
         }
 
         log.info(
-                "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}",
+                "Rule training finished for companyId={}: totalRows={}, trainedRows={}, skippedRows={}, createdRules={}, createdCategories={}, createdMappings={}, skippedMissingRequired={}, skippedInvalidUsageCode={}, skippedInvalidIndustryCode={}, skippedInactiveCategory={}",
                 companyId, totalRows, trainedRows, skippedRows, createdRules, createdCategories, createdMappings,
-                skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode
+                skippedMissingRequired, skippedInvalidUsageCode, skippedInvalidIndustryCode, skippedInactiveCategory
         );
 
         return DataTrainSummaryResponse.builder()
@@ -289,12 +294,12 @@ public class RuleServiceImple implements RuleService {
     private CategoryUpsertResult findOrCreateCategory(String companyId, String code, String categoryName) {
         CategoryDTO byCode = categoryRepo.findByCorpNoAndCode(companyId, code);
         if (byCode != null) {
-            return new CategoryUpsertResult(byCode, false);
+            return new CategoryUpsertResult(byCode, false, isTrainableCategory(byCode));
         }
 
         CategoryDTO byCategory = categoryRepo.findByCorpNoAndCategory(companyId, categoryName);
         if (byCategory != null) {
-            return new CategoryUpsertResult(byCategory, false);
+            return new CategoryUpsertResult(byCategory, false, isTrainableCategory(byCategory));
         }
 
         CategoryDTO created = categoryRepo.createCategory(
@@ -302,9 +307,14 @@ public class RuleServiceImple implements RuleService {
                         .corpNo(companyId)
                         .code(code)
                         .category(categoryName)
+                        .isUsed(true)
                         .build()
         );
-        return new CategoryUpsertResult(created, true);
+        return new CategoryUpsertResult(created, true, true);
+    }
+
+    private boolean isTrainableCategory(CategoryDTO category) {
+        return category != null && !Boolean.FALSE.equals(category.getIsUsed());
     }
 
     private List<UUID> resolveCategoryIds(String companyId, List<String> categoryCodes) {
@@ -547,7 +557,7 @@ public class RuleServiceImple implements RuleService {
     private record HeaderParseResult(int headerRowIndex, Map<String, Integer> headerMap) {
     }
 
-    private record CategoryUpsertResult(CategoryDTO category, boolean created) {
+    private record CategoryUpsertResult(CategoryDTO category, boolean created, boolean trainable) {
     }
 
     private record TrainingSeed(

@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.service.botConfigService;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
+import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
@@ -10,6 +11,7 @@ import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.repository.BotConfigRepo;
+import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
@@ -42,6 +44,7 @@ import java.util.concurrent.CompletableFuture;
 @AllArgsConstructor
 public class BotConfigServiceImple implements BotConfigService {
     private final BotConfigRepo botConfigRepo;
+    private final CategoryRepo categoryRepo;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileStorageService fileStorageService;
     private final ObjectMapper objectMapper;
@@ -326,10 +329,18 @@ public class BotConfigServiceImple implements BotConfigService {
         List<FileUploadHistoryDTO> newestFirst = trainingFiles.stream()
                 .sorted(Comparator.comparing(FileUploadHistoryDTO::getCreatedDate).reversed())
                 .toList();
+        Map<String, CategoryDTO> activeCategoriesByCode = loadActiveCategoriesByCode(companyId);
+        if (activeCategoriesByCode.isEmpty()) {
+            return List.of();
+        }
 
         List<Map<String, String>> allValidRows = new ArrayList<>();
         for (FileUploadHistoryDTO trainingFile : newestFirst) {
-            allValidRows.addAll(extractTrainingRowsFromFile(trainingFile, MAX_SAMPLE_ROWS - allValidRows.size()));
+            allValidRows.addAll(extractTrainingRowsFromFile(
+                    trainingFile,
+                    MAX_SAMPLE_ROWS - allValidRows.size(),
+                    activeCategoriesByCode
+            ));
             if (allValidRows.size() >= MAX_SAMPLE_ROWS) {
                 break;
             }
@@ -402,14 +413,18 @@ public class BotConfigServiceImple implements BotConfigService {
         );
     }
 
-    private List<Map<String, String>> extractTrainingRowsFromFile(FileUploadHistoryDTO trainingFile, int remainingRows) {
+    private List<Map<String, String>> extractTrainingRowsFromFile(
+            FileUploadHistoryDTO trainingFile,
+            int remainingRows,
+            Map<String, CategoryDTO> activeCategoriesByCode
+    ) {
         if (remainingRows <= 0) {
             return List.of();
         }
 
         String storedFileName = trainingFile.getStoredFileName();
         if (storedFileName != null && storedFileName.toLowerCase().endsWith(".json")) {
-            return extractTrainingRowsFromJsonFile(trainingFile, remainingRows);
+            return extractTrainingRowsFromJsonFile(trainingFile, remainingRows, activeCategoriesByCode);
         }
 
         Resource resource = fileStorageService.loadAsResource(trainingFile.getStoredFileName());
@@ -439,6 +454,10 @@ public class BotConfigServiceImple implements BotConfigService {
                         || usageName == null || usageName.isBlank()) {
                     continue;
                 }
+                CategoryDTO activeCategory = resolveActiveCategory(activeCategoriesByCode, usageCode);
+                if (activeCategory == null) {
+                    continue;
+                }
 
                 Map<String, String> rowData = new LinkedHashMap<>();
                 rowData.put("merchant_name", merchantName);
@@ -446,8 +465,8 @@ public class BotConfigServiceImple implements BotConfigService {
                 rowData.put("merchant_industry_name", safeCell(row, headerMap, formatter, "merchant_industry_name"));
                 rowData.put("supply_amount", safeCell(row, headerMap, formatter, "supply_amount"));
                 rowData.put("vat_amount", safeCell(row, headerMap, formatter, "vat_amount"));
-                rowData.put("usage_code", usageCode);
-                rowData.put("usage_name", usageName);
+                rowData.put("usage_code", activeCategory.getCode());
+                rowData.put("usage_name", activeCategory.getCategory());
                 trainingRows.add(rowData);
             }
 
@@ -457,7 +476,11 @@ public class BotConfigServiceImple implements BotConfigService {
         }
     }
 
-    private List<Map<String, String>> extractTrainingRowsFromJsonFile(FileUploadHistoryDTO latestFile, int remainingRows) {
+    private List<Map<String, String>> extractTrainingRowsFromJsonFile(
+            FileUploadHistoryDTO latestFile,
+            int remainingRows,
+            Map<String, CategoryDTO> activeCategoriesByCode
+    ) {
         Resource resource = fileStorageService.loadAsResource(latestFile.getStoredFileName());
         try (InputStream inputStream = resource.getInputStream()) {
             TrainingDataTrainRequest request = objectMapper.readValue(inputStream, TrainingDataTrainRequest.class);
@@ -473,6 +496,10 @@ public class BotConfigServiceImple implements BotConfigService {
                             || row.getCategoryName() == null || row.getCategoryName().isBlank()) {
                         continue;
                     }
+                    CategoryDTO activeCategory = resolveActiveCategory(activeCategoriesByCode, row.getCategoryCode());
+                    if (activeCategory == null) {
+                        continue;
+                    }
 
                     Map<String, String> rowData = new LinkedHashMap<>();
                     rowData.put("merchant_name", safeJsonCell(row.getMerchantName()));
@@ -480,8 +507,8 @@ public class BotConfigServiceImple implements BotConfigService {
                     rowData.put("merchant_industry_name", safeJsonCell(row.getMerchantIndustryName()));
                     rowData.put("supply_amount", row.getSupplyAmount() == null ? "" : String.valueOf(row.getSupplyAmount()));
                     rowData.put("vat_amount", row.getVatAmount() == null ? "" : String.valueOf(row.getVatAmount()));
-                    rowData.put("usage_code", safeJsonCell(row.getCategoryCode()));
-                    rowData.put("usage_name", safeJsonCell(row.getCategoryName()));
+                    rowData.put("usage_code", safeJsonCell(activeCategory.getCode()));
+                    rowData.put("usage_name", safeJsonCell(activeCategory.getCategory()));
                     trainingRows.add(rowData);
                 }
             }
@@ -518,6 +545,28 @@ public class BotConfigServiceImple implements BotConfigService {
 
     private String safeJsonCell(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private Map<String, CategoryDTO> loadActiveCategoriesByCode(String companyId) {
+        Map<String, CategoryDTO> activeCategoriesByCode = new LinkedHashMap<>();
+        List<CategoryDTO> activeCategories = categoryRepo.getActiveCategoriesByCorpNo(companyId);
+        if (activeCategories == null) {
+            return activeCategoriesByCode;
+        }
+        for (CategoryDTO category : activeCategories) {
+            if (category == null || category.getCode() == null || category.getCode().isBlank()) {
+                continue;
+            }
+            activeCategoriesByCode.put(category.getCode().trim().toUpperCase(), category);
+        }
+        return activeCategoriesByCode;
+    }
+
+    private CategoryDTO resolveActiveCategory(Map<String, CategoryDTO> activeCategoriesByCode, String usageCode) {
+        if (activeCategoriesByCode == null || activeCategoriesByCode.isEmpty() || usageCode == null || usageCode.isBlank()) {
+            return null;
+        }
+        return activeCategoriesByCode.get(usageCode.trim().toUpperCase());
     }
 
     private Sheet resolveSheet(Workbook workbook, String sheetName) {

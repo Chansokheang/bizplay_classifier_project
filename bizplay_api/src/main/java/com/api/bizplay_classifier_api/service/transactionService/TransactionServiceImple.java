@@ -1751,7 +1751,7 @@ public class TransactionServiceImple implements TransactionService {
 
                 String newCode = update.getUsageCode().trim();
                 com.api.bizplay_classifier_api.model.dto.CategoryDTO category =
-                        categoryRepo.findByCorpNoAndCode(companyId, newCode);
+                        categoryRepo.findActiveByCorpNoAndCode(companyId, newCode);
                 if (category == null) {
                     // Code not found in this company's chart of accounts — skip
                     skippedRows.add(update.getRowIndex());
