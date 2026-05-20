@@ -3,149 +3,52 @@ package com.api.bizplay_chatbot.config;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.servers.Server;
-import io.swagger.v3.oas.models.tags.Tag;
-import org.springdoc.core.customizers.OpenApiCustomizer;
+import org.springdoc.core.models.GroupedOpenApi;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.annotation.Order;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Configuration
 public class OpenApiConfig {
 
-    /** Desired order of the Swagger UI sections. Tags not in this list fall
-     *  through to alphabetical sorting after the explicitly-ordered ones, so
-     *  newly-added controllers don't silently disappear from the doc. Kakao
-     *  sits directly below Telegram on purpose — both are channel-integration
-     *  sections and operators expect to find them adjacent. */
-    private static final List<String> TAG_ORDER = List.of(
-            "Classifier / Bot Configurations",
-            "Classifier / Categories",
-            "Classifier / Corporations",
-            "Classifier / File Storage",
-            "Classifier / Rules",
-            "Classifier / Training Data",
-            "Classifier / Transactions",
-            "Chatbot / Bots",
-            "Chatbot / Documents",
-            "Chatbot / RAG Chat",
-            "Chatbot / Corp Groups",
-            "Chatbot / Corporations",
-            "Chatbot / Telegram integration",
-            "Chatbot / Kakao integration",
-            "Compliance / Rule Engine"
-    );
-
     @Bean
-    public OpenAPI openAPI() {
+    public OpenAPI bizplayOpenAPI() {
         // Pin the server URL to "/" so Swagger UI's "Try it out" calls always
-        // resolve against the same origin/scheme as the page. Without this,
-        // springdoc auto-fills the URL from the internal request (e.g.
-        // http://localhost:8080) — which the browser then blocks under HTTPS
-        // with "URL scheme must be 'http' or 'https' for CORS request".
-        //
-        // Tag order is set in the customizer below — not here — because
-        // declaring tags on the bean AND letting controllers carry @Tag
-        // annotations causes SpringDoc 2.8 to emit BOTH copies in the final
-        // doc (with-description and without-description), confusing Swagger UI.
+        // resolve against the same origin/scheme as the page (otherwise HTTPS
+        // pages would emit blocked http://localhost requests).
         return new OpenAPI()
                 .info(new Info()
-                        .title("BizPlay RAG Chatbot API")
-                        .description("On-premise RAG-based chatbot API for internal enterprise knowledge.")
+                        .title("BizPlay API")
+                        .description("BizPlay platform APIs — chatbot, classifier, and compliance modules.")
                         .version("0.2.0"))
                 .servers(List.of(new Server().url("/")));
     }
 
     @Bean
-    @Order(0)
-    public OpenApiCustomizer projectTagPrefixCustomizer() {
-        return openApi -> {
-            if (openApi.getPaths() == null) return;
-
-            LinkedHashMap<String, Tag> prefixedTagsByName = new LinkedHashMap<>();
-
-            openApi.getPaths().forEach((path, pathItem) -> {
-                String prefix = projectPrefix(path);
-                if (prefix == null || pathItem == null) return;
-
-                pathItem.readOperations().forEach(operation -> {
-                    if (operation.getTags() == null || operation.getTags().isEmpty()) return;
-
-                    List<String> prefixedTags = operation.getTags().stream()
-                            .map(tag -> prefixTag(prefix, tag))
-                            .toList();
-
-                    for (int i = 0; i < operation.getTags().size(); i++) {
-                        String prefixedName = prefixedTags.get(i);
-                        prefixedTagsByName.putIfAbsent(
-                                prefixedName,
-                                new Tag().name(prefixedName));
-                    }
-
-                    operation.setTags(prefixedTags);
-                });
-            });
-
-            if (!prefixedTagsByName.isEmpty()) {
-                openApi.setTags(new ArrayList<>(prefixedTagsByName.values()));
-            }
-        };
+    public GroupedOpenApi chatbotApi() {
+        return GroupedOpenApi.builder()
+                .group("1-chatbot")
+                .displayName("Chatbot")
+                .packagesToScan("com.api.bizplay_chatbot")
+                .build();
     }
 
-    private String projectPrefix(String path) {
-        if (path.startsWith("/classifier/")) return "Classifier";
-        if (path.startsWith("/chatbot/")) return "Chatbot";
-        if (path.startsWith("/compliance/")) return "Compliance";
-        return null;
-    }
-
-    private String prefixTag(String prefix, String tag) {
-        String expectedPrefix = prefix + " / ";
-        if (tag.startsWith(expectedPrefix)) return tag;
-        return expectedPrefix + tag;
-    }
-
-    /**
-     * Runs after SpringDoc has finished assembling the OpenAPI doc.
-     * Deduplicates tags by name (SpringDoc 2.8 leaves duplicates when a tag
-     * appears both via @Tag on a controller and via a programmatic tag list)
-     * and reorders them per {@link #TAG_ORDER}. The full descriptions from
-     * the controllers' @Tag annotations are preserved.
-     */
     @Bean
-    @Order(1)
-    public OpenApiCustomizer tagOrderingCustomizer() {
-        return openApi -> {
-            if (openApi.getTags() == null || openApi.getTags().isEmpty()) return;
+    public GroupedOpenApi classifierApi() {
+        return GroupedOpenApi.builder()
+                .group("2-classifier")
+                .displayName("Classifier")
+                .packagesToScan("com.api.bizplay_classifier_api")
+                .build();
+    }
 
-            // Dedupe by name, preferring the entry that carries a description
-            // (controllers' @Tag values) over a bare name-only entry.
-            LinkedHashMap<String, Tag> uniqueByName = new LinkedHashMap<>();
-            for (Tag t : openApi.getTags()) {
-                uniqueByName.merge(t.getName(), t, (existing, dup) ->
-                        existing.getDescription() != null ? existing : dup);
-            }
-
-            Map<String, Integer> orderIndex = new java.util.HashMap<>();
-            for (int i = 0; i < TAG_ORDER.size(); i++) {
-                orderIndex.put(TAG_ORDER.get(i), i);
-            }
-
-            // Tags in TAG_ORDER come first (in declared order); anything else
-            // falls back to alphabetical so a forgotten controller is still
-            // findable instead of being silently hidden.
-            List<Tag> sorted = uniqueByName.values().stream()
-                    .sorted(Comparator
-                            .comparingInt((Tag t) -> orderIndex.getOrDefault(t.getName(), Integer.MAX_VALUE))
-                            .thenComparing(Tag::getName))
-                    .toList();
-
-            openApi.setTags(sorted);
-        };
+    @Bean
+    public GroupedOpenApi complianceApi() {
+        return GroupedOpenApi.builder()
+                .group("3-compliance")
+                .displayName("Compliance")
+                .packagesToScan("com.api.bizplay_compliance")
+                .build();
     }
 }

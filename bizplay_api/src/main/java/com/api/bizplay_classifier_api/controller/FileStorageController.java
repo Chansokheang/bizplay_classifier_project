@@ -38,7 +38,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/classifier/api/v1/storage")
+@RequestMapping("/api/v1/storage")
 @Tag(
         name = "File Storage",
         description = "File storage endpoints for uploading, downloading, listing, and deleting training or transaction files."

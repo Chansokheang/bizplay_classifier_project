@@ -37,7 +37,7 @@ import java.util.UUID;
 import java.util.List;
 
 @RestController
-@RequestMapping("/classifier/api/v1/transactions")
+@RequestMapping("/api/v1/transactions")
 @Tag(
         name = "Transactions",
         description = "Transaction endpoints for uploading, creating, updating, and reviewing classified transaction data."

@@ -27,7 +27,7 @@ import java.util.UUID;
         description = "Upload, list, and manage knowledge-base documents. Every document belongs to "
                 + "exactly one bot — only chats with the same bot retrieve from a document's chunks.")
 @RestController
-@RequestMapping("/chatbot/api/v1/rag/documents")
+@RequestMapping("/api/v1/rag/documents")
 @RequiredArgsConstructor
 public class DocumentController {
 

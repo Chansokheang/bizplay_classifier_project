@@ -28,7 +28,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 @RestController
-@RequestMapping("/classifier/api/v1/categories")
+@RequestMapping("/api/v1/categories")
 @Tag(
         name = "Categories",
         description = "Category management endpoints for creating, updating, listing, and importing transaction classification categories."

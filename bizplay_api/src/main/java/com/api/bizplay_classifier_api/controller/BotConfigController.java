@@ -28,7 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
-@RequestMapping("/classifier/api/v1/bot-configs")
+@RequestMapping("/api/v1/bot-configs")
 @Tag(
         name = "Bot Configurations",
         description = "Bot configuration endpoints for managing AI provider settings, model selection, and prompt enhancement previews."

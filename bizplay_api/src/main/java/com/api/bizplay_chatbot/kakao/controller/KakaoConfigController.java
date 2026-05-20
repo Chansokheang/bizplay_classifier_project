@@ -24,7 +24,7 @@ import java.util.UUID;
 @Tag(name = "Kakao integration",
         description = "Link a bot to a KakaoTalk channel via Kakao i Openbuilder Skill webhooks")
 @RestController
-@RequestMapping("/chatbot/api/v1/bots/{id}/kakao")
+@RequestMapping("/api/v1/bots/{id}/kakao")
 @RequiredArgsConstructor
 public class KakaoConfigController {
 

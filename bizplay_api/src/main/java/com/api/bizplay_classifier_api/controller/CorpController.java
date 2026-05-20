@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 @Log4j2
 @RestController
-@RequestMapping("/classifier/api/v1/corps")
+@RequestMapping("/api/v1/corp")
 @Tag(
         name = "Corporations",
         description = "Corporation and corporation group endpoints for managing tenant company records used by classification workflows."

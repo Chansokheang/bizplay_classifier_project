@@ -36,7 +36,7 @@ import java.util.UUID;
 @Slf4j
 @Hidden
 @RestController
-@RequestMapping("/chatbot/api/v1/kakao/webhook")
+@RequestMapping("/api/v1/kakao/webhook")
 @RequiredArgsConstructor
 public class KakaoWebhookController {
 

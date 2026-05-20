@@ -21,7 +21,7 @@ import java.util.UUID;
 @Slf4j
 @Tag(name = "RAG Chat", description = "Chat with the RAG-powered assistant and view conversation history")
 @RestController
-@RequestMapping("/chatbot/api/v1/rag/chat")
+@RequestMapping("/api/v1/rag/chat")
 @RequiredArgsConstructor
 public class ChatController {
 

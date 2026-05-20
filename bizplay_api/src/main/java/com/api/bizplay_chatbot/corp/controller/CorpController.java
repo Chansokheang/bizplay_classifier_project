@@ -22,7 +22,7 @@ import java.util.List;
                 + "reference, and is the API path identifier here. To change a corp's corp_no, delete "
                 + "and re-create.")
 @RestController
-@RequestMapping("/chatbot/api/v1/corps")
+@RequestMapping("/api/v1/corps")
 @RequiredArgsConstructor
 public class CorpController {
 

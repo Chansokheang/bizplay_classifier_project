@@ -18,7 +18,7 @@ import java.util.UUID;
 
 @Log4j2
 @RestController
-@RequestMapping("/classifier/api/v1/rules")
+@RequestMapping("/api/v1/rules")
 @Tag(
         name = "Rules",
         description = "Rule management endpoints for creating, updating, deleting, and listing transaction classification rules."

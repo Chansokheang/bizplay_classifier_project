@@ -23,7 +23,7 @@ import java.util.UUID;
 @Tag(name = "Telegram integration",
         description = "Link a bot to a Telegram bot so external Telegram users can chat with it")
 @RestController
-@RequestMapping("/chatbot/api/v1/bots/{id}/telegram")
+@RequestMapping("/api/v1/bots/{id}/telegram")
 @RequiredArgsConstructor
 public class TelegramConfigController {
 

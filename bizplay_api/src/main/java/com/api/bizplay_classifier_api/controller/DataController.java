@@ -38,7 +38,7 @@ import java.io.IOException;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/classifier/api/v1/data")
+@RequestMapping("/api/v1/data")
 @Tag(
         name = "Training Data",
         description = "Training data endpoints for submitting rule training rows, uploading training files, and refreshing generated bot prompts."

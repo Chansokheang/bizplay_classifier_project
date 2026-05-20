@@ -19,7 +19,7 @@ import java.util.UUID;
 @Slf4j
 @Tag(name = "Bots", description = "Manage chatbots — each bot has its own purpose, documents, prompts and LLM settings")
 @RestController
-@RequestMapping("/chatbot/api/v1/bots")
+@RequestMapping("/api/v1/bots")
 @RequiredArgsConstructor
 public class BotController {
 

@@ -19,7 +19,7 @@ import java.util.List;
 @Slf4j
 @Tag(name = "Corp Groups", description = "Manage corp_group rows (top of the tenant tree). Each corp belongs to exactly one corp_group.")
 @RestController
-@RequestMapping("/chatbot/api/v1/corp-groups")
+@RequestMapping("/api/v1/corp-groups")
 @RequiredArgsConstructor
 public class CorpGroupController {
 
