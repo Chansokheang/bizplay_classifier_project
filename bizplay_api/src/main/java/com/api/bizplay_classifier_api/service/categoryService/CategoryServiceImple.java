@@ -154,6 +154,15 @@ public class CategoryServiceImple implements CategoryService {
 
     @Override
     @Transactional
+    public void deleteCategoriesByCorpNo(String corpNo) {
+        String normalizedCorpNo = corpNo == null ? null : corpNo.trim();
+        ensureCompanyOwnership(normalizedCorpNo);
+        categoryRepo.deleteRuleCategoryMappingsByCorpNo(normalizedCorpNo);
+        categoryRepo.deleteCategoriesByCorpNo(normalizedCorpNo);
+    }
+
+    @Override
+    @Transactional
     public List<CategoryUploadPayloadResponse> createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");

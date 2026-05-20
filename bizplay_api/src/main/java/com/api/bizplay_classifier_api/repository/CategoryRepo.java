@@ -3,6 +3,7 @@ package com.api.bizplay_classifier_api.repository;
 import com.api.bizplay_classifier_api.config.UUIDTypeHandler;
 import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.request.CategoryRequest;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Result;
@@ -139,4 +140,20 @@ public interface CategoryRepo {
         WHERE category_id = #{categoryId}
     """)
     Integer markCategoryAsUsed(@Param("categoryId") UUID categoryId);
+
+    @Delete("""
+        DELETE FROM rule_category_map
+        WHERE category_id IN (
+            SELECT category_id
+            FROM classifier_categories
+            WHERE corp_no = #{corpNo}
+        )
+    """)
+    Integer deleteRuleCategoryMappingsByCorpNo(@Param("corpNo") String corpNo);
+
+    @Delete("""
+        DELETE FROM classifier_categories
+        WHERE corp_no = #{corpNo}
+    """)
+    Integer deleteCategoriesByCorpNo(@Param("corpNo") String corpNo);
 }

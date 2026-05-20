@@ -21,5 +21,7 @@ public interface CategoryService {
 
     List<CategoryDTO> getAllCategoriesByCorpNo(String corpNo);
 
+    void deleteCategoriesByCorpNo(String corpNo);
+
     List<CategoryUploadPayloadResponse> createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName);
 }

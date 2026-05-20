@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -97,6 +98,19 @@ public class CategoryController {
                 ApiResponse.<List<CategoryDTO>>builder()
                         .payload(categoryService.getAllCategoriesByCorpNo(corpNo))
                         .message("Categories were retrieved successfully.")
+                        .code(HttpStatus.OK.value())
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
+    @DeleteMapping("/corp/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> deleteCategoriesByCorpNo(@PathVariable String corpNo) {
+        categoryService.deleteCategoriesByCorpNo(corpNo);
+        return ResponseEntity.ok(
+                ApiResponse.<Object>builder()
+                        .payload(null)
+                        .message("All categories were deleted successfully.")
                         .code(HttpStatus.OK.value())
                         .status(HttpStatus.OK)
                         .build()
