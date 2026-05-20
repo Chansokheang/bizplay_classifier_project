@@ -21,9 +21,13 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Make Maven wrapper executable
+        working-directory: bizplay_api
+        run: chmod +x mvnw
+
       - name: Build application
-        working-directory: bizplay_classifier_api
+        working-directory: bizplay_api
         run: ./mvnw -q -DskipTests package
 
       - name: Build Docker image
-        run: docker build -t bizplay-classifier-api:ci ./bizplay_classifier_api
+        run: docker build -t bizplay-classifier-api:ci ./bizplay_api

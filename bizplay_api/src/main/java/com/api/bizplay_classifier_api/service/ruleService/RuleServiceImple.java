@@ -50,9 +50,6 @@ public class RuleServiceImple implements RuleService {
         RuleDTO createdRule = ruleRepo.createRule(ruleRequest);
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(createdRule.getRuleId(), categoryIds);
-            for (UUID categoryId : categoryIds) {
-                categoryRepo.markCategoryAsUsed(categoryId);
-            }
         }
         return createdRule;
     }
@@ -65,9 +62,6 @@ public class RuleServiceImple implements RuleService {
         List<UUID> categoryIds = resolveCategoryIds(updatedRule.getCorpNo(), ruleUpdateRequest.getCategoryCodes());
         if (!categoryIds.isEmpty()) {
             ruleRepo.createRuleCategoryMappings(ruleId, categoryIds);
-            for (UUID categoryId : categoryIds) {
-                categoryRepo.markCategoryAsUsed(categoryId);
-            }
         }
         return updatedRule;
     }
@@ -80,6 +74,14 @@ public class RuleServiceImple implements RuleService {
         if (deletedCount == null || deletedCount == 0) {
             throw new CustomNotFoundException("Rule was not found with Id: " + ruleId);
         }
+    }
+
+    @Override
+    @Transactional
+    public void deleteRulesByCorpNo(String corpNo) {
+        corpService.getCorpByCorpNo(corpNo);
+        ruleRepo.deleteRuleCategoryMappingsByCorpNo(corpNo);
+        ruleRepo.deleteRulesByCorpNo(corpNo);
     }
 
     @Override
@@ -266,7 +268,6 @@ public class RuleServiceImple implements RuleService {
                 createdMappings++;
             }
 
-            categoryRepo.markCategoryAsUsed(category.getCategoryId());
             trainedRows++;
         }
 

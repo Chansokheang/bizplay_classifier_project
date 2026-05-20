@@ -402,7 +402,10 @@ public class BotConfigServiceImple implements BotConfigService {
         );
     }
 
-    private List<Map<String, String>> extractTrainingRowsFromFile(FileUploadHistoryDTO trainingFile, int remainingRows) {
+    private List<Map<String, String>> extractTrainingRowsFromFile(
+            FileUploadHistoryDTO trainingFile,
+            int remainingRows
+    ) {
         if (remainingRows <= 0) {
             return List.of();
         }
@@ -457,7 +460,10 @@ public class BotConfigServiceImple implements BotConfigService {
         }
     }
 
-    private List<Map<String, String>> extractTrainingRowsFromJsonFile(FileUploadHistoryDTO latestFile, int remainingRows) {
+    private List<Map<String, String>> extractTrainingRowsFromJsonFile(
+            FileUploadHistoryDTO latestFile,
+            int remainingRows
+    ) {
         Resource resource = fileStorageService.loadAsResource(latestFile.getStoredFileName());
         try (InputStream inputStream = resource.getInputStream()) {
             TrainingDataTrainRequest request = objectMapper.readValue(inputStream, TrainingDataTrainRequest.class);

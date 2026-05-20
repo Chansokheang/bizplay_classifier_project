@@ -17,6 +17,8 @@ public interface RuleService {
 
     void deleteRuleByRuleId(UUID ruleId);
 
+    void deleteRulesByCorpNo(String corpNo);
+
     RulePageResponse getAllRulesByCompanyId(String companyId, String usageStatus, int page, int limit);
 
     DataTrainSummaryResponse trainRulesFromExcel(MultipartFile file, String companyId, String sheetName);

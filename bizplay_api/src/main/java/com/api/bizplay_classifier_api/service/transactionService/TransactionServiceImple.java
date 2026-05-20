@@ -218,6 +218,7 @@ public class TransactionServiceImple implements TransactionService {
             Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
             Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Map<String, Map<String, CategoryDTO>> activeCategoriesCache = new HashMap<>();
             Set<String> usedRuleKeys = new HashSet<>();
 
             UsageValue usageValue = resolveUsageValueByMerchantName(
@@ -249,6 +250,7 @@ public class TransactionServiceImple implements TransactionService {
                     usageValue = aiUsageValue;
                 }
             }
+            usageValue = sanitizeUsageValueForActiveCategories(companyId, usageValue, activeCategoriesCache);
 
             ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
             applyUsageValueToSheet(dataRow, headerMap, usageValue);
@@ -318,6 +320,7 @@ public class TransactionServiceImple implements TransactionService {
             Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
             Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Map<String, Map<String, CategoryDTO>> activeCategoriesCache = new HashMap<>();
             Set<String> usedRuleKeys = new HashSet<>();
 
             List<UsageValue> usageValues = new ArrayList<>(transactionRequests.size());
@@ -372,6 +375,7 @@ public class TransactionServiceImple implements TransactionService {
                         usageValue = aiUsageValue;
                     }
                 }
+                usageValue = sanitizeUsageValueForActiveCategories(companyId, usageValue, activeCategoriesCache);
 
                 ensureUsageAndMethodColumnsSafe(headerRow, headerMap);
                 applyUsageValueToSheet(dataRow, headerMap, usageValue);
@@ -489,6 +493,7 @@ public class TransactionServiceImple implements TransactionService {
             Map<String, List<RuleClassifierDTO>> rulesCache = new HashMap<>();
             Map<String, BotConfigRequest.Config> botConfigCache = new HashMap<>();
             Map<String, AiFallbackService.AiFallbackResult> aiResultCache = new HashMap<>();
+            Map<String, Map<String, CategoryDTO>> activeCategoriesCache = new HashMap<>();
             Set<String> usedRuleKeys = new HashSet<>();
             String fileCompanyId = defaultCompanyId;
             int totalRows = 0;
@@ -539,6 +544,7 @@ public class TransactionServiceImple implements TransactionService {
                         usageValue = aiUsageValue;
                     }
                 }
+                usageValue = sanitizeUsageValueForActiveCategories(companyId, usageValue, activeCategoriesCache);
                 applyUsageValueToSheet(row, headerMap, usageValue);
                 upsertRuleCategoryFromRow(
                         companyId,
@@ -1308,6 +1314,71 @@ public class TransactionServiceImple implements TransactionService {
             return null;
         }
         return String.join(",", limited);
+    }
+
+    private UsageValue sanitizeUsageValueForActiveCategories(
+            String companyId,
+            UsageValue usageValue,
+            Map<String, Map<String, CategoryDTO>> activeCategoriesCache
+    ) {
+        if (companyId == null || companyId.isBlank() || usageValue == null) {
+            return usageValue;
+        }
+
+        Map<String, CategoryDTO> activeCategoriesByCode = activeCategoriesCache.computeIfAbsent(
+                companyId,
+                this::loadActiveCategoriesByCode
+        );
+        if (activeCategoriesByCode.isEmpty()) {
+            return UsageValue.unmatched(null, null);
+        }
+
+        List<String> codes = splitMultiValue(usageValue.usageCode());
+        List<String> names = splitMultiValue(usageValue.usageName());
+        List<Pair> pairs = pairCodesAndNames(codes, names);
+        LinkedHashSet<String> filteredCodes = new LinkedHashSet<>();
+        LinkedHashSet<String> filteredNames = new LinkedHashSet<>();
+
+        for (Pair pair : pairs) {
+            if (pair.code() == null || pair.code().isBlank()) {
+                continue;
+            }
+            CategoryDTO activeCategory = activeCategoriesByCode.get(pair.code().trim().toUpperCase());
+            if (activeCategory == null) {
+                continue;
+            }
+            filteredCodes.add(activeCategory.getCode().trim());
+            filteredNames.add(activeCategory.getCategory().trim());
+        }
+
+        String sanitizedCode = filteredCodes.isEmpty() ? null : String.join(",", filteredCodes);
+        String sanitizedName = filteredNames.isEmpty() ? null : String.join(",", filteredNames);
+        if (sanitizedCode == null || sanitizedName == null) {
+            return UsageValue.unmatched(null, null);
+        }
+        return new UsageValue(
+                sanitizedCode,
+                sanitizedName,
+                usageValue.matchedByRule(),
+                usageValue.matchedByAi(),
+                usageValue.method(),
+                usageValue.description()
+        );
+    }
+
+    private Map<String, CategoryDTO> loadActiveCategoriesByCode(String companyId) {
+        Map<String, CategoryDTO> activeCategoriesByCode = new LinkedHashMap<>();
+        List<CategoryDTO> activeCategories = categoryRepo.getActiveCategoriesByCorpNo(companyId);
+        if (activeCategories == null) {
+            return activeCategoriesByCode;
+        }
+        for (CategoryDTO category : activeCategories) {
+            if (category == null || category.getCode() == null || category.getCode().isBlank()) {
+                continue;
+            }
+            activeCategoriesByCode.put(category.getCode().trim().toUpperCase(), category);
+        }
+        return activeCategoriesByCode;
     }
 
     private void upsertRuleCategoryFromRow(String companyId, String merchantIndustryCode, String merchantIndustryName, String usageCodeRaw, String usageNameRaw) {

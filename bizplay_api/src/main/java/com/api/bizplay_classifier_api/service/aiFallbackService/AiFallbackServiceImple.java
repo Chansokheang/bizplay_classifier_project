@@ -40,6 +40,8 @@ public class AiFallbackServiceImple implements AiFallbackService {
             You are a corporate accounting assistant.
 
             Classify each transaction into the most appropriate 용도 using only the allowed company 용도 list.
+            The allowed list contains only active categories where is_used = true.
+            Never output any inactive category or any category that is not present in the provided active list.
 
             ## Priority Rules
 
@@ -410,6 +412,8 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 Rules:
                 - Return exactly one JSON object and nothing else.
                 - No markdown, no code block, no prose.
+                - The provided contexts are the only active categories (is_used = true).
+                - Never output any inactive category.
                 - code must use only codes from the provided contexts.
                 - category must match the selected code exactly from the provided contexts.
                 - If multiple results are required, join code values with commas and join category values with commas in the same order.
@@ -453,6 +457,8 @@ public class AiFallbackServiceImple implements AiFallbackService {
                 Rules:
                 - Return exactly one JSON object and nothing else.
                 - No markdown, no code block, no prose.
+                - The provided contexts are the only active categories (is_used = true).
+                - Never output any inactive category.
                 - code must use only codes from the provided contexts.
                 - category must match the selected code exactly from the provided contexts.
                 - If multiple results are required, join code values with commas and join category values with commas in the same order.

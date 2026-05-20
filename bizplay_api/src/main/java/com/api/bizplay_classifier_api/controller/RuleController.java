@@ -66,6 +66,19 @@ public class RuleController {
         );
     }
 
+    @DeleteMapping("/corp/{corpNo}")
+    public ResponseEntity<ApiResponse<?>> deleteRulesByCorpNo(@PathVariable String corpNo) {
+        ruleService.deleteRulesByCorpNo(corpNo);
+        return ResponseEntity.ok(
+                ApiResponse.<Object>builder()
+                        .payload(null)
+                        .message("All rules were deleted successfully.")
+                        .code(200)
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
     @GetMapping("/{corpNo}")
     public ResponseEntity<ApiResponse<?>> getAllRulesByCorpNo(
             @PathVariable String corpNo,
