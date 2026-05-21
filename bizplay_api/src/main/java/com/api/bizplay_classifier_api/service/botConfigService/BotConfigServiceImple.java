@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.service.botConfigService;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
+import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
@@ -10,6 +11,7 @@ import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.repository.BotConfigRepo;
+import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
@@ -42,6 +44,7 @@ import java.util.concurrent.CompletableFuture;
 @AllArgsConstructor
 public class BotConfigServiceImple implements BotConfigService {
     private final BotConfigRepo botConfigRepo;
+    private final CategoryRepo categoryRepo;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileStorageService fileStorageService;
     private final ObjectMapper objectMapper;
@@ -315,6 +318,15 @@ public class BotConfigServiceImple implements BotConfigService {
     }
 
     private List<Map<String, String>> collectTrainingRowsForPrompt(String companyId, Integer sampleRows) {
+        Set<String> activeCategoryCodes = categoryRepo.getActiveCategoriesByCorpNo(companyId).stream()
+                .map(CategoryDTO::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.toSet());
+        if (activeCategoryCodes.isEmpty()) {
+            return List.of();
+        }
+
         List<FileUploadHistoryDTO> trainingFiles = fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(
                 companyId,
                 com.api.bizplay_classifier_api.model.enums.FileType.TRAINING
@@ -329,7 +341,13 @@ public class BotConfigServiceImple implements BotConfigService {
 
         List<Map<String, String>> allValidRows = new ArrayList<>();
         for (FileUploadHistoryDTO trainingFile : newestFirst) {
-            allValidRows.addAll(extractTrainingRowsFromFile(trainingFile, MAX_SAMPLE_ROWS - allValidRows.size()));
+            List<Map<String, String>> activeRows = extractTrainingRowsFromFile(
+                    trainingFile,
+                    MAX_SAMPLE_ROWS - allValidRows.size()
+            ).stream()
+                    .filter(row -> activeCategoryCodes.contains(safeJsonCell(row.get("usage_code"))))
+                    .toList();
+            allValidRows.addAll(activeRows);
             if (allValidRows.size() >= MAX_SAMPLE_ROWS) {
                 break;
             }

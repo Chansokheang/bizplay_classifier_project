@@ -38,15 +38,15 @@ public class BotConfigController {
     public ResponseEntity<ApiResponse<?>> createBotConfig(
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
-                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                    defaultValue = "exaone-357-8b-instruct-awq",
                     allowableValues = {
-                            "EXAONE-3.5-7.8B-Instruct-AWQ",
+                            "exaone-357-8b-instruct-awq",
                             "gpt-4o-mini",
                             "gemini-1.5-flash",
                             "claude-3-5-sonnet-latest"
                     }
             ))
-            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
+            @RequestParam(value = "modelName", defaultValue = "exaone-357-8b-instruct-awq") String modelName,
             @Valid @RequestBody BotConfigRequest botConfigRequest
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(
@@ -76,15 +76,15 @@ public class BotConfigController {
             @PathVariable String corpNo,
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
-                    defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                    defaultValue = "exaone-357-8b-instruct-awq",
                     allowableValues = {
-                            "EXAONE-3.5-7.8B-Instruct-AWQ",
+                            "exaone-357-8b-instruct-awq",
                             "gpt-4o-mini",
                             "gemini-1.5-flash",
                             "claude-3-5-sonnet-latest"
                     }
             ))
-            @RequestParam(value = "modelName", defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ") String modelName,
+            @RequestParam(value = "modelName", defaultValue = "exaone-357-8b-instruct-awq") String modelName,
             @RequestBody @Valid BotConfigRequest.Config config
     ) {
         BotConfigDTO payload = botConfigService.upsertBotConfig(corpNo, config, provider, modelName);
