@@ -174,16 +174,25 @@ public class AiFallbackServiceImple implements AiFallbackService {
         }
 
         String trainingData = trainingRows.stream()
-                .map(row -> "- merchant_name: %s | merchant_industry_code: %s | merchant_industry_name: %s | supply_amount: %s | vat_amount: %s | usage_code: %s | usage_name: %s"
-                        .formatted(
-                                row.getOrDefault("merchant_name", ""),
-                                row.getOrDefault("merchant_industry_code", ""),
-                                row.getOrDefault("merchant_industry_name", ""),
-                                row.getOrDefault("supply_amount", ""),
-                                row.getOrDefault("vat_amount", ""),
-                                row.getOrDefault("usage_code", ""),
-                                row.getOrDefault("usage_name", "")
-                        ))
+                .map(row -> {
+                    if (Boolean.parseBoolean(row.getOrDefault("category_only", ""))) {
+                        return "- active_category_without_examples: usage_code: %s | usage_name: %s | guidance: allowed company category; use only when the transaction clearly matches the category name or company policy"
+                                .formatted(
+                                        row.getOrDefault("usage_code", ""),
+                                        row.getOrDefault("usage_name", "")
+                                );
+                    }
+                    return "- merchant_name: %s | merchant_industry_code: %s | merchant_industry_name: %s | supply_amount: %s | vat_amount: %s | usage_code: %s | usage_name: %s"
+                            .formatted(
+                                    row.getOrDefault("merchant_name", ""),
+                                    row.getOrDefault("merchant_industry_code", ""),
+                                    row.getOrDefault("merchant_industry_name", ""),
+                                    row.getOrDefault("supply_amount", ""),
+                                    row.getOrDefault("vat_amount", ""),
+                                    row.getOrDefault("usage_code", ""),
+                                    row.getOrDefault("usage_name", "")
+                            );
+                })
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         String systemMessage = """
@@ -204,13 +213,17 @@ public class AiFallbackServiceImple implements AiFallbackService {
                   account category".
 
                 Requirements:
-                1. Summarize the strongest patterns from merchant name, merchant industry, and repeated examples.
-                2. Include clear selection guidance for 용도코드 and 용도명 decisions.
-                3. Keep the prompt concise and operational, not verbose.
-                4. Preserve these placeholders exactly as written:
+                1. Include every distinct usage_code / usage_name pair present in the training rows.
+                   Do not omit low-frequency categories if they appear in the training rows.
+                   For active_category_without_examples rows, include them as allowed general company categories
+                   without inventing merchant or amount patterns.
+                2. Summarize the strongest patterns from merchant name, merchant industry, and repeated examples.
+                3. Include clear selection guidance for 용도코드 and 용도명 decisions.
+                4. Keep the prompt concise and operational, not verbose.
+                5. Preserve these placeholders exactly as written:
                    - {{accounts_list}}
                    - {{examples}}
-                5. End with a section that includes the placeholders for runtime injection.
+                6. End with a section that includes the placeholders for runtime injection.
                 """;
 
         String userMessage = "## Training rows (%d)\n".formatted(trainingRows.size())

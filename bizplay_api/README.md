@@ -207,6 +207,10 @@ Response payload shape:
 
 Get all categories for a corp.
 
+#### DELETE `/api/v1/categories/corp/{corpNo}`
+
+Delete all categories for a corp.
+
 #### POST `/api/v1/categories/upload`
 
 Bulk-create categories from Excel.

@@ -44,10 +44,10 @@ public class BotConfigRequest {
         private AiProvider provider;
 
         @Schema(
-                example = "EXAONE-3.5-7.8B-Instruct-AWQ",
-                defaultValue = "EXAONE-3.5-7.8B-Instruct-AWQ",
+                example = "exaone-357-8b-instruct-awq",
+                defaultValue = "exaone-357-8b-instruct-awq",
                 allowableValues = {
-                        "EXAONE-3.5-7.8B-Instruct-AWQ",
+                        "exaone-357-8b-instruct-awq",
                         "gpt-4o-mini",
                         "gemini-1.5-flash",
                         "claude-3-5-sonnet-latest"

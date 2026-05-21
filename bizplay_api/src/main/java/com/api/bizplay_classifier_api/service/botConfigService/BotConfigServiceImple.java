@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.service.botConfigService;
 
 import com.api.bizplay_classifier_api.exception.CustomNotFoundException;
 import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
+import com.api.bizplay_classifier_api.model.dto.CategoryDTO;
 import com.api.bizplay_classifier_api.model.dto.FileUploadHistoryDTO;
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
@@ -10,11 +11,13 @@ import com.api.bizplay_classifier_api.model.request.TrainingDataRowRequest;
 import com.api.bizplay_classifier_api.model.request.TrainingDataTrainRequest;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.repository.BotConfigRepo;
+import com.api.bizplay_classifier_api.repository.CategoryRepo;
 import com.api.bizplay_classifier_api.repository.FileUploadHistoryRepo;
 import com.api.bizplay_classifier_api.service.aiFallbackService.AiFallbackService;
 import com.api.bizplay_classifier_api.service.storageService.FileStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -40,8 +43,10 @@ import java.util.concurrent.CompletableFuture;
 
 @Service
 @AllArgsConstructor
+@Log4j2
 public class BotConfigServiceImple implements BotConfigService {
     private final BotConfigRepo botConfigRepo;
+    private final CategoryRepo categoryRepo;
     private final FileUploadHistoryRepo fileUploadHistoryRepo;
     private final FileStorageService fileStorageService;
     private final ObjectMapper objectMapper;
@@ -315,6 +320,16 @@ public class BotConfigServiceImple implements BotConfigService {
     }
 
     private List<Map<String, String>> collectTrainingRowsForPrompt(String companyId, Integer sampleRows) {
+        List<CategoryDTO> activeCategories = categoryRepo.getActiveCategoriesByCorpNo(companyId);
+        LinkedHashSet<String> activeCategoryCodes = activeCategories.stream()
+                .map(CategoryDTO::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (activeCategoryCodes.isEmpty()) {
+            return List.of();
+        }
+
         List<FileUploadHistoryDTO> trainingFiles = fileUploadHistoryRepo.getFilesByCompanyIdAndFileType(
                 companyId,
                 com.api.bizplay_classifier_api.model.enums.FileType.TRAINING
@@ -329,50 +344,81 @@ public class BotConfigServiceImple implements BotConfigService {
 
         List<Map<String, String>> allValidRows = new ArrayList<>();
         for (FileUploadHistoryDTO trainingFile : newestFirst) {
-            allValidRows.addAll(extractTrainingRowsFromFile(trainingFile, MAX_SAMPLE_ROWS - allValidRows.size()));
+            List<Map<String, String>> activeRows = extractTrainingRowsFromFile(
+                    trainingFile,
+                    MAX_SAMPLE_ROWS - allValidRows.size()
+            ).stream()
+                    .filter(row -> activeCategoryCodes.contains(safeJsonCell(row.get("usage_code"))))
+                    .toList();
+            allValidRows.addAll(activeRows);
             if (allValidRows.size() >= MAX_SAMPLE_ROWS) {
                 break;
             }
         }
 
-        return selectRowsEnsuringAccountCoverage(allValidRows, sampleRows);
+        return selectRowsEnsuringAccountCoverage(companyId, allValidRows, sampleRows, activeCategories);
     }
 
     private List<Map<String, String>> selectRowsEnsuringAccountCoverage(
+            String companyId,
             List<Map<String, String>> allValidRows,
-            Integer sampleRows
+            Integer sampleRows,
+            List<CategoryDTO> activeCategories
     ) {
-        if (allValidRows == null || allValidRows.isEmpty()) {
-            return List.of();
-        }
-
         int requestedRows = sampleRows == null ? MAX_SAMPLE_ROWS : Math.min(sampleRows, MAX_SAMPLE_ROWS);
-        LinkedHashMap<String, Map<String, String>> firstRowPerAccount = new LinkedHashMap<>();
+        List<CategoryDTO> validActiveCategories = activeCategories.stream()
+                .filter(category -> category.getCode() != null && !category.getCode().isBlank())
+                .toList();
+        LinkedHashMap<String, Map<String, String>> firstRowPerCode = new LinkedHashMap<>();
         for (Map<String, String> row : allValidRows) {
-            firstRowPerAccount.putIfAbsent(accountKey(row), row);
+            firstRowPerCode.putIfAbsent(safeJsonCell(row.get("usage_code")), row);
         }
-
-        int minimumCoverageRows = Math.min(firstRowPerAccount.size(), MAX_SAMPLE_ROWS);
-        int targetRows = Math.max(requestedRows, minimumCoverageRows);
 
         List<Map<String, String>> selectedRows = new ArrayList<>();
         Set<String> selectedFingerprints = new HashSet<>();
 
-        for (Map<String, String> row : firstRowPerAccount.values()) {
-            if (selectedRows.size() >= targetRows) {
+        for (CategoryDTO activeCategory : validActiveCategories) {
+            if (selectedRows.size() >= requestedRows) {
                 break;
+            }
+            String activeCategoryCode = safeText(activeCategory.getCode());
+            Map<String, String> row = firstRowPerCode.get(activeCategoryCode);
+            if (row == null) {
+                row = buildCategoryOnlyPromptRow(activeCategory);
             }
             addRowIfAbsent(selectedRows, selectedFingerprints, row);
         }
 
         for (Map<String, String> row : allValidRows) {
-            if (selectedRows.size() >= targetRows) {
+            if (selectedRows.size() >= requestedRows) {
                 break;
             }
             addRowIfAbsent(selectedRows, selectedFingerprints, row);
         }
 
+        log.info(
+                "Prompt enhancement selected usage codes for corpNo={}: {}",
+                companyId,
+                selectedRows.stream()
+                        .map(row -> safeJsonCell(row.get("usage_code")))
+                        .filter(code -> !code.isBlank())
+                        .distinct()
+                        .toList()
+        );
         return selectedRows;
+    }
+
+    private Map<String, String> buildCategoryOnlyPromptRow(CategoryDTO category) {
+        Map<String, String> rowData = new LinkedHashMap<>();
+        rowData.put("merchant_name", "");
+        rowData.put("merchant_industry_code", "");
+        rowData.put("merchant_industry_name", "");
+        rowData.put("supply_amount", "");
+        rowData.put("vat_amount", "");
+        rowData.put("usage_code", safeText(category.getCode()));
+        rowData.put("usage_name", safeText(category.getCategory()));
+        rowData.put("category_only", "true");
+        return rowData;
     }
 
     private void addRowIfAbsent(
@@ -384,10 +430,6 @@ public class BotConfigServiceImple implements BotConfigService {
         if (selectedFingerprints.add(fingerprint)) {
             selectedRows.add(row);
         }
-    }
-
-    private String accountKey(Map<String, String> row) {
-        return safeJsonCell(row.get("usage_code")) + "|" + safeJsonCell(row.get("usage_name"));
     }
 
     private String rowFingerprint(Map<String, String> row) {
@@ -509,7 +551,7 @@ public class BotConfigServiceImple implements BotConfigService {
         String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows, aiConfig);
         if (aiGeneratedPrompt != null && !aiGeneratedPrompt.isBlank()) {
             String normalized = ensurePromptHasDynamicPlaceholders(stripDynamicPlaceholders(aiGeneratedPrompt));
-            if (!looksLikeRowDumpPrompt(normalized)) {
+            if (!looksLikeRowDumpPrompt(normalized) && promptContainsAllUsageCodes(normalized, trainingRows)) {
                 return new PromptBuildResult(normalized, "AI");
             }
         }
@@ -664,6 +706,23 @@ public class BotConfigServiceImple implements BotConfigService {
         return false;
     }
 
+    private boolean promptContainsAllUsageCodes(String prompt, List<Map<String, String>> trainingRows) {
+        Set<String> requiredUsageCodes = trainingRows.stream()
+                .map(row -> safeText(row.get("usage_code")))
+                .filter(code -> !code.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (requiredUsageCodes.isEmpty()) {
+            return false;
+        }
+
+        for (String usageCode : requiredUsageCodes) {
+            if (!prompt.contains(usageCode)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private String buildConcisePromptFromPatterns(List<Map<String, String>> trainingRows) {
         Map<String, PatternBucket> buckets = new LinkedHashMap<>();
         for (Map<String, String> row : trainingRows) {
@@ -674,6 +733,10 @@ public class BotConfigServiceImple implements BotConfigService {
             }
             String key = usageCode + "|" + usageName;
             PatternBucket bucket = buckets.computeIfAbsent(key, k -> new PatternBucket(usageCode, usageName));
+            if (Boolean.parseBoolean(safeText(row.get("category_only")))) {
+                bucket.categoryOnly = true;
+                continue;
+            }
             bucket.count++;
             bucket.addIndustry(safeText(row.get("merchant_industry_name")));
             bucket.addMerchant(safeText(row.get("merchant_name")));
@@ -691,30 +754,31 @@ public class BotConfigServiceImple implements BotConfigService {
         sb.append("You are a corporate expense classification assistant. Analyze transactions and recommend the most appropriate 용도 (용도코드 + 용도명) from the company list.\n\n");
         sb.append("## Classification Rules\n\n");
 
-        int sectionCount = 0;
         for (PatternBucket bucket : sorted) {
-            if (sectionCount >= 12) {
-                break;
-            }
             sb.append("### ").append(bucket.usageCode).append(" ").append(bucket.usageName).append("\n");
-            String industries = topJoined(bucket.industryCounts, 4);
-            String merchants = topJoined(bucket.merchantCounts, 4);
-            if (!industries.isBlank()) {
-                sb.append("- Common industries: ").append(industries).append("\n");
-            }
-            if (!merchants.isBlank()) {
-                sb.append("- Common merchants: ").append(merchants).append("\n");
-            }
-            if (bucket.amountCount > 0) {
-                long avg = bucket.amountSum / bucket.amountCount;
-                sb.append("- Amount trend: avg ").append(avg);
-                if (bucket.amountMin != Long.MAX_VALUE && bucket.amountMax != Long.MIN_VALUE) {
-                    sb.append(" (range ").append(bucket.amountMin).append("~").append(bucket.amountMax).append(")");
+            if (bucket.categoryOnly && bucket.count == 0) {
+                sb.append("- No training examples are currently available for this active category.\n");
+                sb.append("- Treat this as an allowed general category from the company 용도 list.\n");
+                sb.append("- Use it only when the transaction clearly matches the category name or company policy.\n\n");
+            } else {
+                String industries = topJoined(bucket.industryCounts, 4);
+                String merchants = topJoined(bucket.merchantCounts, 4);
+                if (!industries.isBlank()) {
+                    sb.append("- Common industries: ").append(industries).append("\n");
                 }
-                sb.append("\n");
+                if (!merchants.isBlank()) {
+                    sb.append("- Common merchants: ").append(merchants).append("\n");
+                }
+                if (bucket.amountCount > 0) {
+                    long avg = bucket.amountSum / bucket.amountCount;
+                    sb.append("- Amount trend: avg ").append(avg);
+                    if (bucket.amountMin != Long.MAX_VALUE && bucket.amountMax != Long.MIN_VALUE) {
+                        sb.append(" (range ").append(bucket.amountMin).append("~").append(bucket.amountMax).append(")");
+                    }
+                    sb.append("\n");
+                }
+                sb.append("- Training frequency: ").append(bucket.count).append("\n\n");
             }
-            sb.append("- Training frequency: ").append(bucket.count).append("\n\n");
-            sectionCount++;
         }
 
         sb.append("## Important Guidance\n");
@@ -769,6 +833,7 @@ public class BotConfigServiceImple implements BotConfigService {
         private long amountMax = Long.MIN_VALUE;
         private final Map<String, Integer> industryCounts = new LinkedHashMap<>();
         private final Map<String, Integer> merchantCounts = new LinkedHashMap<>();
+        private boolean categoryOnly;
 
         private PatternBucket(String usageCode, String usageName) {
             this.usageCode = usageCode;
