@@ -117,6 +117,22 @@ public class CategoryController {
         );
     }
 
+    @DeleteMapping("/{corpNo}/{code}")
+    public ResponseEntity<ApiResponse<?>> deleteCategoryByCorpNoAndCode(
+            @PathVariable String corpNo,
+            @PathVariable String code
+    ) {
+        categoryService.deleteCategoryByCorpNoAndCode(corpNo, code);
+        return ResponseEntity.ok(
+                ApiResponse.<Object>builder()
+                        .payload(null)
+                        .message("Category was deleted successfully.")
+                        .code(HttpStatus.OK.value())
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<?>> uploadCategoriesByExcel(
             @RequestPart("file") MultipartFile file,

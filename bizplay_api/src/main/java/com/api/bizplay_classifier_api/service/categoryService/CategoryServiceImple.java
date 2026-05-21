@@ -163,6 +163,29 @@ public class CategoryServiceImple implements CategoryService {
 
     @Override
     @Transactional
+    public void deleteCategoryByCorpNoAndCode(String corpNo, String code) {
+        String normalizedCorpNo = corpNo == null ? null : corpNo.trim();
+        String normalizedCode = code == null ? null : code.trim();
+        ensureCompanyOwnership(normalizedCorpNo);
+
+        if (normalizedCode == null || normalizedCode.isBlank()) {
+            throw new IllegalArgumentException("Category code is required.");
+        }
+
+        CategoryDTO existingCategory = categoryRepo.findByCorpNoAndCode(normalizedCorpNo, normalizedCode);
+        if (existingCategory == null) {
+            throw new CustomNotFoundException("Category was not found with code: " + normalizedCode);
+        }
+
+        categoryRepo.deleteRuleCategoryMappingsByCategoryId(existingCategory.getCategoryId());
+        Integer deletedCount = categoryRepo.deleteCategoryByCorpNoAndCode(normalizedCorpNo, normalizedCode);
+        if (deletedCount == null || deletedCount == 0) {
+            throw new CustomNotFoundException("Category was not found with code: " + normalizedCode);
+        }
+    }
+
+    @Override
+    @Transactional
     public List<CategoryUploadPayloadResponse> createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Excel file is required.");

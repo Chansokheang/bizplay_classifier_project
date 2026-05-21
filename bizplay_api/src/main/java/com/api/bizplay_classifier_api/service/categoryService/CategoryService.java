@@ -23,5 +23,7 @@ public interface CategoryService {
 
     void deleteCategoriesByCorpNo(String corpNo);
 
+    void deleteCategoryByCorpNoAndCode(String corpNo, String code);
+
     List<CategoryUploadPayloadResponse> createCategoriesByExcel(MultipartFile file, String corpNo, String sheetName);
 }

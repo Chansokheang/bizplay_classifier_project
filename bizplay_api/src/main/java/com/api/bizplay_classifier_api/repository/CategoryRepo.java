@@ -156,4 +156,17 @@ public interface CategoryRepo {
         WHERE corp_no = #{corpNo}
     """)
     Integer deleteCategoriesByCorpNo(@Param("corpNo") String corpNo);
+
+    @Delete("""
+        DELETE FROM rule_category_map
+        WHERE category_id = #{categoryId}
+    """)
+    Integer deleteRuleCategoryMappingsByCategoryId(@Param("categoryId") UUID categoryId);
+
+    @Delete("""
+        DELETE FROM classifier_categories
+        WHERE corp_no = #{corpNo}
+          AND code = #{code}
+    """)
+    Integer deleteCategoryByCorpNoAndCode(@Param("corpNo") String corpNo, @Param("code") String code);
 }

@@ -4,6 +4,7 @@ import com.api.bizplay_classifier_api.model.dto.BotConfigDTO;
 import com.api.bizplay_classifier_api.model.enums.AiModel;
 import com.api.bizplay_classifier_api.model.enums.AiProvider;
 import com.api.bizplay_classifier_api.model.request.BotConfigRequest;
+import com.api.bizplay_classifier_api.model.response.AiModelResponse;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
 import com.api.bizplay_classifier_api.model.response.PromptEnhancementResponse;
 import com.api.bizplay_classifier_api.service.botConfigService.BotConfigService;
@@ -23,8 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.util.Arrays;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/bot-configs")
@@ -33,6 +34,25 @@ import java.util.concurrent.CompletableFuture;
 public class BotConfigController {
 
     private final BotConfigService botConfigService;
+
+    @GetMapping("/models")
+    public ResponseEntity<ApiResponse<?>> getAllModels() {
+        List<AiModelResponse> models = Arrays.stream(AiModel.values())
+                .map(model -> AiModelResponse.builder()
+                        .provider(AiProvider.valueOf(model.name()))
+                        .modelName(model.getModelName())
+                        .build())
+                .toList();
+
+        return ResponseEntity.ok(
+                ApiResponse.<List<AiModelResponse>>builder()
+                        .payload(models)
+                        .message("AI models were retrieved successfully.")
+                        .status(HttpStatus.OK)
+                        .code(HttpStatus.OK.value())
+                        .build()
+        );
+    }
 
     @PostMapping("/create")
     public ResponseEntity<ApiResponse<?>> createBotConfig(
