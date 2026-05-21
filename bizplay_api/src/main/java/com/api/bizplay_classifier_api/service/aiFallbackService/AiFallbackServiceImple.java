@@ -204,13 +204,15 @@ public class AiFallbackServiceImple implements AiFallbackService {
                   account category".
 
                 Requirements:
-                1. Summarize the strongest patterns from merchant name, merchant industry, and repeated examples.
-                2. Include clear selection guidance for 용도코드 and 용도명 decisions.
-                3. Keep the prompt concise and operational, not verbose.
-                4. Preserve these placeholders exactly as written:
+                1. Include every distinct usage_code / usage_name pair present in the training rows.
+                   Do not omit low-frequency categories if they appear in the training rows.
+                2. Summarize the strongest patterns from merchant name, merchant industry, and repeated examples.
+                3. Include clear selection guidance for 용도코드 and 용도명 decisions.
+                4. Keep the prompt concise and operational, not verbose.
+                5. Preserve these placeholders exactly as written:
                    - {{accounts_list}}
                    - {{examples}}
-                5. End with a section that includes the placeholders for runtime injection.
+                6. End with a section that includes the placeholders for runtime injection.
                 """;
 
         String userMessage = "## Training rows (%d)\n".formatted(trainingRows.size())

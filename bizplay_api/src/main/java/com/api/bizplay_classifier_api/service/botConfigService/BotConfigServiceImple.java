@@ -318,11 +318,11 @@ public class BotConfigServiceImple implements BotConfigService {
     }
 
     private List<Map<String, String>> collectTrainingRowsForPrompt(String companyId, Integer sampleRows) {
-        Set<String> activeCategoryCodes = categoryRepo.getActiveCategoriesByCorpNo(companyId).stream()
+        LinkedHashSet<String> activeCategoryCodes = categoryRepo.getActiveCategoriesByCorpNo(companyId).stream()
                 .map(CategoryDTO::getCode)
                 .filter(code -> code != null && !code.isBlank())
                 .map(String::trim)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         if (activeCategoryCodes.isEmpty()) {
             return List.of();
         }
@@ -353,38 +353,40 @@ public class BotConfigServiceImple implements BotConfigService {
             }
         }
 
-        return selectRowsEnsuringAccountCoverage(allValidRows, sampleRows);
+        return selectRowsEnsuringAccountCoverage(allValidRows, sampleRows, activeCategoryCodes);
     }
 
     private List<Map<String, String>> selectRowsEnsuringAccountCoverage(
             List<Map<String, String>> allValidRows,
-            Integer sampleRows
+            Integer sampleRows,
+            Set<String> activeCategoryCodes
     ) {
         if (allValidRows == null || allValidRows.isEmpty()) {
             return List.of();
         }
 
         int requestedRows = sampleRows == null ? MAX_SAMPLE_ROWS : Math.min(sampleRows, MAX_SAMPLE_ROWS);
-        LinkedHashMap<String, Map<String, String>> firstRowPerAccount = new LinkedHashMap<>();
+        LinkedHashMap<String, Map<String, String>> firstRowPerCode = new LinkedHashMap<>();
         for (Map<String, String> row : allValidRows) {
-            firstRowPerAccount.putIfAbsent(accountKey(row), row);
+            firstRowPerCode.putIfAbsent(safeJsonCell(row.get("usage_code")), row);
         }
-
-        int minimumCoverageRows = Math.min(firstRowPerAccount.size(), MAX_SAMPLE_ROWS);
-        int targetRows = Math.max(requestedRows, minimumCoverageRows);
 
         List<Map<String, String>> selectedRows = new ArrayList<>();
         Set<String> selectedFingerprints = new HashSet<>();
 
-        for (Map<String, String> row : firstRowPerAccount.values()) {
-            if (selectedRows.size() >= targetRows) {
+        for (String activeCategoryCode : activeCategoryCodes) {
+            if (selectedRows.size() >= requestedRows) {
                 break;
+            }
+            Map<String, String> row = firstRowPerCode.get(activeCategoryCode);
+            if (row == null) {
+                continue;
             }
             addRowIfAbsent(selectedRows, selectedFingerprints, row);
         }
 
         for (Map<String, String> row : allValidRows) {
-            if (selectedRows.size() >= targetRows) {
+            if (selectedRows.size() >= requestedRows) {
                 break;
             }
             addRowIfAbsent(selectedRows, selectedFingerprints, row);
@@ -402,10 +404,6 @@ public class BotConfigServiceImple implements BotConfigService {
         if (selectedFingerprints.add(fingerprint)) {
             selectedRows.add(row);
         }
-    }
-
-    private String accountKey(Map<String, String> row) {
-        return safeJsonCell(row.get("usage_code")) + "|" + safeJsonCell(row.get("usage_name"));
     }
 
     private String rowFingerprint(Map<String, String> row) {
@@ -527,7 +525,7 @@ public class BotConfigServiceImple implements BotConfigService {
         String aiGeneratedPrompt = aiFallbackService.generatePrompt(trainingRows, aiConfig);
         if (aiGeneratedPrompt != null && !aiGeneratedPrompt.isBlank()) {
             String normalized = ensurePromptHasDynamicPlaceholders(stripDynamicPlaceholders(aiGeneratedPrompt));
-            if (!looksLikeRowDumpPrompt(normalized)) {
+            if (!looksLikeRowDumpPrompt(normalized) && promptContainsAllUsageCodes(normalized, trainingRows)) {
                 return new PromptBuildResult(normalized, "AI");
             }
         }
@@ -682,6 +680,23 @@ public class BotConfigServiceImple implements BotConfigService {
         return false;
     }
 
+    private boolean promptContainsAllUsageCodes(String prompt, List<Map<String, String>> trainingRows) {
+        Set<String> requiredUsageCodes = trainingRows.stream()
+                .map(row -> safeText(row.get("usage_code")))
+                .filter(code -> !code.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (requiredUsageCodes.isEmpty()) {
+            return false;
+        }
+
+        for (String usageCode : requiredUsageCodes) {
+            if (!prompt.contains(usageCode)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private String buildConcisePromptFromPatterns(List<Map<String, String>> trainingRows) {
         Map<String, PatternBucket> buckets = new LinkedHashMap<>();
         for (Map<String, String> row : trainingRows) {
@@ -711,9 +726,6 @@ public class BotConfigServiceImple implements BotConfigService {
 
         int sectionCount = 0;
         for (PatternBucket bucket : sorted) {
-            if (sectionCount >= 12) {
-                break;
-            }
             sb.append("### ").append(bucket.usageCode).append(" ").append(bucket.usageName).append("\n");
             String industries = topJoined(bucket.industryCounts, 4);
             String merchants = topJoined(bucket.merchantCounts, 4);
