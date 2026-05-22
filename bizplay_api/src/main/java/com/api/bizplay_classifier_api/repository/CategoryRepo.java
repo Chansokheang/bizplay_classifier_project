@@ -20,8 +20,8 @@ import java.util.UUID;
 public interface CategoryRepo {
 
     @Select("""
-        INSERT INTO classifier_categories (corp_no, code, category, is_used)
-        VALUES (#{category.corpNo}, #{category.code}, #{category.category}, COALESCE(#{category.isUsed}, FALSE))
+        INSERT INTO classifier_categories (corp_no, code, category, type, is_used)
+        VALUES (#{category.corpNo}, #{category.code}, #{category.category}, #{category.type}, COALESCE(#{category.isUsed}, FALSE))
         RETURNING *
     """)
     @Results(id = "categoryMap", value = {
@@ -29,6 +29,7 @@ public interface CategoryRepo {
             @Result(property = "corpNo", column = "corp_no"),
             @Result(property = "code", column = "code"),
             @Result(property = "category", column = "category"),
+            @Result(property = "type", column = "type"),
             @Result(property = "isUsed", column = "is_used")
     })
     CategoryDTO createCategory(@Param("category") CategoryRequest categoryRequest);
@@ -122,6 +123,7 @@ public interface CategoryRepo {
         UPDATE classifier_categories
         SET code = #{newCode},
             category = #{category},
+            type = #{type},
             is_used = #{isUsed}
         WHERE corp_no = #{corpNo}
           AND code = #{currentCode}
@@ -131,6 +133,7 @@ public interface CategoryRepo {
             @Param("currentCode") String currentCode,
             @Param("newCode") String newCode,
             @Param("category") String category,
+            @Param("type") String type,
             @Param("isUsed") Boolean isUsed
     );
 

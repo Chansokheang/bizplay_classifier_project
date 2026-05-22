@@ -2,6 +2,7 @@ package com.api.bizplay_classifier_api.model.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -19,6 +20,9 @@ public class CategoryBatchItemRequest {
 
     @NotBlank(message = "Category can not be blank.")
     private String category;
+
+    @Size(max = 100, message = "Type cannot exceed 100 characters.")
+    private String type;
 
     @Builder.Default
     private Boolean isUsed = false;

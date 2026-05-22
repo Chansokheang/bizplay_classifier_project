@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -28,6 +29,9 @@ public class CategoryRequest {
 
     @NotBlank(message = "Category can not be blank.")
     private String category;
+
+    @Size(max = 100, message = "Type cannot exceed 100 characters.")
+    private String type;
 
     @Builder.Default
     private Boolean isUsed = false;

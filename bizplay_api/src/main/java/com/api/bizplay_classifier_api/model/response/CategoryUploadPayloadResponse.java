@@ -12,5 +12,6 @@ import lombok.NoArgsConstructor;
 public class CategoryUploadPayloadResponse {
     private String category;
     private String code;
+    private String type;
     private Boolean isUsed;
 }
