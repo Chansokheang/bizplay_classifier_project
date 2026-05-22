@@ -42,6 +42,7 @@ CREATE TABLE classifier_categories (
     corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE CASCADE,
     code VARCHAR(50) NOT NULL,
     category VARCHAR(255) NOT NULL,
+    type VARCHAR(100),
     is_used BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT uq_categories_corp_code UNIQUE (corp_no, code)
 );

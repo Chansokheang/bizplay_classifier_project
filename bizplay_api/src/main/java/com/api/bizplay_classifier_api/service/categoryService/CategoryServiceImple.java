@@ -31,6 +31,7 @@ public class CategoryServiceImple implements CategoryService {
 
     private static final String HEADER_CODE = "code";
     private static final String HEADER_CATEGORY = "category";
+    private static final String HEADER_TYPE = "type";
     private static final String HEADER_IS_USED = "is_used";
 
     private final CategoryRepo categoryRepo;
@@ -60,6 +61,7 @@ public class CategoryServiceImple implements CategoryService {
                                     .corpNo(normalizedCorpNo)
                                     .code(categoryRequest.getCode())
                                     .category(categoryRequest.getCategory())
+                                    .type(categoryRequest.getType())
                                     .isUsed(Boolean.TRUE.equals(categoryRequest.getIsUsed()))
                                     .build()
                     )
@@ -83,6 +85,7 @@ public class CategoryServiceImple implements CategoryService {
         for (CategoryBatchItemRequest categoryRequest : categoryRequests) {
             String normalizedCode = categoryRequest.getCode().trim();
             String normalizedCategory = categoryRequest.getCategory().trim();
+            String normalizedType = normalizeOptionalText(categoryRequest.getType());
             boolean normalizedIsUsed = Boolean.TRUE.equals(categoryRequest.getIsUsed());
 
             CategoryDTO existingCategory = categoryRepo.findByCorpNoAndCode(normalizedCorpNo, normalizedCode);
@@ -95,6 +98,7 @@ public class CategoryServiceImple implements CategoryService {
                     normalizedCode,
                     normalizedCode,
                     normalizedCategory,
+                    normalizedType,
                     normalizedIsUsed
             );
             if (updatedCount == null || updatedCount == 0) {
@@ -113,6 +117,7 @@ public class CategoryServiceImple implements CategoryService {
         String normalizedCurrentCode = currentCode.trim();
         String normalizedCode = categoryUpdateRequest.getCode().trim();
         String normalizedCategory = categoryUpdateRequest.getCategory().trim();
+        String normalizedType = normalizeOptionalText(categoryUpdateRequest.getType());
         boolean normalizedIsUsed = Boolean.TRUE.equals(categoryUpdateRequest.getIsUsed());
 
         ensureCompanyOwnership(corpNo);
@@ -132,6 +137,7 @@ public class CategoryServiceImple implements CategoryService {
                 normalizedCurrentCode,
                 normalizedCode,
                 normalizedCategory,
+                normalizedType,
                 normalizedIsUsed
         );
         if (updatedCount == null || updatedCount == 0) {
@@ -213,6 +219,7 @@ public class CategoryServiceImple implements CategoryService {
 
                 String code = getCellValue(row, headerMap, formatter, HEADER_CODE);
                 String category = getCellValue(row, headerMap, formatter, HEADER_CATEGORY);
+                String type = getCellValue(row, headerMap, formatter, HEADER_TYPE);
                 String isUsedRaw = getCellValue(row, headerMap, formatter, HEADER_IS_USED);
 
                 if (code == null || code.isBlank() || category == null || category.isBlank()) {
@@ -227,6 +234,7 @@ public class CategoryServiceImple implements CategoryService {
                 }
 
                 String normalizedCategory = category.trim();
+                String normalizedType = normalizeOptionalText(type);
                 boolean isUsed = parseBooleanValue(isUsedRaw);
                 CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(corpNo, normalizedCode);
                 CategoryDTO existedByCategory = categoryRepo.findByCorpNoAndCategory(corpNo, normalizedCategory);
@@ -238,6 +246,7 @@ public class CategoryServiceImple implements CategoryService {
                                     .corpNo(corpNo)
                                     .code(normalizedCode)
                                     .category(normalizedCategory)
+                                    .type(normalizedType)
                                     .isUsed(isUsed)
                                     .build()
                     );
@@ -251,6 +260,7 @@ public class CategoryServiceImple implements CategoryService {
                         CategoryUploadPayloadResponse.builder()
                                 .category(normalizedCategory)
                                 .code(normalizedCode)
+                                .type(normalizedType)
                                 .isUsed(isUsed)
                                 .build()
                 );
@@ -273,6 +283,7 @@ public class CategoryServiceImple implements CategoryService {
         categoryRequest.setCorpNo(categoryRequest.getCorpNo().trim());
         categoryRequest.setCode(categoryRequest.getCode().trim());
         categoryRequest.setCategory(categoryRequest.getCategory().trim());
+        categoryRequest.setType(normalizeOptionalText(categoryRequest.getType()));
         categoryRequest.setIsUsed(Boolean.TRUE.equals(categoryRequest.getIsUsed()));
 
         CategoryDTO existedByCode = categoryRepo.findByCorpNoAndCode(
@@ -353,6 +364,9 @@ public class CategoryServiceImple implements CategoryService {
 
     private String resolveHeader(String rawHeader) {
         String normalized = normalizeHeader(rawHeader);
+        if (containsAny(normalized, "type", "categorytype", "purposetype")) {
+            return HEADER_TYPE;
+        }
 
         if (containsAny(normalized, "code", "purposecode", "용도코드", "코드")) {
             return HEADER_CODE;
@@ -438,6 +452,13 @@ public class CategoryServiceImple implements CategoryService {
                 || normalized.equals("1")
                 || normalized.equals("t")
                 || normalized.equals("사용");
+    }
+
+    private String normalizeOptionalText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private record HeaderParseResult(int headerRowIndex, Map<String, Integer> headerMap) {

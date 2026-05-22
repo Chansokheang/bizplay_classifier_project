@@ -18,5 +18,6 @@ public class CategoryDTO {
     private String CorpNo;
     private String code;
     private String category;
+    private String type;
     private Boolean isUsed;
 }
