@@ -182,6 +182,28 @@ public interface RuleRepo {
     """)
     Integer deleteRuleByRuleId(@Param("ruleId") UUID ruleId);
 
+    @Delete({
+            "<script>",
+            "DELETE FROM rule_category_map",
+            "WHERE rule_id IN",
+            "<foreach collection='ruleIds' item='ruleId' open='(' separator=',' close=')'>",
+            "#{ruleId}",
+            "</foreach>",
+            "</script>"
+    })
+    Integer deleteRuleCategoryMappingsByRuleIds(@Param("ruleIds") List<UUID> ruleIds);
+
+    @Delete({
+            "<script>",
+            "DELETE FROM classifier_rules",
+            "WHERE rule_id IN",
+            "<foreach collection='ruleIds' item='ruleId' open='(' separator=',' close=')'>",
+            "#{ruleId}",
+            "</foreach>",
+            "</script>"
+    })
+    Integer deleteRulesByRuleIds(@Param("ruleIds") List<UUID> ruleIds);
+
     @Delete("""
         DELETE FROM rule_category_map
         WHERE rule_id IN (

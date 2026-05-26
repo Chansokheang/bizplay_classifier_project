@@ -17,6 +17,8 @@ public interface RuleService {
 
     void deleteRuleByRuleId(UUID ruleId);
 
+    void deleteRulesByRuleIds(List<UUID> ruleIds);
+
     void deleteRulesByCorpNo(String corpNo);
 
     RulePageResponse getAllRulesByCompanyId(String companyId, String usageStatus, int page, int limit);

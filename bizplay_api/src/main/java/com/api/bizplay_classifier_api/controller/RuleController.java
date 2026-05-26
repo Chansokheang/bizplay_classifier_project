@@ -1,6 +1,7 @@
 package com.api.bizplay_classifier_api.controller;
 
 import com.api.bizplay_classifier_api.model.dto.RuleDTO;
+import com.api.bizplay_classifier_api.model.request.RuleBatchDeleteRequest;
 import com.api.bizplay_classifier_api.model.request.RuleRequest;
 import com.api.bizplay_classifier_api.model.request.RuleUpdateRequest;
 import com.api.bizplay_classifier_api.model.response.ApiResponse;
@@ -55,6 +56,19 @@ public class RuleController {
                 ApiResponse.<Object>builder()
                         .payload(null)
                         .message("Rule was deleted successfully.")
+                        .code(200)
+                        .status(HttpStatus.OK)
+                        .build()
+        );
+    }
+
+    @DeleteMapping("/batch")
+    public ResponseEntity<ApiResponse<?>> deleteRulesByRuleIds(@Valid @RequestBody RuleBatchDeleteRequest request) {
+        ruleService.deleteRulesByRuleIds(request.getRuleIds());
+        return ResponseEntity.ok(
+                ApiResponse.<Object>builder()
+                        .payload(null)
+                        .message("Rules were deleted successfully.")
                         .code(200)
                         .status(HttpStatus.OK)
                         .build()

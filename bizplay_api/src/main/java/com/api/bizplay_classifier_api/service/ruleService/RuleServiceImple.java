@@ -78,6 +78,33 @@ public class RuleServiceImple implements RuleService {
 
     @Override
     @Transactional
+    public void deleteRulesByRuleIds(List<UUID> ruleIds) {
+        if (ruleIds == null || ruleIds.isEmpty()) {
+            throw new IllegalArgumentException("Rule id list can not be empty.");
+        }
+
+        LinkedHashSet<UUID> uniqueRuleIds = new LinkedHashSet<>();
+        for (UUID ruleId : ruleIds) {
+            if (ruleId == null) {
+                throw new IllegalArgumentException("Rule id can not be null.");
+            }
+            uniqueRuleIds.add(ruleId);
+        }
+
+        if (uniqueRuleIds.isEmpty()) {
+            throw new IllegalArgumentException("Rule id list can not be empty.");
+        }
+
+        List<UUID> normalizedRuleIds = List.copyOf(uniqueRuleIds);
+        ruleRepo.deleteRuleCategoryMappingsByRuleIds(normalizedRuleIds);
+        Integer deletedCount = ruleRepo.deleteRulesByRuleIds(normalizedRuleIds);
+        if (deletedCount == null || deletedCount != normalizedRuleIds.size()) {
+            throw new CustomNotFoundException("Some rules were not found with Ids: " + normalizedRuleIds);
+        }
+    }
+
+    @Override
+    @Transactional
     public void deleteRulesByCorpNo(String corpNo) {
         corpService.getCorpByCorpNo(corpNo);
         ruleRepo.deleteRuleCategoryMappingsByCorpNo(corpNo);
