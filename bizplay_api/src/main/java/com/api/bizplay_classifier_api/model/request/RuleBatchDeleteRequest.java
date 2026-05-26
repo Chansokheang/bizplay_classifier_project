@@ -1,5 +1,6 @@
 package com.api.bizplay_classifier_api.model.request;
 
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -16,7 +17,7 @@ import java.util.UUID;
 @Builder
 public class RuleBatchDeleteRequest {
 
-    @NotNull(message = "Corp no can not be null.")
+    @NotBlank(message = "Corp no can not be blank.")
     private String corpNo;
 
     @NotEmpty(message = "Rule id list can not be empty.")
