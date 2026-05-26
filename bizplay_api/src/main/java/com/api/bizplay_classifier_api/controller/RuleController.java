@@ -64,7 +64,7 @@ public class RuleController {
 
     @DeleteMapping("/batch")
     public ResponseEntity<ApiResponse<?>> deleteRulesByRuleIds(@Valid @RequestBody RuleBatchDeleteRequest request) {
-        ruleService.deleteRulesByRuleIds(request.getRuleIds());
+        ruleService.deleteRulesByCorpNoAndRuleIds(request.getCorpNo(), request.getRuleIds());
         return ResponseEntity.ok(
                 ApiResponse.<Object>builder()
                         .payload(null)

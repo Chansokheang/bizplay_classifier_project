@@ -17,7 +17,7 @@ public interface RuleService {
 
     void deleteRuleByRuleId(UUID ruleId);
 
-    void deleteRulesByRuleIds(List<UUID> ruleIds);
+    void deleteRulesByCorpNoAndRuleIds(String corpNo, List<UUID> ruleIds);
 
     void deleteRulesByCorpNo(String corpNo);
 

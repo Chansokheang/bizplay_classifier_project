@@ -78,7 +78,10 @@ public class RuleServiceImple implements RuleService {
 
     @Override
     @Transactional
-    public void deleteRulesByRuleIds(List<UUID> ruleIds) {
+    public void deleteRulesByCorpNoAndRuleIds(String corpNo, List<UUID> ruleIds) {
+        String normalizedCorpNo = corpNo == null ? null : corpNo.trim();
+        corpService.getCorpByCorpNo(normalizedCorpNo);
+
         if (ruleIds == null || ruleIds.isEmpty()) {
             throw new IllegalArgumentException("Rule id list can not be empty.");
         }
@@ -96,10 +99,10 @@ public class RuleServiceImple implements RuleService {
         }
 
         List<UUID> normalizedRuleIds = List.copyOf(uniqueRuleIds);
-        ruleRepo.deleteRuleCategoryMappingsByRuleIds(normalizedRuleIds);
-        Integer deletedCount = ruleRepo.deleteRulesByRuleIds(normalizedRuleIds);
+        ruleRepo.deleteRuleCategoryMappingsByCorpNoAndRuleIds(normalizedCorpNo, normalizedRuleIds);
+        Integer deletedCount = ruleRepo.deleteRulesByCorpNoAndRuleIds(normalizedCorpNo, normalizedRuleIds);
         if (deletedCount == null || deletedCount != normalizedRuleIds.size()) {
-            throw new CustomNotFoundException("Some rules were not found with Ids: " + normalizedRuleIds);
+            throw new CustomNotFoundException("Some rules were not found with corpNo: " + normalizedCorpNo + ", Ids: " + normalizedRuleIds);
         }
     }
 

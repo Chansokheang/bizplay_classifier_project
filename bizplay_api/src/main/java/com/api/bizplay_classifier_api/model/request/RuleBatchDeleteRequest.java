@@ -16,6 +16,9 @@ import java.util.UUID;
 @Builder
 public class RuleBatchDeleteRequest {
 
+    @NotNull(message = "Corp no can not be null.")
+    private String corpNo;
+
     @NotEmpty(message = "Rule id list can not be empty.")
     private List<@NotNull(message = "Rule id can not be null.") UUID> ruleIds;
 }
