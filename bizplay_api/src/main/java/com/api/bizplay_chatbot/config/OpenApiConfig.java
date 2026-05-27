@@ -51,4 +51,13 @@ public class OpenApiConfig {
                 .packagesToScan("com.api.bizplay_compliance")
                 .build();
     }
+
+    @Bean
+    public GroupedOpenApi conversationalApi() {
+        return GroupedOpenApi.builder()
+                .group("4-conversational")
+                .displayName("Conversational")
+                .packagesToScan("com.api.bizplay_conversational")
+                .build();
+    }
 }
