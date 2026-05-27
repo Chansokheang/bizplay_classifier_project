@@ -16,7 +16,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.util.stream.Collectors;
 
 @Slf4j
-@RestControllerAdvice
+@RestControllerAdvice(basePackages = "com.api.bizplay_chatbot")
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)

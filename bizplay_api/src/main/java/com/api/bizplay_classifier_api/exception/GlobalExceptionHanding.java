@@ -15,7 +15,7 @@ import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 
-@RestControllerAdvice
+@RestControllerAdvice(basePackages = "com.api.bizplay_classifier_api")
 public class GlobalExceptionHanding {
     @ResponseStatus(HttpStatus.NOT_FOUND)
     @ExceptionHandler(value = CustomNotFoundException.class)

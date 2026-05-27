@@ -57,10 +57,8 @@ USER bizplay
 EXPOSE 8080
 
 # Health check
-# Note: Add spring-boot-starter-actuator to pom.xml to enable /actuator/health endpoint
-# For now, checking if port 8080 is responding
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/ || exit 1
+  CMD curl -f http://localhost:8080/v3/api-docs || exit 1
 
 # JVM optimization flags
 ENV JAVA_OPTS="-XX:+UseContainerSupport \
