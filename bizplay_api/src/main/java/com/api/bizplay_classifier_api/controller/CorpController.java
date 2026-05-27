@@ -23,7 +23,7 @@ import java.util.List;
         description = "Corporation and corporation group endpoints for managing tenant company records used by classification workflows."
 )
 @AllArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 public class CorpController {
 
     private final CorpService corpService;

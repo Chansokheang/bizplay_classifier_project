@@ -35,7 +35,7 @@ import java.util.List;
         description = "Bot configuration endpoints for managing AI provider settings, model selection, and prompt enhancement previews."
 )
 @AllArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 public class BotConfigController {
 
     private final BotConfigService botConfigService;

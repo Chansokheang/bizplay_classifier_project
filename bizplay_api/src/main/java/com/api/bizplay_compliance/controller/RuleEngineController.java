@@ -26,7 +26,7 @@ import java.util.UUID;
 @RestController
 @AllArgsConstructor
 @Log4j2
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 @RequestMapping("/api/v1/rule-engine")
 @Tag(
         name = "Rule Engine",

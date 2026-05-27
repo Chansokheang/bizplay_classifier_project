@@ -44,7 +44,7 @@ import java.util.UUID;
         description = "Training data endpoints for submitting rule training rows, uploading training files, and refreshing generated bot prompts."
 )
 @AllArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 public class DataController {
     private final RuleService ruleService;
     private final FileStorageService fileStorageService;

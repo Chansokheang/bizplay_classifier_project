@@ -43,7 +43,7 @@ import java.util.List;
         description = "Transaction endpoints for uploading, creating, updating, and reviewing classified transaction data."
 )
 @AllArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 public class TransactionController {
 
     private final TransactionService transactionService;

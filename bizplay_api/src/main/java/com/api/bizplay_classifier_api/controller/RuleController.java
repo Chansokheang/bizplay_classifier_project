@@ -25,7 +25,7 @@ import java.util.UUID;
         description = "Rule management endpoints for creating, updating, deleting, and listing transaction classification rules."
 )
 @AllArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "http://10.255.78.89:9009", "http://203.255.78.89:9009", "https://bizplay-api.aiconvergencelab.com"})
 public class RuleController {
 
     private final RuleService ruleService;
