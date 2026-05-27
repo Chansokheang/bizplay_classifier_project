@@ -66,7 +66,7 @@ Rule status meaning:
 ## Receipt upload
 
 ### `POST /receipt/upload`
-Uploads a receipt image and returns a `fileId` for later use in `run-all`.
+Uploads a receipt image and returns a `fileId` to pass to `POST /run-all` as the optional `fileId` query parameter. This lets `run-all` reuse the uploaded receipt for `R05` and `R06` without uploading the image again.
 
 - Content-Type: `multipart/form-data`
 - Part:

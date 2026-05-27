@@ -42,7 +42,7 @@ public class FileStorageServiceImple implements FileStorageService {
             @Value("${app.storage.minio.bucket:bizplay-files}") String bucketName,
             @Value("${app.storage.minio.request-folder:request-files}") String requestFolder,
             @Value("${app.storage.minio.fail-fast:false}") boolean failFast,
-            @Value("${app.storage.public-base-path:/api/v1/storage/files}") String publicBasePath
+            @Value("${app.storage.public-base-path:/classifier/api/v1/storage/files}") String publicBasePath
     ) {
         this.minioClient = MinioClient.builder()
                 .endpoint(endpoint)
