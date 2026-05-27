@@ -33,4 +33,16 @@ public class PlanCreateRequest {
     @NotNull
     @Valid
     private TripInformationRequest tripInformation;
+
+    @JsonProperty("CostInformation")
+    @Valid
+    private ExpenseSectionRequest costInformation;
+
+    @JsonProperty("TransportationInformation")
+    @Valid
+    private ExpenseSectionRequest transportationInformation;
+
+    @JsonProperty("Etc")
+    @Valid
+    private ExpenseSectionRequest etc;
 }

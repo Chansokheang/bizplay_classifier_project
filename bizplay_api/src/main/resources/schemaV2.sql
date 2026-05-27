@@ -129,7 +129,7 @@ CREATE INDEX idx_file_classify_summary_created ON classifier_file_classify_summa
 -- ============================================
 -- BIZPLAY CONVERSATIONAL - BUSINESS TRIP PLAN
 -- ============================================
-CREATE TABLE business_trip_plans (
+CREATE TABLE conversational_trip_plan (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
     plan_type VARCHAR(100) NOT NULL,
@@ -143,43 +143,132 @@ CREATE TABLE business_trip_plans (
     business_trip_classification VARCHAR(100),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT ck_business_trip_plan_dates CHECK (
+    CONSTRAINT ck_conversational_trip_plan_dates CHECK (
         business_start_date IS NULL
         OR business_end_date IS NULL
         OR business_end_date >= business_start_date
     )
 );
 
-CREATE TABLE business_trip_plan_attachments (
+CREATE TABLE conversational_trip_plan_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    plan_id UUID NOT NULL REFERENCES business_trip_plans(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    plan_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
     attachment_type VARCHAR(20) NOT NULL,
     file_id VARCHAR(100),
     url VARCHAR(2048),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT ck_business_trip_plan_attachment_type CHECK (attachment_type IN ('File', 'URL')),
-    CONSTRAINT ck_business_trip_plan_attachment_value CHECK (
+    CONSTRAINT ck_conversational_trip_plan_attachment_type CHECK (attachment_type IN ('File', 'URL')),
+    CONSTRAINT ck_conversational_trip_plan_attachment_value CHECK (
         (attachment_type = 'File' AND file_id IS NOT NULL AND url IS NULL)
         OR (attachment_type = 'URL' AND url IS NOT NULL AND file_id IS NULL)
     )
 );
 
-CREATE TABLE business_trip_plan_travelers (
+CREATE TABLE conversational_department (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    plan_id UUID NOT NULL REFERENCES business_trip_plans(id) ON UPDATE CASCADE ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    department VARCHAR(100),
+    corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
+    name VARCHAR(100) NOT NULL DEFAULT 'Unassigned',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_conversational_department_corp_name UNIQUE (corp_no, name)
+);
+
+CREATE TABLE conversational_staff (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
+    name VARCHAR(100) NOT NULL DEFAULT 'Unknown Staff',
+    department_id UUID REFERENCES conversational_department(id) ON UPDATE CASCADE ON DELETE SET NULL,
     position VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE conversational_trip_plan_travelers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    staff_id UUID NOT NULL REFERENCES conversational_staff(id) ON UPDATE CASCADE ON DELETE RESTRICT,
     origin_location VARCHAR(255),
     destination_location VARCHAR(255),
     return_point VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_business_trip_plans_corp_no ON business_trip_plans(corp_no);
-CREATE INDEX idx_business_trip_plans_period ON business_trip_plans(business_start_date, business_end_date);
-CREATE INDEX idx_business_trip_plan_attachments_plan ON business_trip_plan_attachments(plan_id);
-CREATE INDEX idx_business_trip_plan_travelers_plan ON business_trip_plan_travelers(plan_id);
+CREATE TABLE conversational_trip_plan_expense_sections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    section_code VARCHAR(30) NOT NULL,
+    expense_type VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_conversational_expense_section_code CHECK (section_code IN ('COST', 'TRANSPORTATION', 'ETC')),
+    CONSTRAINT uq_conversational_expense_section_plan_code UNIQUE (plan_id, section_code)
+);
+
+CREATE TABLE conversational_trip_plan_expense_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id UUID NOT NULL REFERENCES conversational_trip_plan_expense_sections(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    attachment_type VARCHAR(20) NOT NULL,
+    file_id VARCHAR(100),
+    url VARCHAR(2048),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_conversational_expense_attachment_type CHECK (attachment_type IN ('File', 'URL')),
+    CONSTRAINT ck_conversational_expense_attachment_value CHECK (
+        (attachment_type = 'File' AND file_id IS NOT NULL AND url IS NULL)
+        OR (attachment_type = 'URL' AND url IS NOT NULL AND file_id IS NULL)
+    )
+);
+
+CREATE TABLE conversational_trip_plan_expense_details (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id UUID NOT NULL REFERENCES conversational_trip_plan_expense_sections(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    sequence_no INTEGER,
+    tax_code VARCHAR(50),
+    detail_type VARCHAR(100),
+    use_purpose VARCHAR(100),
+    account VARCHAR(100),
+    budget_department_id UUID REFERENCES conversational_department(id) ON UPDATE CASCADE ON DELETE SET NULL,
+    transportation_method VARCHAR(100),
+    origin_location VARCHAR(255),
+    destination_location VARCHAR(255),
+    start_date DATE,
+    end_date DATE,
+    usage_date DATE,
+    proof_date DATE,
+    description TEXT,
+    vendor VARCHAR(255),
+    supply_price NUMERIC(15,2),
+    tax NUMERIC(15,2),
+    amount_used NUMERIC(15,2),
+    regulated_amount NUMERIC(15,2),
+    excess_reason TEXT,
+    briefs TEXT,
+    note TEXT,
+    approval_number VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_conversational_expense_detail_period CHECK (
+        start_date IS NULL
+        OR end_date IS NULL
+        OR end_date >= start_date
+    )
+);
+
+CREATE INDEX idx_conversational_trip_plan_corp_no ON conversational_trip_plan(corp_no);
+CREATE INDEX idx_conversational_trip_plan_period ON conversational_trip_plan(business_start_date, business_end_date);
+CREATE INDEX idx_conversational_trip_plan_attachments_plan ON conversational_trip_plan_attachments(plan_id);
+CREATE INDEX idx_conversational_department_corp_no ON conversational_department(corp_no);
+CREATE INDEX idx_conversational_staff_corp_no ON conversational_staff(corp_no);
+CREATE INDEX idx_conversational_staff_department ON conversational_staff(department_id);
+CREATE UNIQUE INDEX uq_conversational_staff_identity ON conversational_staff(
+    corp_no,
+    name,
+    COALESCE(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    COALESCE(position, '')
+);
+CREATE INDEX idx_conversational_trip_plan_travelers_plan ON conversational_trip_plan_travelers(plan_id);
+CREATE INDEX idx_conversational_trip_plan_travelers_staff ON conversational_trip_plan_travelers(staff_id);
+CREATE INDEX idx_conversational_expense_sections_plan ON conversational_trip_plan_expense_sections(plan_id);
+CREATE INDEX idx_conversational_expense_sections_code ON conversational_trip_plan_expense_sections(section_code);
+CREATE INDEX idx_conversational_expense_attachments_section ON conversational_trip_plan_expense_attachments(section_id);
+CREATE INDEX idx_conversational_expense_details_section ON conversational_trip_plan_expense_details(section_id);
+CREATE INDEX idx_conversational_expense_details_budget_department ON conversational_trip_plan_expense_details(budget_department_id);
+CREATE INDEX idx_conversational_expense_details_dates ON conversational_trip_plan_expense_details(start_date, end_date, usage_date, proof_date);
 
 -- ============================================
 -- BIZPLAY CHATBOT

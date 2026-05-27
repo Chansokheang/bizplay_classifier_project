@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Entity
-@Table(name = "business_trip_plans")
+@Table(name = "conversational_trip_plan")
 @EntityListeners(AuditingEntityListener.class)
 @Getter
 @Setter
@@ -72,6 +72,10 @@ public class Plan {
     @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("createdAt ASC")
     private List<PlanTraveler> travelers = new ArrayList<>();
+
+    @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("createdAt ASC")
+    private List<ExpenseSection> expenseSections = new ArrayList<>();
 
     @CreatedDate
     @Column(name = "created_at", updatable = false)

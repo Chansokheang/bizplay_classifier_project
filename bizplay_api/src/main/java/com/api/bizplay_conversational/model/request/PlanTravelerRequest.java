@@ -1,7 +1,6 @@
 package com.api.bizplay_conversational.model.request;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -9,7 +8,6 @@ import lombok.Data;
 public class PlanTravelerRequest {
 
     @JsonProperty("Name")
-    @NotBlank
     @Size(max = 100)
     private String name;
 

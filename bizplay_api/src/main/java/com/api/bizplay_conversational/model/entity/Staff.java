@@ -20,33 +20,29 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "conversational_trip_plan_travelers")
+@Table(name = "conversational_staff")
 @EntityListeners(AuditingEntityListener.class)
 @Getter
 @Setter
 @NoArgsConstructor
-public class PlanTraveler {
+public class Staff {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "plan_id", nullable = false)
-    private Plan plan;
+    @Column(name = "corp_no", nullable = false, length = 50)
+    private String corpNo;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "staff_id", nullable = false)
-    private Staff staff;
+    @Column(nullable = false, length = 100)
+    private String name;
 
-    @Column(name = "origin_location", length = 255)
-    private String origin;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "department_id")
+    private Department department;
 
-    @Column(name = "destination_location", length = 255)
-    private String destination;
-
-    @Column(name = "return_point", length = 255)
-    private String returnPoint;
+    @Column(length = 100)
+    private String position;
 
     @CreatedDate
     @Column(name = "created_at", updatable = false)

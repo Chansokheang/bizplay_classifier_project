@@ -20,33 +20,29 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "conversational_trip_plan_travelers")
+@Table(name = "conversational_trip_plan_expense_attachments")
 @EntityListeners(AuditingEntityListener.class)
 @Getter
 @Setter
 @NoArgsConstructor
-public class PlanTraveler {
+public class ExpenseSectionAttachment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "plan_id", nullable = false)
-    private Plan plan;
+    @JoinColumn(name = "section_id", nullable = false)
+    private ExpenseSection section;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "staff_id", nullable = false)
-    private Staff staff;
+    @Column(name = "attachment_type", nullable = false, length = 20)
+    private String type;
 
-    @Column(name = "origin_location", length = 255)
-    private String origin;
+    @Column(name = "file_id", length = 100)
+    private String fileId;
 
-    @Column(name = "destination_location", length = 255)
-    private String destination;
-
-    @Column(name = "return_point", length = 255)
-    private String returnPoint;
+    @Column(name = "url", length = 2048)
+    private String url;
 
     @CreatedDate
     @Column(name = "created_at", updatable = false)
