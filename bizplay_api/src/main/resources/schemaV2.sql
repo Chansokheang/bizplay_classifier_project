@@ -127,6 +127,61 @@ CREATE INDEX idx_file_classify_summary_file ON classifier_file_classify_summary(
 CREATE INDEX idx_file_classify_summary_created ON classifier_file_classify_summary(created_date);
 
 -- ============================================
+-- BIZPLAY CONVERSATIONAL - BUSINESS TRIP PLAN
+-- ============================================
+CREATE TABLE business_trip_plans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
+    plan_type VARCHAR(100) NOT NULL,
+    purpose VARCHAR(255) NOT NULL,
+    business_period VARCHAR(100) NOT NULL,
+    business_start_date DATE,
+    business_end_date DATE,
+    destination VARCHAR(255) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT,
+    business_trip_classification VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_business_trip_plan_dates CHECK (
+        business_start_date IS NULL
+        OR business_end_date IS NULL
+        OR business_end_date >= business_start_date
+    )
+);
+
+CREATE TABLE business_trip_plan_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL REFERENCES business_trip_plans(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    attachment_type VARCHAR(20) NOT NULL,
+    file_id VARCHAR(100),
+    url VARCHAR(2048),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_business_trip_plan_attachment_type CHECK (attachment_type IN ('File', 'URL')),
+    CONSTRAINT ck_business_trip_plan_attachment_value CHECK (
+        (attachment_type = 'File' AND file_id IS NOT NULL AND url IS NULL)
+        OR (attachment_type = 'URL' AND url IS NOT NULL AND file_id IS NULL)
+    )
+);
+
+CREATE TABLE business_trip_plan_travelers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL REFERENCES business_trip_plans(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    department VARCHAR(100),
+    position VARCHAR(100),
+    origin_location VARCHAR(255),
+    destination_location VARCHAR(255),
+    return_point VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_business_trip_plans_corp_no ON business_trip_plans(corp_no);
+CREATE INDEX idx_business_trip_plans_period ON business_trip_plans(business_start_date, business_end_date);
+CREATE INDEX idx_business_trip_plan_attachments_plan ON business_trip_plan_attachments(plan_id);
+CREATE INDEX idx_business_trip_plan_travelers_plan ON business_trip_plan_travelers(plan_id);
+
+-- ============================================
 -- BIZPLAY CHATBOT
 -- ============================================
 INSERT INTO corp_group (corp_group_cd)

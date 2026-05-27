@@ -35,6 +35,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: bizplay-api-v2
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,6 +63,8 @@ services:
       APP_AI_FALLBACK_READ_TIMEOUT_MS: "180000"
       SPRING_MVC_ASYNC_REQUEST_TIMEOUT: "300000"
       SERVER_CONNECTION_TIMEOUT: "300000"
+    volumes:
+      - ./uploads:/app/uploads
 
 volumes:
   postgres_data:

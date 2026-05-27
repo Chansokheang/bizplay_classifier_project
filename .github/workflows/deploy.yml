@@ -146,6 +146,8 @@ jobs:
               sleep 10
             done
             ls -la
+            mkdir -p uploads
+            docker run --rm -v "$PWD/uploads:/data" alpine:3.20 sh -c "chown -R 1001:1001 /data"
             for attempt in 1 2 3; do
               if docker compose -f compose.prod.yaml pull app; then
                 break
