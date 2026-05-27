@@ -167,7 +167,7 @@ CREATE TABLE conversational_trip_plan_attachments (
 CREATE TABLE conversational_department (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
-    name VARCHAR(100) NOT NULL DEFAULT 'Unassigned',
+    name VARCHAR(100) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_conversational_department_corp_name UNIQUE (corp_no, name)
 );
@@ -175,7 +175,7 @@ CREATE TABLE conversational_department (
 CREATE TABLE conversational_staff (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
-    name VARCHAR(100) NOT NULL DEFAULT 'Unknown Staff',
+    name VARCHAR(100) NOT NULL,
     department_id UUID REFERENCES conversational_department(id) ON UPDATE CASCADE ON DELETE SET NULL,
     position VARCHAR(100),
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
