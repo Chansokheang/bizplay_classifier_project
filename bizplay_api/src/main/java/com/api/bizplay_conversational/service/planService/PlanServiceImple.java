@@ -1,12 +1,12 @@
 package com.api.bizplay_conversational.service.planService;
 
-import com.api.bizplay_conversational.model.entity.Plan;
-import com.api.bizplay_conversational.model.entity.PlanAttachment;
-import com.api.bizplay_conversational.model.entity.PlanTraveler;
 import com.api.bizplay_conversational.model.entity.Department;
 import com.api.bizplay_conversational.model.entity.ExpenseDetail;
 import com.api.bizplay_conversational.model.entity.ExpenseSection;
 import com.api.bizplay_conversational.model.entity.ExpenseSectionAttachment;
+import com.api.bizplay_conversational.model.entity.Plan;
+import com.api.bizplay_conversational.model.entity.PlanAttachment;
+import com.api.bizplay_conversational.model.entity.PlanTraveler;
 import com.api.bizplay_conversational.model.entity.Staff;
 import com.api.bizplay_conversational.model.request.ExpenseDetailRequest;
 import com.api.bizplay_conversational.model.request.ExpenseSectionRequest;
@@ -139,9 +139,9 @@ public class PlanServiceImple implements PlanService {
 
         PlanTraveler traveler = new PlanTraveler();
         traveler.setStaff(staff);
-        traveler.setOrigin(request.getOrigin());
-        traveler.setDestination(request.getDestination());
-        traveler.setReturnPoint(request.getReturnPoint());
+        traveler.setOrigin(normalizeBlank(request.getOrigin()));
+        traveler.setDestination(normalizeBlank(request.getDestination()));
+        traveler.setReturnPoint(normalizeBlank(request.getReturnPoint()));
         return traveler;
     }
 
@@ -151,11 +151,12 @@ public class PlanServiceImple implements PlanService {
             normalizedName = DEFAULT_DEPARTMENT_NAME;
         }
 
-        return departmentRepo.findByCorpNoAndName(corpNo, normalizedName)
+        String finalName = normalizedName;
+        return departmentRepo.findByCorpNoAndName(corpNo, finalName)
                 .orElseGet(() -> {
                     Department department = new Department();
                     department.setCorpNo(corpNo);
-                    department.setName(normalizedName);
+                    department.setName(finalName);
                     return departmentRepo.save(department);
                 });
     }
@@ -167,11 +168,12 @@ public class PlanServiceImple implements PlanService {
         }
         String position = normalizeBlank(request.getPosition());
 
-        return staffRepo.findByCorpNoAndNameAndDepartmentAndPosition(corpNo, name, department, position)
+        String finalName = name;
+        return staffRepo.findByCorpNoAndNameAndDepartmentAndPosition(corpNo, finalName, department, position)
                 .orElseGet(() -> {
                     Staff staff = new Staff();
                     staff.setCorpNo(corpNo);
-                    staff.setName(name);
+                    staff.setName(finalName);
                     staff.setDepartment(department);
                     staff.setPosition(position);
                     return staffRepo.save(staff);
