@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,12 +26,28 @@ public class PlanController {
 
     private final PlanService planService;
 
+    /**
+     * Create a business trip plan from a full body (the conversational draft_json), including the
+     * originating {@code sessionId} (alias {@code AgentSessionId}) so the plan links back to its session.
+     */
     @Operation(summary = "Create a business trip plan")
     @PostMapping
     public ResponseEntity<ApiResponse<PlanResponse>> create(@Valid @RequestBody PlanCreateRequest request) {
-        log.info("POST /api/v1/plans - corpNo={}, planType={}", request.getCorpNo(), request.getPlanType());
+        log.info("POST /api/v1/plans - corpNo={}, planType={}, sessionId={}",
+                request.getCorpNo(), request.getPlanType(), request.getAgentSessionId());
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(planService.create(request)));
+    }
+
+    /**
+     * Update the existing plan linked to the body's {@code sessionId} (alias {@code AgentSessionId}):
+     * re-writes conversational_trip_plan and fully replaces its travelers and attachments.
+     */
+    @Operation(summary = "Update a business trip plan by sessionId")
+    @PutMapping
+    public ResponseEntity<ApiResponse<PlanResponse>> update(@Valid @RequestBody PlanCreateRequest request) {
+        log.info("PUT /api/v1/plans - sessionId={}, corpNo={}", request.getAgentSessionId(), request.getCorpNo());
+        return ResponseEntity.ok(ApiResponse.ok(planService.update(request)));
     }
 }

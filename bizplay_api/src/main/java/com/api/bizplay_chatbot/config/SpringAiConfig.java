@@ -10,6 +10,7 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import lombok.extern.slf4j.Slf4j;
@@ -69,13 +70,28 @@ public class SpringAiConfig {
                 HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
         requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
-        RestClient.Builder restClientBuilder = RestClient.builder()
-                .requestFactory(requestFactory)
-                .defaultHeader("x-api-key", entry.getApiKey());
+        boolean useBearer = "bearer".equalsIgnoreCase(entry.getAuthScheme());
 
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .requestFactory(requestFactory);
+
+        if (!useBearer) {
+            // Internal vLLM servers: authenticate via x-api-key and drop the
+            // Authorization: Bearer header Spring AI's OpenAiApi would otherwise add.
+            restClientBuilder
+                    .defaultHeader("x-api-key", entry.getApiKey())
+                    .requestInterceptor((request, body, execution) -> {
+                        request.getHeaders().remove(HttpHeaders.AUTHORIZATION);
+                        return execution.execute(request, body);
+                    });
+        }
+
+        // For bearer auth, hand the real key to OpenAiApi so it emits
+        // Authorization: Bearer <key>. For x-api-key, the Authorization header is
+        // stripped above, so the placeholder key is never sent.
         OpenAiApi chatApi = OpenAiApi.builder()
                 .baseUrl(entry.getBaseUrl())
-                .apiKey("unused")
+                .apiKey(useBearer ? entry.getApiKey() : "unused")
                 .completionsPath("/chat/completions")
                 .restClientBuilder(restClientBuilder)
                 .build();

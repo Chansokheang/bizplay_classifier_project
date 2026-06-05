@@ -1,0 +1,109 @@
+### BizPlay Conversational Agent — manual API tests
+### No auth token required (security is permitAll). Default port 8080.
+### Run top-to-bottom: request #2 captures the sessionId used by #3 and #4.
+
+@host = http://localhost:8080
+@corpNo = 1234567890
+
+### 1) Staff lookup (standalone fixed-path agent) -> POST /staff-lookup
+# `name` is optional: provide it to skip LLM extraction; omit it to let the LLM
+# pull a name out of `message`.
+POST {{host}}/api/v1/agent-conversations/staff-lookup
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "name": "John Doe",
+  "message": "who is John Doe"
+}
+
+### 2) Create a session -> POST /sessions   (captures sessionId for later calls)
+# @name createSession
+POST {{host}}/api/v1/agent-conversations/sessions
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}"
+}
+
+### capture the returned UUID for reuse below
+@sessionId = {{createSession.response.body.data.sessionId}}
+
+### 3a) Trip-plan chat — STAFF_LOOKUP lane (single person, no filters)
+# Matches -> appends a TravelerDraft into draft_json.TripInformation.Travelers
+POST {{host}}/api/v1/agent-conversations/trip-plan
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "sessionId": "{{sessionId}}",
+  "message": "who is John Doe"
+}
+
+### 3b) Trip-plan chat — DATABASE_LOOKUP lane (text-to-SQL, filtered/multi-row)
+POST {{host}}/api/v1/agent-conversations/trip-plan
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "sessionId": "{{sessionId}}",
+  "message": "list all staff in the sales department"
+}
+
+### 3c) Trip-plan chat — follow-up that relies on session history
+POST {{host}}/api/v1/agent-conversations/trip-plan
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "sessionId": "{{sessionId}}",
+  "message": "also show their past trips to Busan"
+}
+
+### 3d) Trip-plan chat — no sessionId (server auto-creates one and returns it)
+POST {{host}}/api/v1/agent-conversations/trip-plan
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "message": "find Jane Smith"
+}
+
+### 4) Create a business trip plan -> POST /plans   (full draft skeleton)
+POST {{host}}/api/v1/plans
+Content-Type: application/json
+
+{
+  "CorpNo": "{{corpNo}}",
+  "PlanType": "Business Trip Plan",
+  "Attachemnt": [
+    { "Type": "File", "FileID": "FILE_ID_001" },
+    { "Type": "URL", "URL": "https://example.com/itinerary.pdf" }
+  ],
+  "TripInformation": {
+    "Purpose": "General Business Trip",
+    "BusinessPeriod": "2024-07-01 to 2024-07-05",
+    "Destination": "Busan",
+    "Title": "Business Trip to Busan",
+    "Content": "Meeting with clients and visiting local offices.",
+    "Business Trip Classifcation": "CS",
+    "Travelers": [
+      {
+        "Name": "John Doe",
+        "Department": "Sales",
+        "Position": "Manager",
+        "Origin": "Seoul",
+        "Destination": "Busan",
+        "ReturnPoint": "Seoul"
+      },
+      {
+        "Name": "Jane Smith",
+        "Department": "Marketing",
+        "Position": "Specialist",
+        "Origin": "Seoul",
+        "Destination": "Busan",
+        "ReturnPoint": "Seoul"
+      }
+    ]
+  }
+}

@@ -13,6 +13,7 @@ import java.util.UUID;
 public class PlanResponse {
     private UUID id;
     private String corpNo;
+    private UUID agentSessionId;
     private String planType;
     private String purpose;
     private String businessPeriod;

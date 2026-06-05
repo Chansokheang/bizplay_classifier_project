@@ -14,6 +14,7 @@ import com.api.bizplay_conversational.model.request.PlanAttachmentRequest;
 import com.api.bizplay_conversational.model.request.PlanCreateRequest;
 import com.api.bizplay_conversational.model.request.PlanTravelerRequest;
 import com.api.bizplay_conversational.model.request.TripInformationRequest;
+import com.api.bizplay_conversational.exception.CustomNotFoundException;
 import com.api.bizplay_conversational.model.response.PlanAttachmentResponse;
 import com.api.bizplay_conversational.model.response.PlanResponse;
 import com.api.bizplay_conversational.model.response.PlanTravelerResponse;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -43,18 +45,93 @@ public class PlanServiceImple implements PlanService {
 
     @Override
     @Transactional
-    public PlanResponse create(PlanCreateRequest request) {
+    public PlanResponse update(PlanCreateRequest request) {
+        String sessionId = request.getAgentSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId (AgentSessionId) is required to update a plan.");
+        }
+        UUID agentSessionId = parseAgentSessionId(sessionId);
+        List<String> ids = planRepo.findPlanIdsByAgentSessionId(agentSessionId.toString());
+        if (ids == null || ids.isEmpty()) {
+            throw new CustomNotFoundException("No plan found for session " + sessionId + ".");
+        }
+        UUID planId = UUID.fromString(ids.get(0)); // most recent plan for this session
+
         TripInformationRequest trip = request.getTripInformation();
+        if (trip == null) {
+            throw new IllegalArgumentException("TripInformation is required.");
+        }
 
         Plan plan = new Plan();
+        plan.setId(planId);
         plan.setCorpNo(request.getCorpNo());
+        plan.setAgentSessionId(agentSessionId);
         plan.setPlanType(request.getPlanType());
         plan.setPurpose(trip.getPurpose());
         plan.setBusinessPeriod(trip.getBusinessPeriod());
         plan.setDestination(trip.getDestination());
         plan.setTitle(trip.getTitle());
         plan.setContent(trip.getContent());
-        plan.setBusinessTripClassification(trip.getBusinessTripClassification());
+        String updatedClassification = normalizeBlank(trip.getBusinessTripClassification());
+        plan.setBusinessTripClassification(updatedClassification != null ? updatedClassification : "");
+        LocalDate[] updatedDates = parseBusinessPeriod(trip.getBusinessPeriod());
+        plan.setBusinessStartDate(updatedDates[0]);
+        plan.setBusinessEndDate(updatedDates[1]);
+
+        planRepo.updatePlan(plan);
+
+        // Fully replace travelers.
+        planRepo.deleteTravelersByPlanId(planId);
+        for (PlanTravelerRequest travelerRequest : trip.getTravelers()) {
+            PlanTraveler traveler = toTraveler(request.getCorpNo(), travelerRequest);
+            traveler.setId(traveler.getStaff().getId());
+            traveler.setPlan(plan);
+            plan.getTravelers().add(traveler);
+        }
+        for (PlanTraveler traveler : plan.getTravelers()) {
+            planRepo.insertTraveler(traveler);
+        }
+
+        // Fully replace attachments.
+        planRepo.deleteAttachmentsByPlanId(planId);
+        if (request.getAttachments() != null) {
+            for (PlanAttachmentRequest attachmentRequest : request.getAttachments()) {
+                PlanAttachment attachment = toAttachment(attachmentRequest);
+                attachment.setId(UUID.randomUUID());
+                attachment.setPlan(plan);
+                plan.getAttachments().add(attachment);
+            }
+        }
+        for (PlanAttachment attachment : plan.getAttachments()) {
+            planRepo.insertAttachment(attachment);
+        }
+
+        return toResponse(plan);
+    }
+
+    @Override
+    @Transactional
+    public PlanResponse create(PlanCreateRequest request) {
+        TripInformationRequest trip = request.getTripInformation();
+        if (trip == null) {
+            throw new IllegalArgumentException("TripInformation is required (or pass a sessionId to build it from a draft).");
+        }
+
+        Plan plan = new Plan();
+        plan.setId(UUID.randomUUID());
+        plan.setCorpNo(request.getCorpNo());
+        plan.setUserReqId("MANUAL-" + UUID.randomUUID());
+        plan.setAgentSessionId(parseAgentSessionId(request.getAgentSessionId()));
+        plan.setPlanType(request.getPlanType());
+        plan.setPurpose(trip.getPurpose());
+        plan.setBusinessPeriod(trip.getBusinessPeriod());
+        plan.setDestination(trip.getDestination());
+        plan.setTitle(trip.getTitle());
+        plan.setContent(trip.getContent());
+        // The column is NOT NULL, but the conversational flow only uses Purpose for the trip type
+        // and never fills this. Default to empty so the insert succeeds.
+        String classification = normalizeBlank(trip.getBusinessTripClassification());
+        plan.setBusinessTripClassification(classification != null ? classification : "");
 
         LocalDate[] dates = parseBusinessPeriod(trip.getBusinessPeriod());
         plan.setBusinessStartDate(dates[0]);
@@ -63,6 +140,7 @@ public class PlanServiceImple implements PlanService {
         if (request.getAttachments() != null) {
             for (PlanAttachmentRequest attachmentRequest : request.getAttachments()) {
                 PlanAttachment attachment = toAttachment(attachmentRequest);
+                attachment.setId(UUID.randomUUID());
                 attachment.setPlan(plan);
                 plan.getAttachments().add(attachment);
             }
@@ -70,6 +148,7 @@ public class PlanServiceImple implements PlanService {
 
         for (PlanTravelerRequest travelerRequest : trip.getTravelers()) {
             PlanTraveler traveler = toTraveler(request.getCorpNo(), travelerRequest);
+            traveler.setId(traveler.getStaff().getId());
             traveler.setPlan(plan);
             plan.getTravelers().add(traveler);
         }
@@ -78,7 +157,15 @@ public class PlanServiceImple implements PlanService {
         addExpenseSection(plan, SECTION_TRANSPORTATION, request.getTransportationInformation());
         addExpenseSection(plan, SECTION_ETC, request.getEtc());
 
-        return toResponse(planRepo.save(plan));
+        planRepo.insertPlan(plan);
+        for (PlanTraveler traveler : plan.getTravelers()) {
+            planRepo.insertTraveler(traveler);
+        }
+        for (PlanAttachment attachment : plan.getAttachments()) {
+            planRepo.insertAttachment(attachment);
+        }
+
+        return toResponse(plan);
     }
 
     private PlanAttachment toAttachment(PlanAttachmentRequest request) {
@@ -98,6 +185,7 @@ public class PlanServiceImple implements PlanService {
         if (request.getUrl() == null || request.getUrl().isBlank()) {
             throw new IllegalArgumentException("URL is required when attachment Type is URL.");
         }
+        attachment.setFileId("URL_ATTACHMENT");
         attachment.setUrl(request.getUrl());
         return attachment;
     }
@@ -131,6 +219,18 @@ public class PlanServiceImple implements PlanService {
         }
         attachment.setUrl(request.getUrl());
         return attachment;
+    }
+
+    /** Parse the optional conversational session id; null/blank -> null, invalid -> 400. */
+    private UUID parseAgentSessionId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("AgentSessionId must be a valid UUID: " + raw);
+        }
     }
 
     private PlanTraveler toTraveler(String corpNo, PlanTravelerRequest request) {
@@ -169,10 +269,9 @@ public class PlanServiceImple implements PlanService {
         String position = normalizeBlank(request.getPosition());
 
         String finalName = name;
-        return staffRepo.findByCorpNoAndNameAndDepartmentAndPosition(corpNo, finalName, department, position)
+        return staffRepo.findByNameAndDepartmentAndPosition(finalName, department, position)
                 .orElseGet(() -> {
                     Staff staff = new Staff();
-                    staff.setCorpNo(corpNo);
                     staff.setName(finalName);
                     staff.setDepartment(department);
                     staff.setPosition(position);
@@ -278,6 +377,7 @@ public class PlanServiceImple implements PlanService {
         return PlanResponse.builder()
                 .id(plan.getId())
                 .corpNo(plan.getCorpNo())
+                .agentSessionId(plan.getAgentSessionId())
                 .planType(plan.getPlanType())
                 .purpose(plan.getPurpose())
                 .businessPeriod(plan.getBusinessPeriod())
