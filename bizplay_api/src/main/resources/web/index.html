@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Business Trip Plans</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Global top loading bar (shown while fetching) -->
+  <div id="loadbar" class="loadbar hidden"><span class="loadbar-fill"></span></div>
+
+  <!-- ======================= HEADER ======================= -->
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <span class="logomark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12h20" /><path d="M12 2a15 15 0 0 1 0 20" /><path d="M12 2a15 15 0 0 0 0 20" />
+            <path d="M4.5 6.5h15" /><path d="M4.5 17.5h15" />
+          </svg>
+        </span>
+        <div class="brand-text">
+          <h1>Business Trip Workflow</h1>
+          <p class="sub">Request · Approve · Report</p>
+        </div>
+      </div>
+      <div class="corp-tag">
+        <label for="corpInput">CORP No.</label>
+        <input id="corpInput" class="corp-input" inputmode="numeric" maxlength="20"
+               placeholder="Enter corp no." value="1234567890" />
+      </div>
+    </div>
+  </header>
+
+  <!-- ======================= TABS ======================= -->
+  <nav class="tabbar">
+    <div class="wrap tabbar-inner">
+      <button class="tab active" data-tab="plan">📝 Request Plan</button>
+      <button class="tab" data-tab="approve">✅ Approve Plan</button>
+      <button class="tab" data-tab="report">🧾 Expense Report</button>
+    </div>
+  </nav>
+
+  <main class="wrap page">
+    <!-- ===================== TAB 1: REQUEST PLAN ===================== -->
+    <section id="tab-plan" class="tab-pane">
+    <div class="list-head">
+      <span class="list-meta"><strong id="rowCount">0 entries</strong> · sorted by most recent</span>
+      <div class="head-actions">
+        <button id="openAgentBtn" class="btn btn-primary">✨ Create with Agent</button>
+        <button id="openResumeBtn" class="btn btn-quiet">↻ Resume draft</button>
+        <button id="openCreateBtn" class="btn btn-quiet">Create manually</button>
+      </div>
+    </div>
+
+    <!-- Status filter chips (counts computed client-side) -->
+    <div class="statchips" id="planChips">
+      <button class="statchip active" data-pf="all">entire <span class="chip-count" id="cAll">0</span></button>
+      <button class="statchip" data-pf="request">Approval Requested <span class="chip-count" id="cReq">0</span></button>
+      <button class="statchip" data-pf="approved">Approved <span class="chip-count" id="cApp">0</span></button>
+      <button class="statchip" data-pf="cancelled">Canceled <span class="chip-count" id="cCan">0</span></button>
+    </div>
+
+    <!-- Search toolbar (client-side filter — no search API in the demo) -->
+    <div class="toolbar">
+      <div class="search-box">
+        <span class="search-ico">🔍</span>
+        <input id="planSearch" type="text" autocomplete="off"
+               placeholder="Search doc no, title, author, traveler, dept, purpose" />
+        <button id="planSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+      </div>
+      <label class="chk-inline"><input type="checkbox" id="cancelOnly" class="chk" /> Show only cancelled</label>
+    </div>
+
+    <!-- Bulk-selection toolbar (shown when ≥1 row is checked) -->
+    <div id="selectionBar" class="sel-bar hidden">
+      <span class="sel-count"><strong id="selCount">0</strong> selected</span>
+      <div class="sel-actions">
+        <button id="selClearBtn" class="btn btn-quiet btn-sm">Clear</button>
+        <button id="selDeleteBtn" class="btn btn-danger btn-sm">🗑 Remove</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table class="grid">
+        <colgroup>
+          <col style="width:3.5%" /><col style="width:4%" /><col style="width:13%" /><col style="width:16%" />
+          <col style="width:9.5%" /><col style="width:11%" /><col style="width:9%" />
+          <col style="width:10%" /><col style="width:15%" /><col style="width:13%" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="selectAllChk" class="chk" aria-label="Select all rows" /></th>
+            <th class="c-no">No</th>
+            <th>Document</th><th>Title</th><th>Author</th><th>Traveler</th>
+            <th>Dept.</th><th>Purpose</th><th>Period</th><th>Route</th>
+          </tr>
+        </thead>
+        <tbody id="plansBody">
+          <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="list-foot">
+      <span class="foot-info">Showing <strong id="planShown">0</strong> of <strong id="planTotal">0</strong> plans</span>
+      <span class="foot-page">100 items</span>
+    </div>
+    </section>
+
+    <!-- ===================== TAB 2: APPROVE PLAN ===================== -->
+    <section id="tab-approve" class="tab-pane hidden">
+      <div class="list-head">
+        <span class="list-meta"><strong id="approveCount">0</strong> entries · approve or cancel requests</span>
+        <div class="head-actions">
+          <button id="approveRefresh" class="btn btn-quiet">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="statchips" id="approveChips">
+        <button class="statchip active" data-af="all">entire <span class="chip-count" id="acAll">0</span></button>
+        <button class="statchip" data-af="pending">Approval Requested <span class="chip-count" id="acReq">0</span></button>
+        <button class="statchip" data-af="approved">Approved <span class="chip-count" id="acApp">0</span></button>
+        <button class="statchip" data-af="cancelled">Canceled <span class="chip-count" id="acCan">0</span></button>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <span class="search-ico">🔍</span>
+          <input id="approveSearch" type="text" autocomplete="off"
+                 placeholder="Search doc no, title, traveler, dept" />
+          <button id="approveSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <table class="grid">
+          <colgroup>
+            <col style="width:4%" /><col style="width:12%" /><col style="width:18%" /><col style="width:12%" />
+            <col style="width:10%" /><col style="width:14%" /><col style="width:14%" /><col style="width:20%" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="c-no">No</th>
+              <th>Document</th><th>Title</th><th>Traveler</th><th>Dept.</th>
+              <th>Period</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="approveBody"><tr><td colspan="8" class="empty-row">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="list-foot">
+        <span class="foot-info">Showing <strong id="approveShown">0</strong> of <strong id="approveTotal">0</strong> plans</span>
+        <span class="foot-page">100 items</span>
+      </div>
+    </section>
+
+    <!-- ===================== TAB 3: EXPENSE REPORT ===================== -->
+    <section id="tab-report" class="tab-pane hidden">
+      <div class="list-head">
+        <span class="list-meta"><strong id="reportCount">0</strong> expense reports</span>
+        <div class="head-actions">
+          <button id="reportRefresh" class="btn btn-quiet">↻ Refresh</button>
+          <button id="openReportCreateBtn" class="btn btn-primary">+ Create Report</button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <span class="search-ico">🔍</span>
+          <input id="reportSearch" type="text" autocomplete="off"
+                 placeholder="Search doc no, trip, traveler, dept, purpose, status" />
+          <button id="reportSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <table class="grid">
+          <colgroup>
+            <col /><col /><col /><col /><col /><col />
+            <col /><col /><col /><col /><col /><col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="c-no">No</th>
+              <th>Document</th><th>Trip</th><th>Traveler</th><th>Dept.</th><th>Purpose</th>
+              <th>Period</th><th>Lines</th><th>Total</th><th>Status</th><th>Updated</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="reportBody"><tr><td colspan="12" class="empty-row">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="list-foot">
+        <span class="foot-info">Showing <strong id="reportShown">0</strong> of <strong id="reportTotal">0</strong> reports</span>
+        <span class="foot-page">100 items</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- ======================= CREATE MODAL ======================= -->
+  <div id="createOverlay" class="overlay hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <h2>Create Business Trip Plan</h2>
+          <p class="sub">A travel-expense limit is granted upon completion.</p>
+        </div>
+        <button class="x-btn" id="closeSheetBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <!-- Trip Information -->
+        <section class="block">
+          <h3 class="block-title"><span class="b-ico">🧳</span> Trip Information</h3>
+          <div class="grid-2 form-rows">
+            <div class="field span-2">
+              <label>Travel Purpose <span class="req">*</span></label>
+              <div class="select-wrap">
+                <select id="tripPurpose">
+                  <option value="">Select a purpose…</option>
+                  <option value="General business trip">일반출장 — General business trip</option>
+                  <option value="Educational business trip">교육출장 — Educational business trip</option>
+                  <option value="Overseas business trip">해외출장 — Overseas business trip</option>
+                </select>
+              </div>
+            </div>
+            <div class="field span-2">
+              <label>Trip Period <span class="req">*</span></label>
+              <div class="period-row">
+                <input type="date" id="startDate" />
+                <span class="tilde">→</span>
+                <input type="date" id="endDate" />
+                <span id="periodHint" class="hint"></span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Destination <span class="req">*</span></label>
+              <input type="text" id="tripDestination" maxlength="255" placeholder="e.g. Busan" />
+            </div>
+            <div class="field">
+              <label>Title <span class="req">*</span></label>
+              <input type="text" id="tripTitle" maxlength="50" placeholder="Give the trip a name" />
+            </div>
+            <div class="field span-2">
+              <label>Content</label>
+              <textarea id="tripContent" maxlength="500" placeholder="Notes, agenda, context…"></textarea>
+            </div>
+            <div class="field span-2">
+              <label>Classification</label>
+              <div class="seg">
+                <label class="seg-opt"><input type="radio" name="classification" value="CS" /><span>CS</span></label>
+                <label class="seg-opt"><input type="radio" name="classification" value="기타" /><span>기타 · Etc</span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Travelers -->
+        <section class="block">
+          <h3 class="block-title"><span class="b-ico">👥</span> Travellers <span class="count-badge"><span id="travelerCount">0</span></span></h3>
+          <div id="travelerList"></div>
+          <button class="btn btn-dashed" id="addTravelerBtn">+ Add another traveller</button>
+        </section>
+
+        <!-- Attachment -->
+        <section class="block">
+          <h3 class="block-title"><span class="b-ico">📎</span> Attachment</h3>
+          <div class="att-bar"><button class="btn btn-quiet" id="addUrlBtn">🔗 Register a URL</button></div>
+          <div id="attachmentList"></div>
+        </section>
+      </div>
+
+      <div class="sheet-foot">
+        <span id="validationSummary" class="val-summary"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="tempSaveBtn">Save draft</button>
+          <button class="btn btn-primary" id="createCompleteBtn">Creation Complete <i class="arr">→</i></button>
+        </div>
+      </div>
+      <!-- duplicate top action ids kept for app.js compatibility -->
+      <button id="tempSaveBtn2" class="hidden" aria-hidden="true"></button>
+      <button id="createCompleteBtn2" class="hidden" aria-hidden="true"></button>
+    </div>
+  </div>
+
+  <!-- ======================= ROUTE POPUP ======================= -->
+  <div id="routeOverlay" class="overlay hidden">
+    <div class="dialog">
+      <div class="sheet-head">
+        <h3>Route Setup</h3>
+        <button class="x-btn" id="routeCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <p class="sub" id="routeFor">Search or select a route. You may type an address directly.</p>
+      <div class="field">
+        <label>Departure <span class="req">*</span></label>
+        <input list="locations" id="routeDeparture" placeholder="Where the journey begins" />
+      </div>
+      <div class="field">
+        <label>Destination <span class="req">*</span></label>
+        <input list="locations" id="routeDestination" placeholder="Where they travel to" />
+      </div>
+      <div class="field">
+        <label>Arrival / Return <span class="req">*</span></label>
+        <input list="locations" id="routeArrival" placeholder="Where the journey ends" />
+      </div>
+      <datalist id="locations"></datalist>
+      <div class="sheet-foot dialog-foot">
+        <span id="routeError" class="val-summary"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="routeCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="routeCheckBtn">Confirm route</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= AGENT MODAL ======================= -->
+  <div id="agentOverlay" class="overlay hidden">
+    <div class="sheet sheet-lg">
+      <div class="sheet-head">
+        <div>
+          <h2 id="agentTitle">Create Plan with Agent</h2>
+          <p class="sub" id="agentSub">Describe the trip in plain language, or attach a staff spreadsheet / itinerary PDF. The agent fills the draft for you.</p>
+        </div>
+        <button class="x-btn" id="agentCloseBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="agent-body">
+        <!-- Conversation -->
+        <div class="agent-chat">
+          <div id="agentThread" class="thread">
+            <div class="msg msg-assistant">
+              <div class="bubble">Hi! Tell me about the business trip — who travels, where, when, and why. You can also attach a staff list (.xlsx) or a booking/itinerary (.pdf).</div>
+            </div>
+          </div>
+          <div class="composer">
+            <div id="agentFiles" class="file-chips"></div>
+            <div class="composer-row">
+              <textarea id="agentInput" rows="2" placeholder="e.g. John Doe travels Seoul → Busan by KTX, 2026-07-01 to 2026-07-03, client meetings."></textarea>
+              <div class="composer-actions">
+                <label class="attach-btn" title="Attach PDF or spreadsheet">📎
+                  <input type="file" id="agentFileInput" accept=".pdf,.xlsx,.xls,application/pdf" multiple hidden />
+                </label>
+                <button class="btn btn-primary" id="agentSendBtn">Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Draft preview / verify -->
+        <aside class="agent-draft">
+          <div class="draft-head">
+            <span>Draft preview</span>
+            <div class="dh-right">
+              <button class="mini-btn hidden" id="draftEditBtn" title="Edit the draft">✎ Edit</button>
+              <span id="draftStatus" class="status-pill status-none">No draft</span>
+            </div>
+          </div>
+          <div id="draftBody" class="draft-body">
+            <p class="draft-empty">No draft yet — send a message to begin building the plan.</p>
+          </div>
+          <div class="draft-foot">
+            <span id="agentCreateHint" class="hint"></span>
+            <button class="btn btn-primary hidden" id="draftSaveBtn">Save draft</button>
+            <button class="btn btn-primary" id="agentCreateBtn" disabled>Create this plan</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= DETAIL MODAL ======================= -->
+  <div id="detailOverlay" class="overlay hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <span class="kicker" id="detailKicker" style="display:block">Business Trip Plan</span>
+          <h2 id="detailTitle">Plan detail</h2>
+          <p class="sub" id="detailSub"></p>
+        </div>
+        <button class="x-btn" id="detailCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="sheet-body" id="detailBody">
+        <div class="draft-empty-wrap"><span class="ico">⏳</span><p>Loading…</p></div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn danger-link" id="detailDeleteBtn">Delete plan</button>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="detailCloseBtn2">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= RESUME PICKER ======================= -->
+  <div id="resumeOverlay" class="overlay hidden">
+    <div class="dialog resume-dialog">
+      <div class="sheet-head">
+        <div>
+          <h3>Resume a session</h3>
+          <p class="sub">Pick a saved draft to continue chatting or editing.</p>
+        </div>
+        <button class="x-btn" id="resumeCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div id="resumeList" class="resume-list">
+        <div class="draft-empty-wrap"><span class="ico">⏳</span><p>Loading sessions…</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= CREATE REPORT MODAL ======================= -->
+  <div id="reportCreateOverlay" class="overlay hidden">
+    <div class="sheet sheet-wide">
+      <div class="sheet-head">
+        <div>
+          <h2>New Expense Report</h2>
+          <p class="sub">Import an approved business trip plan, attach receipts, then review.</p>
+        </div>
+        <button class="x-btn" id="rcHeadClose" aria-label="Close">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <!-- Trip Information -->
+        <section class="block">
+          <h3 class="block-title"><span class="b-ico">🧳</span> Trip Information</h3>
+          <div class="rc-import">
+            <label class="rc-import-label">Business Trip Plan</label>
+            <div class="rc-import-ctl">
+              <button class="btn btn-quiet" id="rcImportBtn">📄 Import</button>
+              <span id="rcPlanLabel" class="muted">Please select an approved plan to settle</span>
+              <button id="rcClearPlan" class="x-btn hidden" title="Clear">✕</button>
+            </div>
+          </div>
+          <div id="rcTripInfo" class="rc-trip hidden"></div>
+        </section>
+
+        <!-- Cost Items -->
+        <section class="block">
+          <h3 class="block-title"><span class="b-ico">📒</span> Cost Items</h3>
+          <p class="card-note" id="rcReceiptHint">Import a plan, then add receipts — the agent extracts expense lines from each PDF.</p>
+          <div id="rcSections"></div>
+          <input type="file" id="rcFileInput" accept=".pdf,application/pdf" multiple hidden />
+        </section>
+      </div>
+
+      <div class="sheet-foot">
+        <span id="rcMsg" class="val-summary"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="rcCloseBtn">Cancel</button>
+          <button class="btn btn-quiet" id="rcSaveBtn">Draft</button>
+          <button class="btn btn-primary" id="rcSubmitBtn">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= APPROVED-PLAN PICKER ======================= -->
+  <div id="planPickerOverlay" class="overlay hidden">
+    <div class="dialog resume-dialog">
+      <div class="sheet-head">
+        <div><h3>Import an approved plan</h3><p class="sub">Only plans with approval complete can be settled.</p></div>
+        <button class="x-btn" id="planPickerCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div id="planPickerList" class="resume-list"><div class="muted-pad">Loading…</div></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

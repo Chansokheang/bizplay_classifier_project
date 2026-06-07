@@ -30,25 +30,15 @@ public class TripPlanAgentRequest {
     private String sessionId;
 
     /**
-     * Id of a single previously uploaded file (from POST /agent-conversations/files).
-     * Kept for backward compatibility; prefer {@link #fileIds} for one or more files.
-     */
-    @Schema(example = "", description = "A single uploaded file id. When set, the file is routed by type (Excel -> Spreadsheet Agent, PDF -> PDF Agent).")
-    private String fileId;
-
-    /**
-     * Ids of one or more previously uploaded files. Each file is routed by its type:
-     * Excel (.xlsx/.xls) -> Spreadsheet Agent, PDF (.pdf) -> PDF Agent. Combined with {@link #fileId}.
+     * Ids of one or more previously uploaded files (from POST /agent-conversations/files). Each file
+     * is routed by its type: Excel (.xlsx/.xls) -> Spreadsheet Agent, PDF (.pdf) -> PDF Agent.
      */
     @Schema(description = "Uploaded file ids. Each is routed by type (Excel -> Spreadsheet Agent, PDF -> PDF Agent).")
     private List<String> fileIds = new ArrayList<>();
 
-    /** All file ids from both {@link #fileId} and {@link #fileIds}, de-duplicated, blanks removed. */
+    /** File ids, de-duplicated, blanks removed. */
     public List<String> allFileIds() {
         Set<String> ids = new LinkedHashSet<>();
-        if (fileId != null && !fileId.isBlank()) {
-            ids.add(fileId.trim());
-        }
         if (fileIds != null) {
             for (String id : fileIds) {
                 if (id != null && !id.isBlank()) {

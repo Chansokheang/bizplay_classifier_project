@@ -25,7 +25,7 @@ import java.util.Map;
 public class ClarificationAgentServiceImple implements ClarificationAgentService {
 
     private static final String READY_MESSAGE =
-            "All the required details are captured. Shall I create the trip plan? Reply \"approve\" to proceed.";
+            "All the required details are captured. Review the draft on the right and click \"Create this plan\" when you're ready.";
 
     private final Map<String, ChatClient> chatClientRegistry;
 

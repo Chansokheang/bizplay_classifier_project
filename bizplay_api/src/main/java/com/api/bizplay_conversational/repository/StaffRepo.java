@@ -42,8 +42,8 @@ public interface StaffRepo {
             WHERE s.department_id = #{department.id, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}
               AND s.name = #{name}
               AND (
-                    (#{position} IS NULL AND s.position IS NULL)
-                    OR s.position = #{position}
+                    (#{position, jdbcType=VARCHAR} IS NULL AND s.position IS NULL)
+                    OR s.position = #{position, jdbcType=VARCHAR}
               )
             LIMIT 1
             """)

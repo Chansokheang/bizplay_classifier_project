@@ -2,6 +2,7 @@ package com.api.bizplay_conversational.model.entity;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -13,9 +14,18 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
+@JsonPropertyOrder({
+        "CorpNo", "PlanType", "Attachemnt", "TripInformation",
+        "CostInformation", "TransportationInformation", "Etc",
+        "TripPlanId", "agentSessionId", "missingFields"
+})
 public class TripReportDraft {
 
     private UUID agentSessionId;
+
+    /** The trip plan this report is for (conversational_trip_plan.id). Internal link, set at bootstrap. */
+    @JsonProperty("TripPlanId")
+    private UUID tripPlanId;
 
     @JsonProperty("CorpNo")
     private String corpNo;

@@ -1,9 +1,11 @@
 package com.api.bizplay_conversational.controller;
 
 import com.api.bizplay_chatbot.common.dto.ApiResponse;
+import com.api.bizplay_conversational.model.request.ExpenseReportAgentRequest;
 import com.api.bizplay_conversational.model.request.StaffLookupAgentRequest;
 import com.api.bizplay_conversational.model.request.TextAnalysisAgentRequest;
 import com.api.bizplay_conversational.model.request.TripPlanAgentRequest;
+import com.api.bizplay_conversational.model.response.ExpenseReportAgentResponse;
 import com.api.bizplay_conversational.model.response.FileUploadResponse;
 import com.api.bizplay_conversational.model.response.SessionDetailResponse;
 import com.api.bizplay_conversational.model.response.SessionSummaryResponse;
@@ -11,12 +13,14 @@ import com.api.bizplay_conversational.model.response.SpreadsheetAnalysisResult;
 import com.api.bizplay_conversational.model.response.StaffLookupAgentResponse;
 import com.api.bizplay_conversational.model.response.TextAnalysisResult;
 import com.api.bizplay_conversational.model.response.TripPlanAgentResponse;
+import com.api.bizplay_conversational.service.expenseReportAgentService.ExpenseReportAgentService;
 import com.api.bizplay_conversational.service.fileExtractionService.FileExtractionService;
 import com.api.bizplay_conversational.service.pdfAgentService.PdfAgentService;
 import com.api.bizplay_conversational.service.spreadsheetAgentService.SpreadsheetAgentService;
 import com.api.bizplay_conversational.service.staffLookupAgentService.StaffLookupAgentService;
 import com.api.bizplay_conversational.service.textAnalysisAgentService.TextAnalysisAgentService;
 import com.api.bizplay_conversational.service.tripPlanAgentService.TripPlanAgentService;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +29,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -48,6 +53,7 @@ public class AgentConversationController {
     private final SpreadsheetAgentService spreadsheetAgentService;
     private final PdfAgentService pdfAgentService;
     private final TripPlanAgentService tripPlanAgentService;
+    private final ExpenseReportAgentService expenseReportAgentService;
     private final FileExtractionService fileExtractionService;
 
     @PostMapping("/sub-agents/staff-lookup")
@@ -168,10 +174,54 @@ public class AgentConversationController {
         return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.getSession(sessionId)));
     }
 
+    /**
+     * Save (overwrite) a session's draft so work can be paused and resumed later. The body is the
+     * edited draft object (same shape as {@code draftJson} returned by GET /sessions/{id}). The saved
+     * draft is re-normalized and re-validated, and the session status is refreshed.
+     */
+    @PutMapping("/sessions/{sessionId}/draft")
+    public ResponseEntity<ApiResponse<SessionDetailResponse>> saveDraft(
+            @PathVariable("sessionId") String sessionId,
+            @RequestBody JsonNode draftJson) {
+        log.info("PUT /api/v1/agent-conversations/sessions/{}/draft", sessionId);
+        return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.saveDraft(sessionId, draftJson)));
+    }
+
     @PostMapping("/agents/trip-plan")
     public ResponseEntity<ApiResponse<TripPlanAgentResponse>> chatTripPlanAgent(
             @Valid @RequestBody TripPlanAgentRequest request) {
 //        log.info("POST /api/v1/agent-conversations/trip-plan - corpNo={}", request.getCorpNo());
         return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.chat(request)));
+    }
+
+    // --- Expense Report ("After Business Trip") Agent --------------------------------
+
+    /**
+     * One Expense Report Agent turn. Start a new session by passing {@code planId} (the finished trip
+     * plan to report on); the draft is bootstrapped from it. Continue with {@code sessionId}. Attach
+     * PDF receipts via {@code fileIds} and/or describe the expense in {@code message}.
+     */
+    @PostMapping("/agents/expense-report")
+    public ResponseEntity<ApiResponse<ExpenseReportAgentResponse>> chatExpenseReportAgent(
+            @Valid @RequestBody ExpenseReportAgentRequest request) {
+        log.info("POST /api/v1/agent-conversations/agents/expense-report - corpNo={}, planId={}, sessionId={}",
+                request.getCorpNo(), request.getPlanId(), request.getSessionId());
+        return ResponseEntity.ok(ApiResponse.ok(expenseReportAgentService.chat(request)));
+    }
+
+    /** List EXPENSE_REPORT sessions for a corp (newest first). */
+    @GetMapping("/agents/expense-report/sessions")
+    public ResponseEntity<ApiResponse<List<SessionSummaryResponse>>> listExpenseReportSessions(
+            @RequestParam("corpNo") String corpNo) {
+        log.info("GET /api/v1/agent-conversations/agents/expense-report/sessions - corpNo={}", corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(expenseReportAgentService.listSessions(corpNo)));
+    }
+
+    /** Get a single expense-report session's full detail (draft + chat history) by id. */
+    @GetMapping("/agents/expense-report/sessions/{sessionId}")
+    public ResponseEntity<ApiResponse<SessionDetailResponse>> getExpenseReportSession(
+            @PathVariable("sessionId") String sessionId) {
+        log.info("GET /api/v1/agent-conversations/agents/expense-report/sessions/{}", sessionId);
+        return ResponseEntity.ok(ApiResponse.ok(expenseReportAgentService.getSession(sessionId)));
     }
 }

@@ -33,6 +33,14 @@ public interface RequestBodyBuilderService {
      */
     void mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis, boolean authoritative);
 
+    /**
+     * Merge ONLY the travelers (people + their routes) from an extracted result, ignoring trip-level
+     * fields (destination / dates / type / title). Used when an uploaded PDF describes a different
+     * trip than the user's authoritative message, but its passengers still belong to this trip.
+     * Named travelers are resolved against the staff DB; trip-level details are never touched.
+     */
+    void mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis);
+
     /** Merge resolved staff rows (from the Spreadsheet Agent) into the session draft_json. */
     void mergeSpreadsheet(ConversationalAgentSession session, SpreadsheetAnalysisResult spreadsheet);
 

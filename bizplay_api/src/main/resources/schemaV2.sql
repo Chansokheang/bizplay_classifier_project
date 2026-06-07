@@ -175,9 +175,13 @@ CREATE TABLE conversational_trip_plan (
                                           business_end_date DATE,
                                           destination VARCHAR(255) NOT NULL,
                                           business_trip_classification VARCHAR(100) NOT NULL,
+                                          approval_status VARCHAR(50) NOT NULL DEFAULT 'Request for approval',
                                           extras JSONB DEFAULT '{}'::jsonb,
                                           created_date TIMESTAMP NOT NULL DEFAULT NOW(),
                                           updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          CONSTRAINT ck_conversational_trip_plan_approval CHECK (
+                                              approval_status IN ('Request for approval', 'Business trip cancellation', 'Approval complete')
+                                              ),
                                           CONSTRAINT ck_conversational_trip_plan_dates CHECK (
                                               business_start_date IS NULL
                                                   OR business_end_date IS NULL

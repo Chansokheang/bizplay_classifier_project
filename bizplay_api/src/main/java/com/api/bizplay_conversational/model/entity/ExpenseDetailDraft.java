@@ -1,6 +1,7 @@
 package com.api.bizplay_conversational.model.entity;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -12,17 +13,15 @@ import java.time.LocalDate;
 @Getter
 @Setter
 @NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ExpenseDetailDraft {
 
-    @JsonProperty("?쒕쾲")
+    @JsonProperty("순번")
     @JsonAlias("SequenceNo")
     private Integer sequenceNo;
 
     @JsonProperty("TaxCode")
     private String taxCode;
-
-    @JsonProperty("Category")
-    private String category;
 
     @JsonProperty("Type")
     private String type;
@@ -33,11 +32,11 @@ public class ExpenseDetailDraft {
     @JsonProperty("Account")
     private String account;
 
-    @JsonProperty("?덉궛遺??")
+    @JsonProperty("예산부서")
     @JsonAlias("BudgetDepartment")
     private String budgetDepartment;
 
-    @JsonProperty("援먰넻?섎떒")
+    @JsonProperty("교통수단")
     @JsonAlias("TransportationMethod")
     private String transportationMethod;
 
@@ -62,7 +61,7 @@ public class ExpenseDetailDraft {
     @JsonProperty("Description")
     private String description;
 
-    @JsonProperty("嫄곕옒泥?")
+    @JsonProperty("거래처")
     @JsonAlias("Vendor")
     private String vendor;
 

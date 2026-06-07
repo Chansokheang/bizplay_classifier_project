@@ -16,6 +16,7 @@ import com.api.bizplay_conversational.model.request.PlanTravelerRequest;
 import com.api.bizplay_conversational.model.request.TripInformationRequest;
 import com.api.bizplay_conversational.exception.CustomNotFoundException;
 import com.api.bizplay_conversational.model.response.PlanAttachmentResponse;
+import com.api.bizplay_conversational.model.response.PlanBatchDeleteResponse;
 import com.api.bizplay_conversational.model.response.PlanResponse;
 import com.api.bizplay_conversational.model.response.PlanTravelerResponse;
 import com.api.bizplay_conversational.repository.DepartmentRepo;
@@ -35,6 +36,9 @@ public class PlanServiceImple implements PlanService {
 
     private static final String DEFAULT_DEPARTMENT_NAME = "Unassigned";
     private static final String DEFAULT_STAFF_NAME = "Unknown Staff";
+    /** The allowed values for conversational_trip_plan.approval_status (matches the DB CHECK). */
+    private static final java.util.Set<String> APPROVAL_STATUSES = java.util.Set.of(
+            "Request for approval", "Business trip cancellation", "Approval complete");
     private static final String SECTION_COST = "COST";
     private static final String SECTION_TRANSPORTATION = "TRANSPORTATION";
     private static final String SECTION_ETC = "ETC";
@@ -42,6 +46,136 @@ public class PlanServiceImple implements PlanService {
     private final PlanRepo planRepo;
     private final DepartmentRepo departmentRepo;
     private final StaffRepo staffRepo;
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PlanResponse> getByCorpNo(String corpNo) {
+        List<PlanResponse> plans = planRepo.findPlanResponsesByCorpNo(corpNo);
+        for (PlanResponse plan : plans) {
+            String planId = plan.getId().toString();
+            plan.setTravelers(planRepo.findTravelerResponsesByPlanId(planId));
+            plan.setAttachments(planRepo.findAttachmentResponsesByPlanId(planId));
+        }
+        return plans;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PlanResponse> getByApprovalStatus(String corpNo, String approvalStatus) {
+        String status = approvalStatus == null ? null : approvalStatus.trim();
+        if (status == null || status.isBlank() || !APPROVAL_STATUSES.contains(status)) {
+            throw new IllegalArgumentException(
+                    "approvalStatus must be one of " + APPROVAL_STATUSES + " but was: " + approvalStatus);
+        }
+        List<PlanResponse> plans = planRepo.findPlanResponsesByCorpNoAndApprovalStatus(corpNo, status);
+        for (PlanResponse plan : plans) {
+            String planId = plan.getId().toString();
+            plan.setTravelers(planRepo.findTravelerResponsesByPlanId(planId));
+            plan.setAttachments(planRepo.findAttachmentResponsesByPlanId(planId));
+        }
+        return plans;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PlanResponse getById(String id) {
+        UUID planId;
+        try {
+            planId = UUID.fromString(id == null ? null : id.trim());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new CustomNotFoundException("Invalid plan id: " + id);
+        }
+        PlanResponse plan = planRepo.findPlanResponseById(planId.toString());
+        if (plan == null) {
+            throw new CustomNotFoundException("Plan not found: " + id);
+        }
+        plan.setTravelers(planRepo.findTravelerResponsesByPlanId(planId.toString()));
+        plan.setAttachments(planRepo.findAttachmentResponsesByPlanId(planId.toString()));
+        return plan;
+    }
+
+    @Override
+    @Transactional
+    public void deleteById(String id) {
+        UUID planId;
+        try {
+            planId = UUID.fromString(id == null ? null : id.trim());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new CustomNotFoundException("Invalid plan id: " + id);
+        }
+        // Remove child rows first to satisfy the foreign keys, then the plan.
+        planRepo.deleteTravelersByPlanId(planId);
+        planRepo.deleteAttachmentsByPlanId(planId);
+        int deleted = planRepo.deletePlanById(planId);
+        if (deleted == 0) {
+            throw new CustomNotFoundException("Plan not found: " + id);
+        }
+    }
+
+    @Override
+    @Transactional
+    public PlanBatchDeleteResponse deleteByIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new IllegalArgumentException("ids must not be empty.");
+        }
+        // Parse + de-duplicate; an invalid id format is a client error (fail the whole batch).
+        java.util.LinkedHashMap<String, UUID> parsed = new java.util.LinkedHashMap<>();
+        for (String raw : ids) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            UUID planId;
+            try {
+                planId = UUID.fromString(raw.trim());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Invalid plan id: " + raw);
+            }
+            parsed.putIfAbsent(planId.toString(), planId);
+        }
+        if (parsed.isEmpty()) {
+            throw new IllegalArgumentException("ids must not be empty.");
+        }
+
+        List<String> deletedIds = new java.util.ArrayList<>();
+        List<String> notFoundIds = new java.util.ArrayList<>();
+        for (UUID planId : parsed.values()) {
+            // Remove child rows first to satisfy the foreign keys, then the plan.
+            planRepo.deleteTravelersByPlanId(planId);
+            planRepo.deleteAttachmentsByPlanId(planId);
+            if (planRepo.deletePlanById(planId) > 0) {
+                deletedIds.add(planId.toString());
+            } else {
+                notFoundIds.add(planId.toString());
+            }
+        }
+        return PlanBatchDeleteResponse.builder()
+                .requested(parsed.size())
+                .deleted(deletedIds.size())
+                .deletedIds(deletedIds)
+                .notFoundIds(notFoundIds)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public PlanResponse updateApprovalStatus(String id, String approvalStatus) {
+        UUID planId;
+        try {
+            planId = UUID.fromString(id == null ? null : id.trim());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new CustomNotFoundException("Invalid plan id: " + id);
+        }
+        String status = approvalStatus == null ? null : approvalStatus.trim();
+        if (status == null || status.isBlank() || !APPROVAL_STATUSES.contains(status)) {
+            throw new IllegalArgumentException(
+                    "approvalStatus must be one of " + APPROVAL_STATUSES + " but was: " + approvalStatus);
+        }
+        int updated = planRepo.updateApprovalStatus(planId, status);
+        if (updated == 0) {
+            throw new CustomNotFoundException("Plan not found: " + id);
+        }
+        return getById(planId.toString());
+    }
 
     @Override
     @Transactional

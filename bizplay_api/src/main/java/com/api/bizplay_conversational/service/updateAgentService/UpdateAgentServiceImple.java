@@ -42,6 +42,11 @@ public class UpdateAgentServiceImple implements UpdateAgentService {
             - Emit ONLY operations the user explicitly asked for. Never invent changes.
             - Use the EXACT traveler names from the current draft when targeting a person.
             - "everyone"/"all travelers" -> set_all_travelers_field. A single named person -> set_traveler_field.
+            - "destination" is a GEOGRAPHIC PLACE only (a city, country, or region, e.g. "Cambodia",
+              "Seoul", "Toronto"). NEVER put the trip's reason or purpose (e.g. "meet client",
+              "attend conference", "client meeting", "training") into destination. If the user only
+              states a reason and no place, do NOT set destination.
+            - In a phrase like "from X to Y", X is the origin and Y is the destination (a place).
             - If nothing is a valid edit, return { "edits": [] }.
             /no_think
             """;

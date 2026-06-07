@@ -225,11 +225,18 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
             return null;
         }
         boolean clear = !isPresent(value);
-        if (!setTravelerFieldOn(t, field, clear ? null : value.trim(), clear)) {
+        String v = clear ? null : value.trim();
+        if (!setTravelerFieldOn(t, field, v, clear)) {
             return null;
         }
+        // Destination is trip-wide: setting it for one traveler updates the whole trip, so the
+        // trip-level destination stays authoritative and inheritCommonRoute does not overwrite it
+        // back to a stale value.
+        if ("destination".equals(field) && !clear) {
+            trip.setDestination(v);
+        }
         return clear ? ("cleared " + field + " for " + t.getName())
-                : (t.getName() + " " + field + " set to " + value.trim());
+                : (t.getName() + " " + field + " set to " + v);
     }
 
     private String setAllTravelersField(TripInformationDraft trip, String field, String value) {
@@ -378,7 +385,61 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
                 }
             }
         }
+
+        // Auto-generate a title from the trip's content when none is set (fill-blank only, so a
+        // user-provided title is never overwritten). Runs last, after destination/route are settled.
+        ensureTitle(trip);
+
         writeDraft(session, draft);
+    }
+
+    /**
+     * Build a human-readable title from the draft when {@code title} is blank, e.g.
+     * "Overseas business trip to Cambodia (2026-06-20 ~ 2026-06-25)". Falls back gracefully when
+     * fields are missing. Never overwrites a title the user already set.
+     */
+    private void ensureTitle(TripInformationDraft trip) {
+        if (isPresent(trip.getTitle())) {
+            return;
+        }
+        // Destination: prefer the trip-level value, else a single shared traveler destination.
+        String destination = isPresent(trip.getDestination())
+                ? trip.getDestination().trim()
+                : (trip.getTravelers() == null ? null
+                        : singleDistinct(trip.getTravelers(), TravelerDraft::getDestination));
+
+        // Lead with the trip type (purpose) when set; otherwise a neutral "Business trip".
+        String lead = isPresent(trip.getPurpose()) ? trip.getPurpose().trim() : "Business trip";
+        StringBuilder title = new StringBuilder(lead);
+        if (isPresent(destination)) {
+            title.append(" to ").append(destination);
+        }
+
+        String dates = formatDateRange(trip);
+        if (isPresent(dates)) {
+            title.append(" (").append(dates).append(')');
+        }
+
+        String result = title.toString().trim();
+        if (isPresent(result)) {
+            trip.setTitle(result);
+        }
+    }
+
+    /** A compact date range for the title, or null when no dates are available. */
+    private String formatDateRange(TripInformationDraft trip) {
+        java.time.LocalDate start = trip.getBusinessStartDate();
+        java.time.LocalDate end = trip.getBusinessEndDate();
+        if (start != null && end != null) {
+            return start + " ~ " + end;
+        }
+        if (start != null) {
+            return start.toString();
+        }
+        if (end != null) {
+            return end.toString();
+        }
+        return isPresent(trip.getBusinessPeriod()) ? trip.getBusinessPeriod().trim() : null;
     }
 
     /** The single distinct non-blank value across travelers, or null if none or several differ. */
@@ -449,35 +510,58 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         }
 
         // Per-traveler routes.
-        if (analysis.getTravelers() != null) {
-            for (TextAnalysisResult.TravelerRoute route : analysis.getTravelers()) {
-                if (route == null) {
+        applyTravelerRoutes(session.getCorpNo(), tripInfo, analysis, authoritative);
+
+        writeDraft(session, draft);
+    }
+
+    @Override
+    public void mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis) {
+        if (analysis == null || analysis.getTravelers() == null || analysis.getTravelers().isEmpty()) {
+            return;
+        }
+        TripPlanDraft draft = readDraft(session);
+        TripInformationDraft tripInfo = ensureTripInformation(draft, session);
+        // Travelers only: never authoritative for trip-level fields (those stay from the message).
+        applyTravelerRoutes(session.getCorpNo(), tripInfo, analysis, false);
+        writeDraft(session, draft);
+    }
+
+    /**
+     * Merge the traveler routes from an analysis into the trip. Named travelers are resolved against
+     * the staff DB (unmatched names dropped, matched ones backfilled); a nameless route is treated as
+     * trip-wide movement applied to every existing traveler that is still missing those fields.
+     */
+    private void applyTravelerRoutes(String corpNo, TripInformationDraft tripInfo,
+                                     TextAnalysisResult analysis, boolean authoritative) {
+        if (analysis.getTravelers() == null) {
+            return;
+        }
+        for (TextAnalysisResult.TravelerRoute route : analysis.getTravelers()) {
+            if (route == null) {
+                continue;
+            }
+            if (isPresent(route.getName())) {
+                // Named traveler: resolve against the staff DB (same as the spreadsheet path).
+                // Unmatched names are dropped; matched names get their identity backfilled.
+                StaffLookupResult staff = staffService.lookup(corpNo, route.getName().trim());
+                if (staff == null || !staff.isMatched()) {
+                    log.info("Text analysis traveler '{}' not found in staff DB; skipping.", route.getName());
                     continue;
                 }
-                if (isPresent(route.getName())) {
-                    // Named traveler: resolve against the staff DB (same as the spreadsheet path).
-                    // Unmatched names are dropped; matched names get their identity backfilled.
-                    StaffLookupResult staff = staffService.lookup(session.getCorpNo(), route.getName().trim());
-                    if (staff == null || !staff.isMatched()) {
-                        log.info("Text analysis traveler '{}' not found in staff DB; skipping.", route.getName());
-                        continue;
-                    }
-                    TravelerDraft target = findOrCreateTraveler(tripInfo, staff.getStaffName());
-                    backfillStaffIdentity(target, staff);
-                    // Overwrite named-route fields only for an authoritative source; otherwise fill blanks.
-                    applyRoute(target, route, authoritative);
-                } else {
-                    // Nameless route = trip-wide movement ("from Seoul to Toronto"): apply it to
-                    // every existing traveler that is still missing those fields. Do NOT create a
-                    // nameless phantom traveler.
-                    for (TravelerDraft t : tripInfo.getTravelers()) {
-                        applyRoute(t, route, false);
-                    }
+                TravelerDraft target = findOrCreateTraveler(tripInfo, staff.getStaffName());
+                backfillStaffIdentity(target, staff);
+                // Overwrite named-route fields only for an authoritative source; otherwise fill blanks.
+                applyRoute(target, route, authoritative);
+            } else {
+                // Nameless route = trip-wide movement ("from Seoul to Toronto"): apply it to
+                // every existing traveler that is still missing those fields. Do NOT create a
+                // nameless phantom traveler.
+                for (TravelerDraft t : tripInfo.getTravelers()) {
+                    applyRoute(t, route, false);
                 }
             }
         }
-
-        writeDraft(session, draft);
     }
 
     /** Fill traveler identity (staffId/department/position) from a matched staff record, without clobbering. */

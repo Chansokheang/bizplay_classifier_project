@@ -131,6 +131,43 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         }
         ConversationalAgentSession s = sessionRepo.findById(id)
                 .orElseThrow(() -> new CustomNotFoundException("Session not found: " + sessionId));
+        return toDetail(s);
+    }
+
+    @Override
+    @Transactional
+    public SessionDetailResponse saveDraft(String sessionId, JsonNode draftJson) {
+        if (draftJson == null || draftJson.isNull() || !draftJson.isObject()) {
+            throw new IllegalArgumentException("A draft object body is required.");
+        }
+        UUID id;
+        try {
+            id = UUID.fromString(sessionId.trim());
+        } catch (IllegalArgumentException e) {
+            throw new CustomNotFoundException("Invalid session id: " + sessionId);
+        }
+        ConversationalAgentSession session = sessionRepo.findById(id)
+                .orElseThrow(() -> new CustomNotFoundException("Session not found: " + sessionId));
+
+        // Overwrite the draft with the client's edited copy, then run the same normalization and
+        // validation pass as a chat turn so the saved draft stays consistent (shared route inherited,
+        // type/title defaulted, missing fields recomputed, status flipped) and resumes cleanly.
+        session.setDraftJson(draftJson);
+        requestBodyBuilderService.inheritCommonRoute(session);
+        TripPlanDraft draft = requestBodyBuilderService.snapshot(session);
+        MissingFieldsResult missing = requiredFieldValidationService.validate(draft);
+        requestBodyBuilderService.stampMissingFields(session, missing.getMissing());
+        session.setStatus(missing.isComplete()
+                ? ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW
+                : ConversationalAgentSession.AgentStatus.COLLECTING);
+        sessionRepo.save(session);
+
+        // Reload so DB-generated timestamps (updated_date via NOW()) are returned.
+        ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
+        return toDetail(saved);
+    }
+
+    private SessionDetailResponse toDetail(ConversationalAgentSession s) {
         return SessionDetailResponse.builder()
                 .sessionId(s.getId())
                 .corpNo(s.getCorpNo())
@@ -158,7 +195,16 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
 
         // Any uploaded file(s) deterministically trigger the file agents, routed by type
         // (Excel -> Spreadsheet Agent, PDF -> PDF Agent) — no LLM intent classification needed.
-        String intent = hasFiles ? "FILE_UPLOAD" : classifyIntent(request.getMessage(), history);
+        // A bare approval ("yes" / "approve" / "create") is handled directly: creation is done by the
+        // UI button, so we just point the user there instead of routing it to the Update Agent.
+        String intent;
+        if (hasFiles) {
+            intent = "FILE_UPLOAD";
+        } else if (isApprovalPhrase(request.getMessage())) {
+            intent = "APPROVE";
+        } else {
+            intent = classifyIntent(request.getMessage(), history);
+        }
 
         TripPlanAgentResponse.TripPlanAgentResponseBuilder response = TripPlanAgentResponse.builder()
                 .intent(intent);
@@ -232,20 +278,30 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                 requestBodyBuilderService.mergeTextAnalysis(session, msgAnalysis, true);
             }
 
-            // PDFs are supplementary. Skip a PDF that is not a relevant trip document, or whose trip
-            // does not align with the message (e.g. a different destination) — "don't use that".
+            // PDFs are supplementary. A PDF with no usable trip info is skipped entirely. Otherwise:
+            //  - if it aligns with the message (same trip), merge its trip-level fields (fill blanks)
+            //    AND its travelers;
+            //  - if it describes a DIFFERENT trip than the authoritative message, we still take the
+            //    people the user attached (travelers only), but NOT the conflicting trip-level details.
             int pdfUsed = 0;
             int pdfSkipped = 0;
+            int pdfTravelersOnly = 0;
             for (int i = 0; i < pdfFutures.size(); i++) {
                 TextAnalysisResult pdf = pdfFutures.get(i).join();
                 UploadedFile f = pdfFiles.get(i);
-                if (!isRelevantTripDoc(pdf) || !alignsWith(msgAnalysis, pdf)) {
-                    log.info("Ignoring PDF '{}' as not relevant to this trip.", f.filename());
+                if (!isRelevantTripDoc(pdf)) {
+                    log.info("Ignoring PDF '{}' (no usable trip information).", f.filename());
                     pdfSkipped++;
                     continue;
                 }
-                // Authoritative only when there is no message to defer to; otherwise fill blanks only.
-                requestBodyBuilderService.mergeTextAnalysis(session, pdf, msgAnalysis == null);
+                if (alignsWith(msgAnalysis, pdf)) {
+                    // Authoritative only when there is no message to defer to; otherwise fill blanks only.
+                    requestBodyBuilderService.mergeTextAnalysis(session, pdf, msgAnalysis == null);
+                } else {
+                    log.info("PDF '{}' describes a different trip; taking its travelers only.", f.filename());
+                    requestBodyBuilderService.mergeTravelersOnly(session, pdf);
+                    pdfTravelersOnly++;
+                }
                 requestBodyBuilderService.mergeAttachment(session, f.fileId());
                 pdfUsed++;
             }
@@ -274,10 +330,14 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                 sb.append("Captured trip details from your message. ");
             }
             if (pdfUsed > 0) {
-                sb.append("Used ").append(pdfUsed).append(" PDF document(s) to fill in remaining details. ");
+                sb.append("Used ").append(pdfUsed).append(" PDF document(s). ");
+            }
+            if (pdfTravelersOnly > 0) {
+                sb.append("Added travelers from ").append(pdfTravelersOnly)
+                        .append(" attached document(s) (trip details kept from your message). ");
             }
             if (pdfSkipped > 0) {
-                sb.append("Ignored ").append(pdfSkipped).append(" PDF(s) not relevant to this trip. ");
+                sb.append("Ignored ").append(pdfSkipped).append(" PDF(s) with no usable trip information. ");
             }
             if (!notFound.isEmpty()) {
                 sb.append("Could not find file(s): ").append(String.join(", ", notFound)).append(". ");
@@ -371,6 +431,12 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             delegated = true;
             // Persist the generated SQL so follow-ups (e.g. "also join the trip") can extend it.
             assistantTurn = lookup.getSql() != null ? lookup.getSql() : reply;
+        } else if ("APPROVE".equals(intent)) {
+            // Creation is performed by the UI "Create this plan" button, not by a chat reply. Point the
+            // user there rather than trying to interpret the affirmation as an edit.
+            reply = "Whenever you're ready, click \"Create this plan\" on the right to finish. "
+                    + "If you'd like any changes first, just tell me what to update.";
+            assistantTurn = reply;
         } else {
             reply = "I can help create a trip plan. For now, this initial setup delegates department, staff, and traveler lookup tasks to the database lookup sub-agent.";
             assistantTurn = reply;
@@ -539,6 +605,21 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
 
     private boolean notBlank(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /** Bare affirmations/approvals that should point the user at the Create button, not the Update Agent. */
+    private static final java.util.Set<String> APPROVAL_PHRASES = java.util.Set.of(
+            "yes", "y", "ok", "okay", "approve", "approved", "confirm", "confirmed",
+            "create", "create it", "create plan", "create the plan", "proceed", "go ahead",
+            "done", "looks good", "lgtm", "sure", "yep", "yeah");
+
+    /** True when the whole message is just an approval/affirmation (so it carries no edit to apply). */
+    private boolean isApprovalPhrase(String message) {
+        if (message == null) {
+            return false;
+        }
+        String m = message.trim().toLowerCase(Locale.ROOT).replaceAll("[.!\\s]+$", "");
+        return APPROVAL_PHRASES.contains(m);
     }
 
     private String classifyIntent(String message, List<Message> history) {
