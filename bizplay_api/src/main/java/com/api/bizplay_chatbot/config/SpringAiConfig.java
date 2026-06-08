@@ -70,12 +70,26 @@ public class SpringAiConfig {
         requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
         RestClient.Builder restClientBuilder = RestClient.builder()
-                .requestFactory(requestFactory)
-                .defaultHeader("x-api-key", entry.getApiKey());
+                .requestFactory(requestFactory);
+
+        // Two supported auth styles:
+        //  - "x-api-key": legacy local-vLLM custom header; OpenAiApi still emits a
+        //                 placeholder Bearer header but the server reads x-api-key.
+        //  - "bearer"   : standard OpenAI-compatible Authorization: Bearer <key>.
+        String authStyle = entry.getApiKeyHeader() == null
+                ? "bearer"
+                : entry.getApiKeyHeader().trim().toLowerCase();
+        String openAiApiKey;
+        if ("x-api-key".equals(authStyle)) {
+            restClientBuilder.defaultHeader("x-api-key", entry.getApiKey());
+            openAiApiKey = "unused";
+        } else {
+            openAiApiKey = entry.getApiKey();
+        }
 
         OpenAiApi chatApi = OpenAiApi.builder()
                 .baseUrl(entry.getBaseUrl())
-                .apiKey("unused")
+                .apiKey(openAiApiKey)
                 .completionsPath("/chat/completions")
                 .restClientBuilder(restClientBuilder)
                 .build();

@@ -35,6 +35,12 @@ public class LlmProperties {
         private String baseUrl;
         /** API key for authentication */
         private String apiKey = "local";
+        /**
+         * How to send the API key to the server.
+         * - "bearer"    → standard OpenAI-compatible: Authorization: Bearer <apiKey>
+         * - "x-api-key" → legacy local-vLLM style:    x-api-key: <apiKey>
+         */
+        private String apiKeyHeader = "bearer";
         /** Model name as registered in vLLM */
         private String model;
         /** Sampling temperature */
