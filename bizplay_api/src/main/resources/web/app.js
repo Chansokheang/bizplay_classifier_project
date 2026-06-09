@@ -23,10 +23,11 @@ function loadingRow(cols) { return `<tr><td colspan="${cols}" class="empty-row">
  * from somewhere else (Live Server on :5500, etc.) we target :8080 directly — the
  * server adds a dev CORS header for /api/v1/plans so that still works.
  * Note: opening via file:// cannot reach the API (browsers block it) — use the URL. */
+const IS_LOCAL_DEV_HOST = ["localhost", "127.0.0.1"].includes(location.hostname);
 const API_ORIGIN =
-  location.protocol === "http:" && (location.port === "8080" || location.port === "")
-    ? ""
-    : "http://localhost:8080";
+  location.protocol === "file:" || (IS_LOCAL_DEV_HOST && location.port && location.port !== "8080")
+    ? "http://localhost:8080"
+    : "";
 const API = API_ORIGIN + "/api/v1/plans";
 
 /* Seed staff/departments (mirror src/test/data/seed_staff_department.sql for corp 1234567890).
