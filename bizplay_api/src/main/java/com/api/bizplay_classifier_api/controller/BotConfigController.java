@@ -63,15 +63,15 @@ public class BotConfigController {
     public ResponseEntity<ApiResponse<?>> createBotConfig(
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
-                    defaultValue = "exaone-357-8b-instruct-awq",
+                    defaultValue = "exaone-3.5-7.8b",
                     allowableValues = {
-                            "exaone-357-8b-instruct-awq",
+                            "exaone-3.5-7.8b",
                             "gpt-4o-mini",
                             "gemini-1.5-flash",
                             "claude-3-5-sonnet-latest"
                     }
             ))
-            @RequestParam(value = "modelName", defaultValue = "exaone-357-8b-instruct-awq") String modelName,
+            @RequestParam(value = "modelName", defaultValue = "exaone-3.5-7.8b") String modelName,
             @Valid @RequestBody BotConfigRequest botConfigRequest
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(
@@ -101,15 +101,15 @@ public class BotConfigController {
             @PathVariable String corpNo,
             @RequestParam(value = "provider", defaultValue = "EXAONE") AiProvider provider,
             @Parameter(schema = @Schema(
-                    defaultValue = "exaone-357-8b-instruct-awq",
+                    defaultValue = "exaone-3.5-7.8b",
                     allowableValues = {
-                            "exaone-357-8b-instruct-awq",
+                            "exaone-3.5-7.8b",
                             "gpt-4o-mini",
                             "gemini-1.5-flash",
                             "claude-3-5-sonnet-latest"
                     }
             ))
-            @RequestParam(value = "modelName", defaultValue = "exaone-357-8b-instruct-awq") String modelName,
+            @RequestParam(value = "modelName", defaultValue = "exaone-3.5-7.8b") String modelName,
             @RequestBody @Valid BotConfigRequest.Config config
     ) {
         BotConfigDTO payload = botConfigService.upsertBotConfig(corpNo, config, provider, modelName);

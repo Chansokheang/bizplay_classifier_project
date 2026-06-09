@@ -23,8 +23,6 @@ public class TripReport {
     private UUID costExpenseId;
     /** "COST", "TRANSPORTATION", or "ETC". */
     private String sectionCode;
-    private String excessReason;
-    private String briefs;
-    private String note;
     private String approvalNumber;
+    private String approvalStatus;
 }

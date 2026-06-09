@@ -179,20 +179,30 @@
         </div>
       </div>
 
+      <!-- Bulk-selection toolbar (shown when ≥1 report is checked) -->
+      <div id="reportSelBar" class="sel-bar hidden">
+        <span class="sel-count"><strong id="reportSelCount">0</strong> selected</span>
+        <div class="sel-actions">
+          <button id="reportSelClear" class="btn btn-quiet btn-sm">Clear</button>
+          <button id="reportSelDelete" class="btn btn-danger btn-sm">🗑 Remove</button>
+        </div>
+      </div>
+
       <div class="card">
         <table class="grid">
           <colgroup>
-            <col /><col /><col /><col /><col /><col />
+            <col /><col /><col /><col /><col /><col /><col />
             <col /><col /><col /><col /><col /><col />
           </colgroup>
           <thead>
             <tr>
+              <th><input type="checkbox" id="reportSelectAll" class="chk" aria-label="Select all reports" /></th>
               <th class="c-no">No</th>
               <th>Document</th><th>Trip</th><th>Traveler</th><th>Dept.</th><th>Purpose</th>
               <th>Period</th><th>Lines</th><th>Total</th><th>Status</th><th>Updated</th><th>Actions</th>
             </tr>
           </thead>
-          <tbody id="reportBody"><tr><td colspan="12" class="empty-row">Loading…</td></tr></tbody>
+          <tbody id="reportBody"><tr><td colspan="13" class="empty-row">Loading…</td></tr></tbody>
         </table>
       </div>
 
@@ -416,11 +426,11 @@
 
   <!-- ======================= CREATE REPORT MODAL ======================= -->
   <div id="reportCreateOverlay" class="overlay hidden">
-    <div class="sheet sheet-wide">
+    <div class="sheet sheet-wide" id="rcSheet">
       <div class="sheet-head">
         <div>
-          <h2>New Expense Report</h2>
-          <p class="sub">Import an approved business trip plan, attach receipts, then review.</p>
+          <h2 id="rcTitle">New Expense Report</h2>
+          <p class="sub" id="rcSub">Import an approved business trip plan, attach receipts, then review.</p>
         </div>
         <button class="x-btn" id="rcHeadClose" aria-label="Close">✕</button>
       </div>
@@ -452,6 +462,7 @@
       <div class="sheet-foot">
         <span id="rcMsg" class="val-summary"></span>
         <div class="foot-actions">
+          <button class="btn btn-danger hidden" id="rcDeleteBtn">🗑 Delete</button>
           <button class="btn btn-quiet" id="rcCloseBtn">Cancel</button>
           <button class="btn btn-quiet" id="rcSaveBtn">Draft</button>
           <button class="btn btn-primary" id="rcSubmitBtn">Create</button>
@@ -460,18 +471,69 @@
     </div>
   </div>
 
-  <!-- ======================= APPROVED-PLAN PICKER ======================= -->
+  <!-- ======================= APPROVED-PLAN PICKER (Select Plan) ======================= -->
   <div id="planPickerOverlay" class="overlay hidden">
-    <div class="dialog resume-dialog">
+    <div class="sheet picker-sheet">
       <div class="sheet-head">
-        <div><h3>Import an approved plan</h3><p class="sub">Only plans with approval complete can be settled.</p></div>
+        <div>
+          <h2>Select Plan</h2>
+          <p class="sub">Choose an approved business trip plan to settle. Only plans with approval complete can be settled.</p>
+        </div>
         <button class="x-btn" id="planPickerCloseBtn" aria-label="Close">✕</button>
       </div>
-      <div id="planPickerList" class="resume-list"><div class="muted-pad">Loading…</div></div>
+
+      <div class="sheet-body">
+        <div class="toolbar">
+          <div class="search-box">
+            <span class="search-ico">🔍</span>
+            <input id="planPickerSearch" type="text" autocomplete="off"
+                   placeholder="Search by title, document number, traveler, author, dept" />
+            <button id="planPickerSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <table class="grid">
+            <colgroup><col /><col /><col /><col /><col /><col /><col /><col /></colgroup>
+            <thead>
+              <tr>
+                <th class="c-radio"></th>
+                <th>Title</th><th>Document</th><th>Trip Date</th><th>Author</th>
+                <th>Traveler</th><th>Dept.</th><th>Route</th>
+              </tr>
+            </thead>
+            <tbody id="planPickerList"><tr><td colspan="8" class="empty-row">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sheet-foot">
+        <span id="planPickerCount" class="list-meta"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="planPickerCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="planPickerConfirmBtn" disabled>Import selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= CONFIRM DIALOG ======================= -->
+  <div id="confirmOverlay" class="overlay hidden">
+    <div class="dialog confirm-dialog">
+      <div class="sheet-head">
+        <h3 id="confirmTitle">Confirm</h3>
+        <button class="x-btn" id="confirmCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <p id="confirmMsg" class="confirm-msg"></p>
+      <div class="dialog-foot confirm-foot">
+        <button class="btn btn-quiet" id="confirmCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="confirmOkBtn">Delete</button>
+      </div>
     </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

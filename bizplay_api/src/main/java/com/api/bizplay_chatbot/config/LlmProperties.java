@@ -40,6 +40,12 @@ public class LlmProperties {
          * or "bearer" (standard Authorization: Bearer header, for OpenAI-compatible gateways).
          */
         private String authScheme = "x-api-key";
+        /**
+         * How to send the API key to the server.
+         * - "bearer"    → standard OpenAI-compatible: Authorization: Bearer <apiKey>
+         * - "x-api-key" → legacy local-vLLM style:    x-api-key: <apiKey>
+         */
+        private String apiKeyHeader = "bearer";
         /** Model name as registered in vLLM */
         private String model;
         /** Sampling temperature */

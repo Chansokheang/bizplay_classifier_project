@@ -19,12 +19,17 @@ public class TransportationExpense {
     private String usePurpose;
     private String account;
     private String transportationMethod;
+    private String grade;
     private String originLocation;
     private String destinationLocation;
     private LocalDate usageDate;
+    private LocalDate evidenceDate;
     private String vendor;
     private BigDecimal supplyPrice;
     private BigDecimal tax;
-    private BigDecimal amountUsed;
-    private BigDecimal regulatedAmount;
+    private BigDecimal policyAmount;
+    private BigDecimal applicationAmount;
+    private String excessReason;
+    private String description;
+    private String note;
 }

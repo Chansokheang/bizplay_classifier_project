@@ -21,11 +21,9 @@ public class ReportLineResponse {
     private UUID agentSessionId;
     /** "COST", "TRANSPORTATION", or "ETC". */
     private String sectionCode;
+    private String approvalStatus;
     private UUID departmentId;
     private String department;
-    private String excessReason;
-    private String briefs;
-    private String note;
     private String approvalNumber;
     /** Set for COST / ETC lines. */
     private CostExpense costExpense;

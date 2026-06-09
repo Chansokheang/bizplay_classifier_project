@@ -44,10 +44,10 @@ public class BotConfigRequest {
         private AiProvider provider;
 
         @Schema(
-                example = "exaone-357-8b-instruct-awq",
-                defaultValue = "exaone-357-8b-instruct-awq",
+                example = "exaone-3.5-7.8b",
+                defaultValue = "exaone-3.5-7.8b",
                 allowableValues = {
-                        "exaone-357-8b-instruct-awq",
+                        "exaone-3.5-7.8b",
                         "gpt-4o-mini",
                         "gemini-1.5-flash",
                         "claude-3-5-sonnet-latest"
@@ -63,8 +63,8 @@ public class BotConfigRequest {
         private Double temperature;
 
         @Schema(
-                example = "sk-d7a20eb034c847e8994e192b40c69a61",
-                defaultValue = "sk-d7a20eb034c847e8994e192b40c69a61"
+                example = "",
+                defaultValue = ""
         )
         private String apiKey;
 

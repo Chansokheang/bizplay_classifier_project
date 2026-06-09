@@ -7,7 +7,7 @@
   --card:   #ffffff;
   --text:   #1f2430;
   --soft:   #5b6472;
-  --muted:  #8b94a3;
+  --muted:  #6b7480;   /* darkened for WCAG AA on light + tinted bgs (was #8b94a3, ~3.3:1) */
   --line:   #e2e5ea;
   --line-soft: #eef0f4;        /* lighter divider used inside cards/rows */
   --primary:   #1f3a60;        /* navy accent (matches Bizplay product) */
@@ -172,8 +172,20 @@ body {
 .er-total { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12.5px; color: var(--soft); }
 .er-grand { display: flex; justify-content: space-between; padding: 11px 14px; background: var(--primary-soft); border: 1px solid #d4e2ff; border-radius: var(--radius); font-weight: 700; margin-bottom: 12px; }
 
+/* ---------- Select Plan picker (large table panel) ---------- */
+.picker-sheet { width: 92vw; max-width: 1320px; height: 86vh; max-height: 900px; }
+.picker-sheet .sheet-body { display: flex; flex-direction: column; overflow: hidden; }
+.picker-sheet .toolbar { flex-shrink: 0; }
+
 /* ---------- Create Report modal (large near-fullscreen panel) ---------- */
 .sheet-wide { width: 95vw; max-width: 1500px; height: 90vh; max-height: 960px; }
+/* read-only detail view of an existing report: hide all editing affordances */
+#rcSheet.readonly #rcImportBtn,
+#rcSheet.readonly #rcClearPlan,
+#rcSheet.readonly [data-loadev],
+#rcSheet.readonly #rcSaveBtn,
+#rcSheet.readonly #rcSubmitBtn,
+#rcSheet.readonly #rcReceiptHint { display: none; }
 .sheet-wide .sheet-head, .sheet-wide .sheet-foot { flex-shrink: 0; }
 .sheet-wide .sheet-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .rc-import { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); margin-bottom: 14px; }
@@ -290,6 +302,10 @@ body {
 .checkbox { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 3px; background: #fff; vertical-align: middle; }
 /* interactive selection checkboxes */
 .chk { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; vertical-align: middle; margin: 0; }
+/* radio select (Select Plan picker) */
+.pick-radio { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; vertical-align: middle; margin: 0; }
+.grid tbody tr.row-selected,
+.grid tbody tr.row-selected:hover { background: var(--primary-soft); }
 
 /* Bulk-selection toolbar */
 .sel-bar {
@@ -349,6 +365,11 @@ body {
 .dialog-foot { position: static; padding: 14px 0 0; border-top: 1px solid var(--line); }
 .foot-actions { display: flex; gap: 8px; }
 
+/* ---------- Confirm dialog ---------- */
+.confirm-dialog { max-width: 420px; }
+.confirm-msg { margin: 4px 0 0; color: var(--soft); font-size: 14px; line-height: 1.55; }
+.confirm-foot { display: flex; justify-content: flex-end; gap: 8px; border-top: none; padding-top: 18px; }
+
 /* ---------- Blocks / fields ---------- */
 .block { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-top: var(--gap); box-shadow: var(--shadow-sm); }
 .block:first-child { margin-top: 0; }
@@ -378,9 +399,20 @@ input[type="text"], input[type="date"], input:not([type]), select, textarea {
   background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 11px;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-input::placeholder, textarea::placeholder { color: #aab1bd; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(31,58,96,.15); }
 textarea { min-height: 72px; resize: vertical; }
+
+/* ---------- Keyboard focus (visible ring on non-input controls) ---------- */
+.btn:focus-visible, .btn-xs:focus-visible, .filter-sel:focus-visible, .tab:focus-visible,
+.statchip:focus-visible, .x-btn:focus-visible, .mini-btn:focus-visible, .search-clear:focus-visible,
+.resume-item:focus-visible, .mini-item:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm);
+}
+.tab:focus-visible { outline-offset: -3px; }
+.chk:focus-visible, .pick-radio:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* tactile press feedback */
+.btn:active:not(:disabled), .btn-xs:active, .statchip:active, .mini-btn:active { transform: translateY(1px); }
 input.invalid, select.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(210,59,59,.14); }
 
 .select-wrap { position: relative; }
@@ -410,7 +442,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 
 .route-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; cursor: pointer; background: #fff; }
 .route-trigger:hover { border-color: var(--primary); }
-.route-empty { color: #aab1bd; }
+.route-empty { color: var(--muted); }
 .route-set { font-size: 12px; color: var(--primary); white-space: nowrap; }
 
 /* ---------- Attachment ---------- */
@@ -494,7 +526,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 /* hero summary card */
 .dp-hero { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
 .dp-hero .h-title { font-size: 15px; font-weight: 700; color: var(--text); }
-.dp-hero .h-title .ph { color: #c2c8d0; font-weight: 600; }
+.dp-hero .h-title .ph { color: var(--muted); font-weight: 600; }
 .dp-hero .h-route { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 14px; color: var(--text); }
 .dp-hero .h-route i { font-style: normal; color: var(--primary); }
 .dp-hero .h-route .pin { color: var(--soft); }
@@ -557,7 +589,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .dl-row + .dl-row { border-top: 1px solid var(--line-soft); }
 .dl-row dt { color: var(--muted); }
 .dl-row dd { margin: 0; color: var(--text); word-break: break-word; }
-.dl-row dd .empty { color: #c2c8d0; }
+.dl-row dd .empty { color: var(--muted); }
 
 /* traveller cards */
 .trav-mini { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; }
@@ -578,6 +610,16 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .draft-foot { flex-shrink: 0; border-top: 1px solid var(--line); padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; background: #fff; }
 .draft-foot .btn { width: 100%; justify-content: center; }
 .draft-foot .hint { text-align: center; }
+
+/* ---------- Reduced motion: neutralize all animation/transition ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {

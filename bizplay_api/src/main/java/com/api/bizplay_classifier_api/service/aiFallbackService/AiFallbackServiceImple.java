@@ -63,15 +63,23 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private final String geminiUrlTemplate;
     private final String claudeUrl;
     private final String fallbackApiKey;
+    private final String exaoneBaseUrl;
+    private final String exaoneApiKey;
+    private final String exaoneModelName;
+    private final String exaoneApiKeyHeader;
     private final boolean enabled;
 
     public AiFallbackServiceImple(
             ObjectMapper objectMapper,
-            @Value("${app.ai.fallback.url:http://gpu-local.sovanreach.com:9020/api/v1/exaone-357-8b-instruct-awq/chat/completions}") String openAiCompatibleUrl,
+            @Value("${app.ai.fallback.url:}") String openAiCompatibleUrl,
             @Value("${app.ai.fallback.openai.url:https://api.openai.com/v1/chat/completions}") String openAiUrl,
             @Value("${app.ai.fallback.gemini.url-template:https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent}") String geminiUrlTemplate,
             @Value("${app.ai.fallback.claude.url:https://api.anthropic.com/v1/messages}") String claudeUrl,
-            @Value("${app.ai.fallback.api-key:sk-d7a20eb034c847e8994e192b40c69a61}") String apiKey,
+            @Value("${app.ai.fallback.api-key:}") String apiKey,
+            @Value("${app.llm.models[0].base-url:https://exaone.aiclab.dev/v1}") String exaoneBaseUrl,
+            @Value("${app.llm.models[0].api-key:}") String exaoneApiKey,
+            @Value("${app.llm.models[0].model:exaone-3.5-7.8b}") String exaoneModelName,
+            @Value("${app.llm.models[0].api-key-header:bearer}") String exaoneApiKeyHeader,
             @Value("${app.ai.fallback.enabled:true}") boolean enabled,
             @Value("${app.ai.fallback.connect-timeout-ms:3000}") int connectTimeoutMs,
             @Value("${app.ai.fallback.read-timeout-ms:8000}") int readTimeoutMs
@@ -82,6 +90,10 @@ public class AiFallbackServiceImple implements AiFallbackService {
         this.geminiUrlTemplate = geminiUrlTemplate;
         this.claudeUrl = claudeUrl;
         this.fallbackApiKey = apiKey;
+        this.exaoneBaseUrl = exaoneBaseUrl;
+        this.exaoneApiKey = exaoneApiKey;
+        this.exaoneModelName = exaoneModelName;
+        this.exaoneApiKeyHeader = exaoneApiKeyHeader;
         this.enabled = enabled;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeoutMs);
@@ -249,12 +261,16 @@ public class AiFallbackServiceImple implements AiFallbackService {
             return null;
         }
 
-        BotConfigRequest.Config effectiveConfig = aiConfig == null ? BotConfigDefaults.defaultConfig() : aiConfig;
+        BotConfigRequest.Config effectiveConfig = aiConfig == null ? new BotConfigRequest.Config() : aiConfig;
         AiProvider provider = effectiveConfig.getProvider() == null
                 ? BotConfigDefaults.DEFAULT_PROVIDER
                 : effectiveConfig.getProvider();
-        String modelName = safe(firstNonBlank(effectiveConfig.getModelName(), BotConfigDefaults.DEFAULT_MODEL_NAME));
-        String apiKey = safe(firstNonBlank(effectiveConfig.getApiKey(), fallbackApiKey));
+        String modelName = safe(provider == AiProvider.EXAONE
+                ? firstNonBlank(exaoneModelName, effectiveConfig.getModelName(), BotConfigDefaults.DEFAULT_MODEL_NAME)
+                : firstNonBlank(effectiveConfig.getModelName(), BotConfigDefaults.DEFAULT_MODEL_NAME));
+        String apiKey = safe(provider == AiProvider.EXAONE
+                ? firstNonBlank(exaoneApiKey, fallbackApiKey, effectiveConfig.getApiKey(), BotConfigDefaults.DEFAULT_API_KEY)
+                : firstNonBlank(effectiveConfig.getApiKey(), fallbackApiKey, BotConfigDefaults.DEFAULT_API_KEY));
         Double temperature = effectiveConfig.getTemperature() == null
                 ? BotConfigDefaults.DEFAULT_TEMPERATURE
                 : effectiveConfig.getTemperature();
@@ -273,9 +289,12 @@ public class AiFallbackServiceImple implements AiFallbackService {
             case CLAUDE -> claudeUrl == null || claudeUrl.isBlank()
                     ? null
                     : new ResolvedAiConfig(provider, claudeUrl, modelName, temperature, apiKey);
-            case EXAONE -> openAiCompatibleUrl == null || openAiCompatibleUrl.isBlank()
-                    ? null
-                    : new ResolvedAiConfig(provider, openAiCompatibleUrl, modelName, temperature, apiKey);
+            case EXAONE -> {
+                String exaoneUrl = resolveExaoneUrl();
+                yield exaoneUrl == null || exaoneUrl.isBlank()
+                        ? null
+                        : new ResolvedAiConfig(provider, exaoneUrl, modelName, temperature, apiKey);
+            }
         };
     }
 
@@ -301,7 +320,13 @@ public class AiFallbackServiceImple implements AiFallbackService {
     private void applyHeaders(org.springframework.http.HttpHeaders headers, ResolvedAiConfig config) {
         switch (config.provider()) {
             case OPENAI -> headers.setBearerAuth(config.apiKey());
-            case EXAONE -> headers.set("x-api-key", config.apiKey());
+            case EXAONE -> {
+                if ("x-api-key".equalsIgnoreCase(safe(exaoneApiKeyHeader))) {
+                    headers.set("x-api-key", config.apiKey());
+                } else {
+                    headers.setBearerAuth(config.apiKey());
+                }
+            }
             case CLAUDE -> {
                 headers.set("x-api-key", config.apiKey());
                 headers.set("anthropic-version", "2023-06-01");
@@ -379,6 +404,18 @@ public class AiFallbackServiceImple implements AiFallbackService {
         String resolvedTemplate = geminiUrlTemplate.replace("{model}", encodedModel);
         String separator = resolvedTemplate.contains("?") ? "&" : "?";
         return resolvedTemplate + separator + "key=" + encodedApiKey;
+    }
+
+    private String resolveExaoneUrl() {
+        String configuredUrl = firstNonBlank(openAiCompatibleUrl, exaoneBaseUrl);
+        if (configuredUrl == null || configuredUrl.isBlank()) {
+            return null;
+        }
+        String trimmed = configuredUrl.trim();
+        if (trimmed.endsWith("/chat/completions")) {
+            return trimmed;
+        }
+        return trimmed.replaceAll("/+$", "") + "/chat/completions";
     }
 
     private String extractProviderMessageContent(String rawResponse, AiProvider provider) {
@@ -594,11 +631,16 @@ public class AiFallbackServiceImple implements AiFallbackService {
         return value == null ? "" : value.trim();
     }
 
-    private String firstNonBlank(String preferred, String fallback) {
-        if (preferred != null && !preferred.isBlank()) {
-            return preferred;
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
         }
-        return fallback;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String toJson(Object value) {

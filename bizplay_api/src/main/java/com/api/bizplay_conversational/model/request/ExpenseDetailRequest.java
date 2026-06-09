@@ -1,5 +1,6 @@
 package com.api.bizplay_conversational.model.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -37,6 +38,10 @@ public class ExpenseDetailRequest {
     @Size(max = 100)
     private String transportationMethod;
 
+    @JsonProperty("Grade")
+    @Size(max = 100)
+    private String grade;
+
     @JsonProperty("Origin")
     @Size(max = 255)
     private String origin;
@@ -55,6 +60,7 @@ public class ExpenseDetailRequest {
     private LocalDate usageDate;
 
     @JsonProperty("ProofDate")
+    @JsonAlias("EvidenceDate")
     private LocalDate proofDate;
 
     @JsonProperty("Description")
@@ -71,12 +77,15 @@ public class ExpenseDetailRequest {
     private BigDecimal tax;
 
     @JsonProperty("AmountUsed")
+    @JsonAlias("ApplicationAmount")
     private BigDecimal amountUsed;
 
     @JsonProperty("RegulatedAmount")
+    @JsonAlias("PolicyAmount")
     private BigDecimal regulatedAmount;
 
     @JsonProperty("ApplicationAmountReasonForExcess")
+    @JsonAlias("ExcessReason")
     private String applicationAmountReasonForExcess;
 
     @JsonProperty("Briefs")

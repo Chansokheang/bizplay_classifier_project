@@ -10,6 +10,12 @@ import lombok.Setter;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/**
+ * One expense line in the report draft. Field names mirror the persisted expense columns:
+ * EvidenceDate, PolicyAmount, ApplicationAmount, ExcessReason, Grade, Description, Note.
+ * Old keys (ProofDate / AmountUsed / RegulatedAmount / ApplicationAmountReasonForExcess) are still
+ * accepted as aliases so previously-saved draft_json keeps parsing.
+ */
 @Getter
 @Setter
 @NoArgsConstructor
@@ -40,6 +46,9 @@ public class ExpenseDetailDraft {
     @JsonAlias("TransportationMethod")
     private String transportationMethod;
 
+    @JsonProperty("Grade")
+    private String grade;
+
     @JsonProperty("Origin")
     private String origin;
 
@@ -55,8 +64,9 @@ public class ExpenseDetailDraft {
     @JsonProperty("UsageDate")
     private LocalDate usageDate;
 
-    @JsonProperty("ProofDate")
-    private LocalDate proofDate;
+    @JsonProperty("EvidenceDate")
+    @JsonAlias("ProofDate")
+    private LocalDate evidenceDate;
 
     @JsonProperty("Description")
     private String description;
@@ -72,17 +82,17 @@ public class ExpenseDetailDraft {
     @JsonProperty("Tax")
     private BigDecimal tax;
 
-    @JsonProperty("AmountUsed")
-    private BigDecimal amountUsed;
+    @JsonProperty("ApplicationAmount")
+    @JsonAlias("AmountUsed")
+    private BigDecimal applicationAmount;
 
-    @JsonProperty("RegulatedAmount")
-    private BigDecimal regulatedAmount;
+    @JsonProperty("PolicyAmount")
+    @JsonAlias("RegulatedAmount")
+    private BigDecimal policyAmount;
 
-    @JsonProperty("ApplicationAmountReasonForExcess")
-    private String applicationAmountReasonForExcess;
-
-    @JsonProperty("Briefs")
-    private String briefs;
+    @JsonProperty("ExcessReason")
+    @JsonAlias("ApplicationAmountReasonForExcess")
+    private String excessReason;
 
     @JsonProperty("Note")
     private String note;

@@ -62,6 +62,54 @@ let routeResolve = null;
 const $ = (id) => document.getElementById(id);
 
 /* ---------------------------------------------------------------- *
+ *  Motion (GSAP core) — restrained, product-appropriate.
+ *  Honors prefers-reduced-motion and degrades to no-op if GSAP is absent,
+ *  so content is always visible by default (never gated on a reveal).
+ * ---------------------------------------------------------------- */
+const MOTION = typeof gsap !== "undefined" &&
+  !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* Stagger table rows in after a fresh data load (not on every filter keystroke). */
+function animateRowsIn(tbodyId) {
+  if (!MOTION) return;
+  const rows = document.querySelectorAll("#" + tbodyId + " > tr");
+  if (!rows.length) return;
+  gsap.fromTo(rows,
+    { opacity: 0, y: 6 },
+    { opacity: 1, y: 0, duration: 0.3, ease: "power2.out", stagger: { each: 0.022, amount: Math.min(0.5, rows.length * 0.022) }, overwrite: true, clearProps: "transform,opacity" });
+}
+
+/* Soft crossfade + rise when a tab becomes visible. */
+function animatePane(name) {
+  if (!MOTION) return;
+  gsap.fromTo("#tab-" + name,
+    { opacity: 0, y: 8 },
+    { opacity: 1, y: 0, duration: 0.32, ease: "power3.out", overwrite: true, clearProps: "transform,opacity" });
+}
+
+/* ---------------------------------------------------------------- *
+ *  In-app confirmation dialog (replaces window.confirm)
+ *  Usage: if (await confirmDialog({ title, message, confirmText })) { ... }
+ * ---------------------------------------------------------------- */
+let confirmResolver = null;
+function confirmDialog({ title = "Confirm", message = "", confirmText = "Delete", danger = true } = {}) {
+  $("confirmTitle").textContent = title;
+  $("confirmMsg").textContent = message;
+  const ok = $("confirmOkBtn");
+  ok.textContent = confirmText;
+  ok.className = "btn " + (danger ? "btn-danger" : "btn-primary");
+  $("confirmOverlay").classList.remove("hidden");
+  setTimeout(() => ok.focus(), 0);
+  return new Promise((resolve) => { confirmResolver = resolve; });
+}
+function resolveConfirm(result) {
+  if ($("confirmOverlay").classList.contains("hidden")) return;
+  $("confirmOverlay").classList.add("hidden");
+  const r = confirmResolver; confirmResolver = null;
+  if (r) r(result);
+}
+
+/* ---------------------------------------------------------------- *
  *  List page
  * ---------------------------------------------------------------- */
 /* All plans for the active corp; the table view is filtered client-side
@@ -95,6 +143,7 @@ async function loadPlans() {
     // API envelope is { success, message, data }.
     plansCache = (json && (json.data || json.payload)) || [];
     applyPlanFilters();
+    animateRowsIn("plansBody");
   } catch (e) {
     const hint = location.protocol === "file:"
       ? " — open the page at http://localhost:8080/web/ instead of a file:// path."
@@ -213,7 +262,12 @@ async function deleteSelectedPlans() {
   const label = ids.length === 1
     ? `“${checks[0].getAttribute("data-title")}”`
     : `${ids.length} plans`;
-  if (!confirm(`Remove ${label}? This also deletes their travelers and attachments and cannot be undone.`)) return;
+  const ok = await confirmDialog({
+    title: "Remove business trip plan" + (ids.length === 1 ? "" : "s"),
+    message: `Remove ${label}? This also deletes their travelers and attachments and cannot be undone.`,
+    confirmText: "Remove",
+  });
+  if (!ok) return;
 
   const btn = $("selDeleteBtn");
   btn.disabled = true; btn.textContent = "Removing…";
@@ -531,6 +585,10 @@ function toast(msg, kind) {
   const el = $("toast");
   el.textContent = msg;
   el.className = "toast " + (kind || "");
+  if (MOTION) {
+    // xPercent:-50 preserves the CSS translateX(-50%) centering that GSAP's transform would otherwise clobber.
+    gsap.fromTo(el, { xPercent: -50, y: 14, opacity: 0 }, { xPercent: -50, y: 0, opacity: 1, duration: 0.34, ease: "power3.out", overwrite: true });
+  }
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add("hidden"), 3200);
 }
@@ -714,7 +772,13 @@ function init() {
     const c = ev.target.closest("[data-cancel]");
     if (v) openDetail(v.getAttribute("data-view"));
     else if (a) setApproval(a.getAttribute("data-approve"), "Approval complete");
-    else if (c) { if (confirm("Cancel this business trip plan?")) setApproval(c.getAttribute("data-cancel"), "Business trip cancellation"); }
+    else if (c) {
+      confirmDialog({
+        title: "Cancel business trip",
+        message: "Cancel this business trip plan? It will be marked as a trip cancellation.",
+        confirmText: "Cancel trip",
+      }).then((ok) => { if (ok) setApproval(c.getAttribute("data-cancel"), "Business trip cancellation"); });
+    }
   });
 
   // --- Report tab (structured) ---
@@ -731,10 +795,27 @@ function init() {
   });
   $("openReportCreateBtn").addEventListener("click", () => openReportCreate());
   $("reportBody").addEventListener("click", (ev) => {
-    const open = ev.target.closest("[data-report-open]");
-    const plan = ev.target.closest("[data-report-plan]");
-    if (open) openReportFromSession(open.getAttribute("data-report-open"));
-    else if (plan) openDetail(plan.getAttribute("data-report-plan"));
+    if (ev.target.closest(".c-check")) return;
+    const row = ev.target.closest("[data-report-key]");
+    if (row) openReportDetail(row.getAttribute("data-report-key"));
+  });
+  $("reportBody").addEventListener("change", (ev) => {
+    if (ev.target.classList.contains("report-chk")) updateReportSelBar();
+  });
+  $("reportSelectAll").addEventListener("change", toggleReportSelectAll);
+  $("reportSelClear").addEventListener("click", clearReportSelection);
+  $("reportSelDelete").addEventListener("click", deleteSelectedReports);
+  $("rcDeleteBtn").addEventListener("click", deleteCurrentReport);
+
+  // Confirm dialog
+  $("confirmOkBtn").addEventListener("click", () => resolveConfirm(true));
+  $("confirmCancelBtn").addEventListener("click", () => resolveConfirm(false));
+  $("confirmCloseBtn").addEventListener("click", () => resolveConfirm(false));
+  $("confirmOverlay").addEventListener("click", (ev) => { if (ev.target === $("confirmOverlay")) resolveConfirm(false); });
+  document.addEventListener("keydown", (ev) => {
+    if ($("confirmOverlay").classList.contains("hidden")) return;
+    if (ev.key === "Escape") resolveConfirm(false);
+    else if (ev.key === "Enter") resolveConfirm(true);
   });
   $("rcImportBtn").addEventListener("click", openPlanPicker);
   $("rcClearPlan").addEventListener("click", clearReportPlan);
@@ -745,9 +826,26 @@ function init() {
   $("rcFileInput").addEventListener("change", onReceiptFiles);
   $("rcSections").addEventListener("click", (ev) => { if (ev.target.closest("[data-loadev]")) $("rcFileInput").click(); });
   $("planPickerCloseBtn").addEventListener("click", closePlanPicker);
+  $("planPickerCancelBtn").addEventListener("click", closePlanPicker);
+  $("planPickerConfirmBtn").addEventListener("click", confirmPlanPicker);
+  $("planPickerSearch").addEventListener("input", () => {
+    $("planPickerSearchClear").classList.toggle("hidden", !$("planPickerSearch").value);
+    renderPlanPicker();
+  });
+  $("planPickerSearchClear").addEventListener("click", () => {
+    $("planPickerSearch").value = "";
+    $("planPickerSearchClear").classList.add("hidden");
+    renderPlanPicker();
+    $("planPickerSearch").focus();
+  });
+  // Click a row (or its radio) to select; double-click to select + import.
   $("planPickerList").addEventListener("click", (ev) => {
-    const it = ev.target.closest("[data-pickplan]");
-    if (it) { importPlan(it.getAttribute("data-pickplan")); closePlanPicker(); }
+    const row = ev.target.closest("[data-pickplan]");
+    if (row) selectPickerPlan(row.getAttribute("data-pickplan"));
+  });
+  $("planPickerList").addEventListener("dblclick", (ev) => {
+    const row = ev.target.closest("[data-pickplan]");
+    if (row) { selectPickerPlan(row.getAttribute("data-pickplan")); confirmPlanPicker(); }
   });
 
   loadPlans();
@@ -1241,7 +1339,11 @@ function renderDetail(p) {
 
 async function deleteCurrentPlan() {
   if (!currentDetailId) return;
-  if (!confirm("Delete this business trip plan? This cannot be undone.")) return;
+  if (!(await confirmDialog({
+    title: "Delete business trip plan",
+    message: "Delete this business trip plan? This cannot be undone.",
+    confirmText: "Delete",
+  }))) return;
   const btn = $("detailDeleteBtn");
   btn.disabled = true; btn.textContent = "Deleting…";
   try {
@@ -1446,6 +1548,7 @@ function showTab(name) {
   currentTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.getAttribute("data-tab") === name));
   ["plan", "approve", "report"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
+  animatePane(name);
   if (name === "approve") loadApprovals();
   if (name === "report") loadReports();
 }
@@ -1472,6 +1575,7 @@ async function loadApprovals() {
     const json = await res.json();
     approveCache = (json && (json.data || json.payload)) || [];
     renderApprovals();
+    animateRowsIn("approveBody");
   } catch (e) {
     body.innerHTML = `<tr><td colspan="8" class="empty-row">Failed to load: ${esc(e.message)}</td></tr>`;
   } finally {
@@ -1750,7 +1854,7 @@ function reportLineDate(line) {
 
 async function loadReports() {
   const body = $("reportBody");
-  body.innerHTML = loadingRow(12);
+  body.innerHTML = loadingRow(13);
   beginLoad();
   try {
     // Lines from the reports API, plus plans (to resolve each report's trip title).
@@ -1770,11 +1874,14 @@ async function loadReports() {
     lines.forEach((ln) => {
       const key = ln.agentSessionId || ln.tripPlanId || ln.id;
       if (!groups[key]) {
-        groups[key] = { key, sessionId: ln.agentSessionId || null, tripPlanId: ln.tripPlanId || null, lines: 0, total: 0, date: "" };
+        groups[key] = { key, sessionId: ln.agentSessionId || null, tripPlanId: ln.tripPlanId || null, approvalStatus: null, lines: 0, total: 0, date: "", items: [], itemIds: [] };
       }
       const g = groups[key];
       g.lines += 1;
       g.total += reportLineAmount(ln);
+      if (ln.approvalStatus) g.approvalStatus = ln.approvalStatus;
+      g.items.push(ln);
+      if (ln.id) g.itemIds.push(ln.id);
       const d = reportLineDate(ln);
       if (d && d > g.date) g.date = d;
       if (!g.tripPlanId && ln.tripPlanId) g.tripPlanId = ln.tripPlanId;
@@ -1786,10 +1893,11 @@ async function loadReports() {
       return g;
     });
     renderReports();
+    animateRowsIn("reportBody");
   } catch (e) {
     reportsCache = [];
     $("reportCount").textContent = 0; $("reportShown").textContent = 0; $("reportTotal").textContent = 0;
-    body.innerHTML = `<tr><td colspan="12" class="empty-row">Failed to load: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="13" class="empty-row">Failed to load: ${esc(e.message)}</td></tr>`;
   } finally {
     endLoad();
   }
@@ -1812,7 +1920,10 @@ function renderReports() {
     if (!q) return true;
     const p = g.plan || {};
     const t0 = (p.travelers && p.travelers[0]) || {};
-    const hay = [g.title, p.purpose, p.destination, t0.name, t0.department, "2026-지출보고서", "posted"]
+    const aprStatus = g.approvalStatus || "Request for approval";
+    const aprLabel = aprStatus === "Approval complete" ? "Approved"
+      : aprStatus === "Business trip cancellation" ? "Cancelled" : "Request for approval";
+    const hay = [g.title, p.purpose, p.destination, t0.name, t0.department, aprStatus, aprLabel, "2026-지출보고서"]
       .filter(Boolean).join(" ").toLowerCase();
     return hay.includes(q);
   });
@@ -1823,7 +1934,8 @@ function renderReports() {
   const body = $("reportBody");
   if (!list.length) {
     const msg = reportsCache.length ? "No reports match this search." : "No reports yet — click “Create Report”.";
-    body.innerHTML = `<tr><td colspan="12" class="empty-row">${msg}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="13" class="empty-row">${msg}</td></tr>`;
+    updateReportSelBar();
     return;
   }
   body.innerHTML = list.map((g, i) => {
@@ -1835,10 +1947,11 @@ function renderReports() {
     const dept = t0.department || "—";
     const purpose = p.purpose ? shortPurpose(p.purpose) : "—";
     const period = (p.businessStartDate || p.businessPeriod) ? formatPeriod(p) : (g.date || "—");
-    const openAttr = g.sessionId
-      ? `data-report-open="${esc(g.sessionId)}"`
-      : (g.tripPlanId ? `data-report-plan="${esc(g.tripPlanId)}"` : "disabled");
-    return `<tr>
+    const aprStatus = g.approvalStatus || "Request for approval";
+    const aprLabel = aprStatus === "Approval complete" ? "Approved"
+      : aprStatus === "Business trip cancellation" ? "Cancelled" : "Request for approval";
+    return `<tr class="row-click" data-report-key="${esc(g.key)}">
+      <td class="c-check"><input type="checkbox" class="chk report-chk" data-ids="${esc((g.itemIds || []).join(","))}" data-title="${esc(g.title)}" aria-label="Select report" /></td>
       <td class="c-no">${i + 1}</td>
       <td title="${esc(doc)}"><span class="doc-no">${esc(doc)}</span></td>
       <td class="c-title" title="${esc(g.title)}">${esc(g.title)}</td>
@@ -1848,16 +1961,119 @@ function renderReports() {
       <td class="c-period" title="${esc(p.businessPeriod || "")}">${esc(period)}</td>
       <td>${g.lines}</td>
       <td class="er-amt">${fmtMoney(g.total)}</td>
-      <td><span class="appr-pill appr-done">POSTED</span></td>
+      <td><span class="appr-pill ${approvalClass(aprStatus)}">${esc(aprLabel)}</span></td>
       <td class="c-period">${esc(g.date || "—")}</td>
-      <td><button class="btn-xs btn-view" ${openAttr}>Open</button></td>
+      <td><button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button></td>
     </tr>`;
   }).join("");
+  updateReportSelBar();
+}
+
+/* ---- report selection + delete (DELETE /api/v1/reports/batch and /{id}) ---- */
+function updateReportSelBar() {
+  const all = Array.from(document.querySelectorAll(".report-chk"));
+  const checked = all.filter((c) => c.checked);
+  $("reportSelCount").textContent = checked.length;
+  $("reportSelBar").classList.toggle("hidden", checked.length === 0);
+  const head = $("reportSelectAll");
+  if (head) {
+    head.checked = all.length > 0 && checked.length === all.length;
+    head.indeterminate = checked.length > 0 && checked.length < all.length;
+  }
+}
+function toggleReportSelectAll() {
+  const on = $("reportSelectAll").checked;
+  document.querySelectorAll(".report-chk").forEach((c) => { c.checked = on; });
+  updateReportSelBar();
+}
+function clearReportSelection() {
+  document.querySelectorAll(".report-chk").forEach((c) => { c.checked = false; });
+  const head = $("reportSelectAll"); if (head) { head.checked = false; head.indeterminate = false; }
+  updateReportSelBar();
+}
+async function deleteSelectedReports() {
+  const checks = Array.from(document.querySelectorAll(".report-chk")).filter((c) => c.checked);
+  const ids = checks.flatMap((c) => (c.getAttribute("data-ids") || "").split(",").filter(Boolean));
+  if (!ids.length) return;
+  const label = checks.length === 1 ? `“${checks[0].getAttribute("data-title")}”` : `${checks.length} reports`;
+  const ok = await confirmDialog({
+    title: "Remove expense report" + (checks.length === 1 ? "" : "s"),
+    message: `Remove ${label}? This deletes ${ids.length} expense line${ids.length === 1 ? "" : "s"} and cannot be undone.`,
+    confirmText: "Remove",
+  });
+  if (!ok) return;
+  const btn = $("reportSelDelete");
+  btn.disabled = true; btn.textContent = "Removing…";
+  beginLoad();
+  try {
+    const res = await fetch(`${EXPENSE_API}/batch`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    const r = (json && (json.data || json.payload)) || {};
+    const deleted = r.deleted != null ? r.deleted : ids.length;
+    toast(`Removed ${deleted} line${deleted === 1 ? "" : "s"}.`, "ok");
+    loadReports();
+  } catch (e) {
+    toast("Remove failed: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "🗑 Remove";
+    endLoad();
+  }
+}
+/* Delete the report currently open in the detail popup. Uses /{id} for a single
+   line, /batch for multiple. */
+async function deleteCurrentReport() {
+  const ids = (rc.detailIds || []).filter(Boolean);
+  if (!ids.length) return;
+  if (!(await confirmDialog({
+    title: "Delete expense report",
+    message: "Delete this expense report? This cannot be undone.",
+    confirmText: "Delete",
+  }))) return;
+  const btn = $("rcDeleteBtn");
+  btn.disabled = true; btn.textContent = "Deleting…";
+  beginLoad();
+  try {
+    let res;
+    if (ids.length === 1) {
+      res = await fetch(`${EXPENSE_API}/${encodeURIComponent(ids[0])}`, { method: "DELETE" });
+    } else {
+      res = await fetch(`${EXPENSE_API}/batch`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    toast("Report deleted.", "ok");
+    closeReportCreate();
+    loadReports();
+  } catch (e) {
+    toast("Delete failed: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "🗑 Delete";
+    endLoad();
+  }
 }
 
 /* ---- create modal ---- */
+function setReportModalMode(readonly) {
+  $("rcSheet").classList.toggle("readonly", !!readonly);
+  $("rcTitle").textContent = readonly ? "Expense Report" : "New Expense Report";
+  $("rcSub").textContent = readonly
+    ? "Trip plan and settled expense lines for this report."
+    : "Import an approved business trip plan, attach receipts, then review.";
+  $("rcCloseBtn").textContent = readonly ? "Close" : "Cancel";
+  $("rcDeleteBtn").classList.toggle("hidden", !readonly);
+}
 function openReportCreate() {
   rc.planId = null; rc.plan = null; rc.sessionId = null; rc.draft = null;
+  setReportModalMode(false);
   $("rcPlanLabel").textContent = "Please select an approved plan to settle";
   $("rcClearPlan").classList.add("hidden");
   $("rcTripInfo").classList.add("hidden"); $("rcTripInfo").innerHTML = "";
@@ -1867,6 +2083,84 @@ function openReportCreate() {
   $("reportCreateOverlay").classList.remove("hidden");
 }
 function closeReportCreate() { $("reportCreateOverlay").classList.add("hidden"); }
+
+/* ---- View a posted report (read-only) in the same popup ----
+   GET /api/v1/reports/{id} per line, then reconstruct the report's sections. */
+function lineToDetail(ln, i) {
+  const ce = ln.costExpense, te = ln.transportationExpense;
+  const dept = ln.department || "";
+  if (te) {
+    return {
+      "순번": i + 1, Type: "법인", Use: te.usePurpose || "", BudgetDept: dept,
+      AccountSubjects: te.account || "", EvidenceDate: te.usageDate || "",
+      "교통수단": te.transportationMethod || "", Grade: te.category || "",
+      Origin: te.originLocation || "", Destination: te.destinationLocation || "",
+      UsageDate: te.usageDate || "", "거래처": te.vendor || "",
+      "Supply price": te.supplyPrice, Tax: te.tax, AmountUsed: te.amountUsed,
+      PolicyAmount: te.regulatedAmount, ApplicationAmount: te.amountUsed,
+      RegulatedAmount: te.regulatedAmount,
+      ExcessReason: ln.excessReason || "", Description: ln.briefs || "",
+      Note: ln.note || "", TaxCode: te.taxCode || "", ApprovalNumber: ln.approvalNumber || "",
+    };
+  }
+  const c = ce || {};
+  return {
+    "순번": i + 1, Type: "법인", Use: c.usePurpose || "", BudgetDept: dept,
+    AccountSubjects: c.account || "", TaxCode: c.taxCode || "",
+    StartDate: c.startDate || "", EndDate: c.endDate || "",
+    EvidenceDate: c.proofDate || "", UsageDate: c.proofDate || "", "거래처": "",
+    Description: c.description || "", "Supply price": c.amountUsed, Tax: null,
+    AmountUsed: c.amountUsed, PolicyAmount: c.regulatedAmount, ApplicationAmount: c.amountUsed,
+    RegulatedAmount: c.regulatedAmount,
+    ExcessReason: ln.excessReason || "", Note: ln.note || "",
+  };
+}
+function buildReportDraftFromLines(lines, plan) {
+  const draft = plan ? planToReportDraft(plan) : {
+    TripInformation: {}, CostInformation: { Detail: [] },
+    TransportationInformation: { Detail: [] }, Etc: { Detail: [] },
+  };
+  draft.CostInformation = { Detail: [] };
+  draft.TransportationInformation = { Detail: [] };
+  draft.Etc = { Detail: [] };
+  const ci = { COST: 0, TRANSPORTATION: 0, ETC: 0 };
+  lines.forEach((ln) => {
+    const sc = (ln.sectionCode || "COST").toUpperCase();
+    const bucket = sc === "TRANSPORTATION" ? draft.TransportationInformation
+      : sc === "ETC" ? draft.Etc : draft.CostInformation;
+    bucket.Detail.push(lineToDetail(ln, ci[sc] !== undefined ? ci[sc]++ : 0));
+  });
+  return draft;
+}
+async function openReportDetail(key) {
+  const g = reportsCache.find((x) => x.key === key);
+  if (!g) return;
+  openReportCreate();
+  setReportModalMode(true);
+  $("rcMsg").textContent = "Loading report…";
+  rc.sessionId = null; rc.planId = g.tripPlanId || null; rc.plan = g.plan || null;
+  rc.detailIds = (g.itemIds || []).slice();
+  $("rcPlanLabel").innerHTML = `<b>${esc(g.title)}</b>${g.tripPlanId ? ` <span class="muted">(${esc(String(g.tripPlanId).slice(0, 8))})</span>` : ""}`;
+  try {
+    // Fetch each line fresh via GET /api/v1/reports/{id}; fall back to cached items.
+    let lines = g.items || [];
+    if (g.itemIds && g.itemIds.length) {
+      const fetched = await Promise.all(g.itemIds.map((id) =>
+        fetch(`${EXPENSE_API}/${encodeURIComponent(id)}`)
+          .then((r) => r.json()).then((j) => (j && (j.data || j.payload)) || null)
+          .catch(() => null)
+      ));
+      const ok = fetched.filter(Boolean);
+      if (ok.length) lines = ok;
+    }
+    rc.draft = buildReportDraftFromLines(lines, g.plan);
+    renderRcTrip(rc.draft.TripInformation || {});
+    renderRcSections();
+    $("rcMsg").textContent = "";
+  } catch (e) {
+    $("rcMsg").textContent = "Load failed: " + e.message;
+  }
+}
 
 async function openReportFromSession(id) {
   openReportCreate();
@@ -1890,30 +2184,84 @@ async function openReportFromSession(id) {
   }
 }
 
-/* ---- approved-plan picker ---- */
+/* ---- approved-plan picker (Select Plan table) ---- */
+let pickerCache = [];
+let pickerSelectedId = null;
+
 async function openPlanPicker() {
-  $("planPickerList").innerHTML = `<div class="muted-pad">Loading approved plans…</div>`;
+  $("planPickerList").innerHTML = loadingRow(8);
+  $("planPickerSearch").value = "";
+  $("planPickerSearchClear").classList.add("hidden");
+  $("planPickerCount").textContent = "";
+  pickerSelectedId = null;
+  $("planPickerConfirmBtn").disabled = true;
   $("planPickerOverlay").classList.remove("hidden");
+  beginLoad();
   try {
     // Only approved plans can be settled into an expense report.
     const url = `${API}/by-approval-status?corpNo=${encodeURIComponent(CORP_NO)}&approvalStatus=${encodeURIComponent("Approval complete")}`;
     const res = await fetch(url);
     const json = await res.json();
     if (!res.ok) throw new Error((json && (json.message || json.detail)) || `HTTP ${res.status}`);
-    let plans = (json && (json.data || json.payload)) || [];
-    plans.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-    if (!plans.length) {
-      $("planPickerList").innerHTML = `<div class="draft-empty-wrap"><span class="ico">✅</span><p>No approved plans yet. Approve a plan in the “Approve Plan” tab first.</p></div>`;
-      return;
-    }
-    $("planPickerList").innerHTML = plans.map((p) => `
-        <button class="resume-item" data-pickplan="${esc(p.id)}">
-          <div class="ri-main"><span>${esc(p.title || "Untitled")}</span><span class="appr-pill appr-done">approved</span></div>
-          <div class="ri-sub">${esc(p.destination || "—")} · ${esc(formatPeriod(p))} <span class="ri-go">Import →</span></div>
-        </button>`).join("");
+    pickerCache = (json && (json.data || json.payload)) || [];
+    pickerCache.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    renderPlanPicker();
   } catch (e) {
-    $("planPickerList").innerHTML = `<div class="muted-pad">Failed: ${esc(e.message)}</div>`;
+    pickerCache = [];
+    $("planPickerList").innerHTML = `<tr><td colspan="8" class="empty-row">Failed: ${esc(e.message)}</td></tr>`;
+  } finally {
+    endLoad();
   }
+}
+
+function renderPlanPicker() {
+  const q = ($("planPickerSearch").value || "").trim().toLowerCase();
+  const list = pickerCache.filter((p) => planMatchesSearch(p, q));
+  $("planPickerCount").innerHTML = `<strong>${list.length}</strong> approved plan${list.length === 1 ? "" : "s"}`;
+  const body = $("planPickerList");
+  if (!list.length) {
+    const msg = pickerCache.length
+      ? "No plans match this search."
+      : "No approved plans yet. Approve a plan in the “Approve Plan” tab first.";
+    body.innerHTML = `<tr><td colspan="8" class="empty-row">${msg}</td></tr>`;
+    return;
+  }
+  body.innerHTML = list.map((p, i) => {
+    const t0 = (p.travelers && p.travelers[0]) || {};
+    const extra = p.travelers && p.travelers.length > 1 ? ` 외 ${p.travelers.length - 1}명` : "";
+    const traveler = (t0.name || "—") + extra;
+    const period = formatPeriod(p);
+    const orig = t0.origin || "—", dest = t0.destination || p.destination || "—";
+    const route = (t0.origin || t0.destination)
+      ? `<span class="leg">${esc(orig)}</span><i class="arr">→</i><span class="leg">${esc(dest)}</span>`
+      : `<span class="leg">${esc(p.destination || "—")}</span>`;
+    const docNo = `2026-출장계획서-${shortNo(p.id, list.length - i)}`;
+    const checked = pickerSelectedId === p.id ? " checked" : "";
+    return `<tr class="row-click${checked ? " row-selected" : ""}" data-pickplan="${esc(p.id)}">
+      <td class="c-radio"><input type="radio" name="pickplan" class="pick-radio" value="${esc(p.id)}"${checked} aria-label="Select ${esc(p.title || "plan")}" /></td>
+      <td class="c-title" title="${esc(p.title || "")}">${esc(p.title || "—")}</td>
+      <td title="${esc(docNo)}"><span class="doc-no">${esc(docNo)}</span></td>
+      <td class="c-period" title="${esc(p.businessPeriod || "")}">${esc(period)}</td>
+      <td title="${esc(t0.name || "")}">${esc(t0.name || "—")}</td>
+      <td class="c-trav" title="${esc(traveler)}">${esc(traveler)}</td>
+      <td class="c-dept" title="${esc(t0.department || "")}">${esc(t0.department || "—")}</td>
+      <td title="${esc(orig + " → " + dest)}"><span class="route-line route-pass">${route}</span></td>
+    </tr>`;
+  }).join("");
+}
+/* Mark a plan as selected (radio + footer button), without importing yet. */
+function selectPickerPlan(id) {
+  pickerSelectedId = id;
+  document.querySelectorAll(".pick-radio").forEach((r) => { r.checked = (r.value === id); });
+  document.querySelectorAll("#planPickerList tr").forEach((tr) => {
+    tr.classList.toggle("row-selected", tr.getAttribute("data-pickplan") === id);
+  });
+  $("planPickerConfirmBtn").disabled = !id;
+}
+function confirmPlanPicker() {
+  if (!pickerSelectedId) return;
+  importPlan(pickerSelectedId);
+  closePlanPicker();
 }
 function closePlanPicker() { $("planPickerOverlay").classList.add("hidden"); }
 
@@ -1985,38 +2333,56 @@ function selCell(ph, icon) {
 const RC_COLUMNS = {
   CostInformation: [
     { h: "Seq", w: 46, kind: "seq" },
-    { h: "Tax Code", w: 120, kind: "sel", ph: "세금코드 선택" },
-    { h: "Type", w: 76, get: (it) => it.Type || "법인" },
+    { h: "Tax Code", w: 120, kind: "sel", ph: "세금코드 선택", get: (it) => it.TaxCode },
+    { h: "Type", w: 70, get: (it) => it.Type || "법인" },
     { h: "Use", w: 110, get: (it) => it.Use },
-    { h: "Account Subjects", w: 150, kind: "sel", ph: "계정과목 선택" },
-    { h: "Budget Dept.", w: 130, kind: "sel", ph: "선택", icon: "search" },
+    { h: "Account Subjects", w: 140, kind: "sel", ph: "계정과목 선택", get: (it) => it.AccountSubjects },
+    { h: "Budget Dept.", w: 120, kind: "sel", ph: "선택", icon: "search", get: (it) => it.BudgetDept },
     { h: "Usage Start Date", w: 128, get: (it) => it.StartDate || it.UsageDate },
     { h: "Usage End Date", w: 128, get: (it) => it.EndDate || it.UsageDate },
-    { h: "Description", w: 200, get: (it) => it.Description },
-    { h: "Supply", w: 104, kind: "money", get: (it) => it["Supply price"] ?? it.supplyPrice },
-    { h: "Tax", w: 96, kind: "money", get: (it) => it.Tax },
-    { h: "Amount", w: 116, kind: "money", total: true, get: (it) => lineAmount(it) },
+    { h: "Vendor", w: 170, get: (it) => lineVendor(it) },
+    { h: "Evidence Date", w: 120, get: (it) => it.EvidenceDate || it.UsageDate },
+    { h: "Amount Used", w: 120, kind: "money", total: true, get: (it) => lineAmount(it) },
+    { h: "Policy Amount", w: 116, kind: "money", get: (it) => it.PolicyAmount ?? it.RegulatedAmount },
+    { h: "Application Amount", w: 130, kind: "money", get: (it) => it.ApplicationAmount ?? it.AmountUsed ?? lineAmount(it) },
+    { h: "Excess Reason", w: 140, get: (it) => it.ExcessReason },
+    { h: "Description", w: 180, get: (it) => it.Description },
+    { h: "Note", w: 120, get: (it) => it.Note },
   ],
   TransportationInformation: [
     { h: "Seq", w: 46, kind: "seq" },
-    { h: "Type", w: 76, get: (it) => it.Type || "법인" },
+    { h: "Type", w: 70, get: (it) => it.Type || "법인" },
     { h: "Use", w: 110, get: (it) => it.Use },
-    { h: "Budget Dept.", w: 130, kind: "sel", ph: "선택", icon: "search" },
-    { h: "Account Subjects", w: 150, kind: "sel", ph: "계정과목 선택" },
-    { h: "Evidence Date", w: 128, get: (it) => it.UsageDate || it.StartDate },
-    { h: "Means of Transport", w: 132, get: (it) => lineMethod(it) },
-    { h: "Route", w: 150, get: (it) => lineRoute(it) },
+    { h: "Budget Dept.", w: 120, kind: "sel", ph: "선택", icon: "search", get: (it) => it.BudgetDept },
+    { h: "Account Subjects", w: 140, kind: "sel", ph: "계정과목 선택", get: (it) => it.AccountSubjects },
+    { h: "Evidence Date", w: 120, get: (it) => it.EvidenceDate || it.UsageDate },
+    { h: "Means of Transport", w: 130, get: (it) => lineMethod(it) },
+    { h: "Grade", w: 90, get: (it) => it.Grade },
+    { h: "Departure", w: 120, get: (it) => it.Origin || it.From },
+    { h: "Destination", w: 130, get: (it) => it.Destination || it.To },
+    { h: "Usage Date", w: 120, get: (it) => it.UsageDate },
     { h: "Vendor", w: 170, get: (it) => lineVendor(it) },
-    { h: "Supply", w: 104, kind: "money", get: (it) => it["Supply price"] ?? it.supplyPrice },
-    { h: "Tax", w: 96, kind: "money", get: (it) => it.Tax },
-    { h: "Amount", w: 116, kind: "money", total: true, get: (it) => lineAmount(it) },
+    { h: "Supply Price", w: 110, kind: "money", get: (it) => it["Supply price"] ?? it.supplyPrice },
+    { h: "VAT", w: 100, kind: "money", get: (it) => it.Tax },
+    { h: "Amount Used", w: 120, kind: "money", total: true, get: (it) => lineAmount(it) },
+    { h: "Policy Amount", w: 116, kind: "money", get: (it) => it.PolicyAmount ?? it.RegulatedAmount },
+    { h: "Application Amount", w: 130, kind: "money", get: (it) => it.ApplicationAmount ?? it.AmountUsed ?? lineAmount(it) },
+    { h: "Excess Reason", w: 140, get: (it) => it.ExcessReason },
+    { h: "Description", w: 150, get: (it) => it.Description },
+    { h: "Note", w: 120, get: (it) => it.Note },
+    { h: "Tax Code", w: 120, kind: "sel", ph: "세금코드 선택", get: (it) => it.TaxCode },
+    { h: "Approval No.", w: 130, get: (it) => it.ApprovalNumber },
   ],
 };
 RC_COLUMNS.Etc = RC_COLUMNS.CostInformation;
 
 function rcCell(col, it, i) {
   if (col.kind === "seq") return `<td>${esc(String(lineSeq(it, i)))}</td>`;
-  if (col.kind === "sel") return `<td>${selCell(col.ph, col.icon)}</td>`;
+  if (col.kind === "sel") {
+    const v = col.get ? col.get(it) : null;
+    if (v) return `<td title="${esc(String(v))}">${txtCell(v)}</td>`;
+    return `<td>${selCell(col.ph, col.icon)}</td>`;
+  }
   if (col.kind === "money") {
     const v = col.get(it);
     return `<td class="amt${col.total ? " total" : ""}">${col.total ? fmtMoney(num(v)) : moneyCell(v)}</td>`;

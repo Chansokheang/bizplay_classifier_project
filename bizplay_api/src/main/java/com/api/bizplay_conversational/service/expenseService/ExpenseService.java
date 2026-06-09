@@ -1,6 +1,7 @@
 package com.api.bizplay_conversational.service.expenseService;
 
 import com.api.bizplay_conversational.model.request.ReportCreateRequest;
+import com.api.bizplay_conversational.model.request.ReportLineUpdateRequest;
 import com.api.bizplay_conversational.model.response.ReportBatchDeleteResponse;
 import com.api.bizplay_conversational.model.response.ReportLineResponse;
 import com.api.bizplay_conversational.model.response.ReportResponse;
@@ -11,6 +12,18 @@ public interface ExpenseService {
 
     /** Get a single expense-report line (conversational_trip_report) by its id, with its expense. 404 if absent. */
     ReportLineResponse getById(String id);
+
+    /**
+     * Full replace of one report line (by id): rewrites its expense (cost/transportation), section,
+     * department, and approval fields. 400 on invalid section/status, 404 if the line does not exist.
+     */
+    ReportLineResponse update(String id, ReportLineUpdateRequest request);
+
+    /**
+     * Update only the approval_status of a report line (by id). 400 on an invalid status, 404 if the
+     * line does not exist. Returns the updated line.
+     */
+    ReportLineResponse updateApprovalStatus(String id, String approvalStatus);
 
     /** All expense-report lines for a corp (newest first), each with its linked expense. */
     List<ReportLineResponse> getByCorpNo(String corpNo);

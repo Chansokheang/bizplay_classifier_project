@@ -75,6 +75,21 @@ public class SpringAiConfig {
         RestClient.Builder restClientBuilder = RestClient.builder()
                 .requestFactory(requestFactory);
 
+        // Two supported auth styles:
+        //  - "x-api-key": legacy local-vLLM custom header; OpenAiApi still emits a
+        //                 placeholder Bearer header but the server reads x-api-key.
+        //  - "bearer"   : standard OpenAI-compatible Authorization: Bearer <key>.
+        String authStyle = entry.getApiKeyHeader() == null
+                ? "bearer"
+                : entry.getApiKeyHeader().trim().toLowerCase();
+        String openAiApiKey;
+        if ("x-api-key".equals(authStyle)) {
+            restClientBuilder.defaultHeader("x-api-key", entry.getApiKey());
+            openAiApiKey = "unused";
+        } else {
+            openAiApiKey = entry.getApiKey();
+        }
+
         if (!useBearer) {
             // Internal vLLM servers: authenticate via x-api-key and drop the
             // Authorization: Bearer header Spring AI's OpenAiApi would otherwise add.
@@ -92,6 +107,7 @@ public class SpringAiConfig {
         OpenAiApi chatApi = OpenAiApi.builder()
                 .baseUrl(entry.getBaseUrl())
                 .apiKey(useBearer ? entry.getApiKey() : "unused")
+                .apiKey(openAiApiKey)
                 .completionsPath("/chat/completions")
                 .restClientBuilder(restClientBuilder)
                 .build();

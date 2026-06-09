@@ -56,7 +56,7 @@ public class ReceiptExtractionAgentServiceImple implements ReceiptExtractionAgen
     private final Map<String, ChatClient> chatClientRegistry;
     private final ObjectMapper objectMapper;
 
-    @Value("${app.conversational.receipt-extraction-agent.model:gemma-4-8b}")
+    @Value("${app.conversational.receipt-extraction-agent.model:gemma-4-e4b}")
     private String modelName;
 
     public ReceiptExtractionAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper) {

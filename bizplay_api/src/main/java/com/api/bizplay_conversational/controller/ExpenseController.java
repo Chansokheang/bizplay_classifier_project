@@ -1,8 +1,10 @@
 package com.api.bizplay_conversational.controller;
 
 import com.api.bizplay_chatbot.common.dto.ApiResponse;
+import com.api.bizplay_conversational.model.request.ReportApprovalStatusRequest;
 import com.api.bizplay_conversational.model.request.ReportBatchDeleteRequest;
 import com.api.bizplay_conversational.model.request.ReportCreateRequest;
+import com.api.bizplay_conversational.model.request.ReportLineUpdateRequest;
 import com.api.bizplay_conversational.model.response.ReportBatchDeleteResponse;
 import com.api.bizplay_conversational.model.response.ReportLineResponse;
 import com.api.bizplay_conversational.model.response.ReportResponse;
@@ -16,8 +18,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -48,6 +52,27 @@ public class ExpenseController {
     public ResponseEntity<ApiResponse<ReportLineResponse>> getById(@PathVariable("id") String id) {
         log.info("GET /api/v1/reports/{}", id);
         return ResponseEntity.ok(ApiResponse.ok(expenseService.getById(id)));
+    }
+
+    /** Full update of one expense-report line (its expense, section, department, approvals) by id. */
+    @Operation(summary = "Update an expense report line by id")
+    @PutMapping("/{id}")
+    public ResponseEntity<ApiResponse<ReportLineResponse>> update(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ReportLineUpdateRequest request) {
+        log.info("PUT /api/v1/reports/{} - section={}", id, request.getSectionCode());
+        return ResponseEntity.ok(ApiResponse.ok(expenseService.update(id, request)));
+    }
+
+    /** Update only the approval_status of an expense-report line, by its id in the body. */
+    @Operation(summary = "Update an expense report line's approval_status by id")
+    @PatchMapping("/approval_status")
+    public ResponseEntity<ApiResponse<ReportLineResponse>> updateApprovalStatus(
+            @Valid @RequestBody ReportApprovalStatusRequest request) {
+        log.info("PATCH /api/v1/reports/approval_status - id={}, approvalStatus={}",
+                request.getId(), request.getApprovalStatus());
+        return ResponseEntity.ok(
+                ApiResponse.ok(expenseService.updateApprovalStatus(request.getId(), request.getApprovalStatus())));
     }
 
     /** Delete several expense-report lines by id (each with its linked expense + attachments). */

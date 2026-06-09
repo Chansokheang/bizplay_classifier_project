@@ -22,8 +22,10 @@ public class CostExpense {
     private String account;
     private LocalDate startDate;
     private LocalDate endDate;
+    private LocalDate evidenceDate;
     private String description;
-    private LocalDate proofDate;
-    private BigDecimal amountUsed;
-    private BigDecimal regulatedAmount;
+    private BigDecimal policyAmount;
+    private BigDecimal applicationAmount;
+    private String excessReason;
+    private String note;
 }

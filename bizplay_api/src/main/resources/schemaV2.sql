@@ -208,10 +208,12 @@ CREATE TABLE conversational_cost_expense (
                                              account VARCHAR(100) NOT NULL,
                                              start_date DATE NOT NULL,
                                              end_date DATE NOT NULL,
+                                             evidence_date DATE NOT NULL,
                                              description TEXT,
-                                             proof_date DATE NOT NULL,
-                                             amount_used NUMERIC(15,2) NOT NULL,
-                                             regulated_amount NUMERIC(15,2) NOT NULL,
+                                             policy_amount NUMERIC(15,2) NOT NULL,
+                                             application_amount NUMERIC(15,2) NOT NULL,
+                                             excess_reason TEXT,
+                                             note TEXT,
                                              created_date TIMESTAMP NOT NULL DEFAULT NOW(),
                                              CONSTRAINT ck_conversational_cost_expense_type CHECK (expense_type IN ('COST', 'ETC')),
                                              CONSTRAINT ck_conversational_cost_expense_dates CHECK (
@@ -228,14 +230,19 @@ CREATE TABLE conversational_transportation_expense (
                                                        use_purpose VARCHAR(100) NOT NULL,
                                                        account VARCHAR(100) NOT NULL,
                                                        transportation_method VARCHAR(100) NOT NULL,
+                                                       grade VARCHAR(100),
                                                        origin_location VARCHAR(255) NOT NULL,
                                                        destination_location VARCHAR(255) NOT NULL,
                                                        usage_date DATE NOT NULL,
+                                                       evidence_date DATE,
                                                        vendor VARCHAR(255) NOT NULL,
                                                        supply_price NUMERIC(15,2) NOT NULL,
                                                        tax NUMERIC(15,2) NOT NULL,
-                                                       amount_used NUMERIC(15,2) NOT NULL,
-                                                       regulated_amount NUMERIC(15,2) NOT NULL,
+                                                       policy_amount NUMERIC(15,2) NOT NULL,
+                                                       application_amount NUMERIC(15,2) NOT NULL,
+                                                       excess_reason TEXT,
+                                                       description TEXT,
+                                                       note TEXT,
                                                        created_date TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -247,12 +254,13 @@ CREATE TABLE conversational_trip_report (
                                             transportation_expense_id UUID REFERENCES conversational_transportation_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
                                             cost_expense_id UUID REFERENCES conversational_cost_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
                                             section_code VARCHAR(30) NOT NULL,
-                                            excess_reason TEXT,
-                                            briefs TEXT,
-                                            note TEXT,
                                             approval_number VARCHAR(100),
+                                            approval_status VARCHAR(50) NOT NULL DEFAULT 'Request for approval',
                                             extras JSONB DEFAULT '{}'::jsonb,
                                             created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                            CONSTRAINT ck_conversational_trip_report_approval CHECK (
+                                                approval_status IN ('Request for approval', 'Business trip cancellation', 'Approval complete')
+                                                ),
                                             CONSTRAINT ck_conversational_trip_report_section CHECK (section_code IN ('COST', 'TRANSPORTATION', 'ETC')),
                                             CONSTRAINT ck_conversational_trip_report_expense_ref CHECK (
                                                 (section_code = 'TRANSPORTATION' AND transportation_expense_id IS NOT NULL AND cost_expense_id IS NULL)
