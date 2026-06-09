@@ -292,7 +292,7 @@ CREATE INDEX idx_conversational_trip_plan_agent_session ON conversational_trip_p
 CREATE INDEX idx_conversational_trip_plan_period ON conversational_trip_plan(business_start_date, business_end_date);
 CREATE INDEX idx_conversational_traveler_staff ON conversational_traveler(staff_id);
 CREATE INDEX idx_conversational_cost_expense_type ON conversational_cost_expense(expense_type);
-CREATE INDEX idx_conversational_cost_expense_dates ON conversational_cost_expense(start_date, end_date, proof_date);
+CREATE INDEX idx_conversational_cost_expense_dates ON conversational_cost_expense(start_date, end_date, evidence_date);
 CREATE INDEX idx_conversational_transportation_expense_usage_date ON conversational_transportation_expense(usage_date);
 CREATE INDEX idx_conversational_trip_report_department ON conversational_trip_report(department_id);
 CREATE INDEX idx_conversational_trip_report_plan ON conversational_trip_report(trip_plan_id);

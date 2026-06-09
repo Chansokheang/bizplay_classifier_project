@@ -164,6 +164,7 @@ ALTER TABLE conversational_agent_session ADD COLUMN IF NOT EXISTS created_date T
 ALTER TABLE conversational_agent_session ADD COLUMN IF NOT EXISTS updated_date TIMESTAMP DEFAULT NOW();
 
 ALTER TABLE conversational_trip_plan ADD COLUMN IF NOT EXISTS agent_session_id UUID;
+ALTER TABLE conversational_trip_plan ADD COLUMN IF NOT EXISTS user_req_id VARCHAR(100);
 ALTER TABLE conversational_trip_plan ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'Request for approval';
 ALTER TABLE conversational_trip_plan ADD COLUMN IF NOT EXISTS extras JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE conversational_trip_plan ADD COLUMN IF NOT EXISTS created_date TIMESTAMP DEFAULT NOW();
@@ -264,6 +265,7 @@ UPDATE conversational_agent_session SET chat_event_json = '[]'::jsonb WHERE chat
 UPDATE conversational_agent_session SET created_date = NOW() WHERE created_date IS NULL;
 UPDATE conversational_agent_session SET updated_date = created_date WHERE updated_date IS NULL;
 UPDATE conversational_trip_plan SET approval_status = 'Request for approval' WHERE approval_status IS NULL;
+UPDATE conversational_trip_plan SET user_req_id = 'MIGRATED-' || id::text WHERE user_req_id IS NULL OR user_req_id = '';
 UPDATE conversational_trip_plan SET extras = '{}'::jsonb WHERE extras IS NULL;
 UPDATE conversational_trip_plan SET created_date = NOW() WHERE created_date IS NULL;
 UPDATE conversational_trip_plan SET updated_date = created_date WHERE updated_date IS NULL;
@@ -284,6 +286,7 @@ ALTER TABLE conversational_agent_session ALTER COLUMN chat_event_json SET NOT NU
 ALTER TABLE conversational_agent_session ALTER COLUMN created_date SET NOT NULL;
 ALTER TABLE conversational_agent_session ALTER COLUMN updated_date SET NOT NULL;
 ALTER TABLE conversational_trip_plan ALTER COLUMN approval_status SET NOT NULL;
+ALTER TABLE conversational_trip_plan ALTER COLUMN user_req_id SET NOT NULL;
 ALTER TABLE conversational_trip_plan ALTER COLUMN created_date SET NOT NULL;
 ALTER TABLE conversational_trip_plan ALTER COLUMN updated_date SET NOT NULL;
 ALTER TABLE conversational_traveler ALTER COLUMN created_date SET NOT NULL;

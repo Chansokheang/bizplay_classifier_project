@@ -866,6 +866,39 @@ function dayCount(s, e) {
  * ================================================================ */
 const AGENT_API = API_ORIGIN + "/api/v1/agent-conversations";
 
+async function uploadAgentFiles(files) {
+  const fileList = Array.from(files || []).filter(Boolean);
+  if (!fileList.length) return [];
+
+  const fd = new FormData();
+  fileList.forEach((f) => fd.append("files", f));
+  const batchRes = await fetch(`${AGENT_API}/files/create-batch`, { method: "POST", body: fd });
+  const batchJson = await batchRes.json().catch(() => ({}));
+  if (batchRes.ok) {
+    return (batchJson && (batchJson.data || batchJson.payload)) || [];
+  }
+
+  // Some production proxies block the batch multipart path while allowing the
+  // single-file upload endpoint. Fall back to the narrower endpoint in that case.
+  if (![403, 404, 405].includes(batchRes.status)) {
+    throw new Error((batchJson && (batchJson.message || batchJson.detail)) || `upload HTTP ${batchRes.status}`);
+  }
+
+  const uploaded = [];
+  for (const file of fileList) {
+    const one = new FormData();
+    one.append("file", file);
+    const res = await fetch(`${AGENT_API}/files/create`, { method: "POST", body: one });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((json && (json.message || json.detail)) || `upload HTTP ${res.status}`);
+    }
+    const data = json && (json.data || json.payload);
+    if (data) uploaded.push(data);
+  }
+  return uploaded;
+}
+
 const agent = {
   sessionId: null,
   status: null,
@@ -953,12 +986,7 @@ async function onAgentFiles(ev) {
   if (!files.length) return;
   setAgentBusy(true, "Uploading…");
   try {
-    const fd = new FormData();
-    files.forEach((f) => fd.append("files", f));
-    const res = await fetch(`${AGENT_API}/files/create-batch`, { method: "POST", body: fd });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail)) || `HTTP ${res.status}`);
-    const uploaded = (json && (json.data || json.payload)) || [];
+    const uploaded = await uploadAgentFiles(files);
     uploaded.forEach((u) => agent.pending.push({ fileId: u.fileId, filename: u.filename }));
     renderAgentFiles();
   } catch (e) {
@@ -2438,11 +2466,7 @@ async function onReceiptFiles(ev) {
   if (!rc.planId) { toast("Import a plan first.", "err"); return; }
   $("rcMsg").textContent = "Uploading & extracting receipts… (this can take a moment)";
   try {
-    const fd = new FormData(); files.forEach((f) => fd.append("files", f));
-    const up = await fetch(`${AGENT_API}/files/create-batch`, { method: "POST", body: fd });
-    const upj = await up.json().catch(() => ({}));
-    if (!up.ok) throw new Error((upj && (upj.message || upj.detail)) || `upload HTTP ${up.status}`);
-    const fileIds = ((upj && (upj.data || upj.payload)) || []).map((u) => u.fileId);
+    const fileIds = (await uploadAgentFiles(files)).map((u) => u.fileId);
     const body = { corpNo: CORP_NO, fileIds };
     if (rc.sessionId) body.sessionId = rc.sessionId; else body.planId = rc.planId;
     const res = await fetch(REPORTS_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
