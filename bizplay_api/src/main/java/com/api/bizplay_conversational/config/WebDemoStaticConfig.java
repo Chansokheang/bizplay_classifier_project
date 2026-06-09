@@ -12,6 +12,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * {@code fetch()} calls to {@code /api/v1/plans} need no CORS configuration.
  *
  * <p>Open it at {@code http://localhost:8080/web/} (also reachable as {@code /web/index.html}).
+ * Root and {@code /ui} redirect to the same bundled page for production convenience.
  */
 @Configuration
 public class WebDemoStaticConfig implements WebMvcConfigurer {
@@ -24,6 +25,10 @@ public class WebDemoStaticConfig implements WebMvcConfigurer {
 
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
+        // Production convenience: open the server root or /ui and land on the bundled UI.
+        registry.addRedirectViewController("/", "/web/");
+        registry.addRedirectViewController("/ui", "/web/");
+        registry.addRedirectViewController("/ui/", "/web/");
         // /web (no trailing slash) -> redirect to the canonical /web/ URL.
         registry.addRedirectViewController("/web", "/web/");
         // /web/ -> serve the index page.
