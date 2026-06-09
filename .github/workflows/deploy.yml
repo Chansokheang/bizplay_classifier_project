@@ -95,7 +95,9 @@ jobs:
               cp main/resources/schemaV2.sql schemaV2.sql
             fi
             find . -maxdepth 4 -type f
-            cat > .env <<EOF
+            if [ ! -f .env ]; then
+              echo ".env not found; creating initial .env from GitHub secrets"
+              cat > .env <<EOF
             IMAGE_NAME=${{ env.IMAGE_NAME }}
             IMAGE_TAG=latest
             POSTGRES_DB=${{ secrets.POSTGRES_DB }}
@@ -134,6 +136,9 @@ jobs:
             SPRING_MVC_ASYNC_REQUEST_TIMEOUT=${{ secrets.SPRING_MVC_ASYNC_REQUEST_TIMEOUT }}
             SERVER_MAX_HTTP_REQUEST_HEADER_SIZE=${{ secrets.SERVER_MAX_HTTP_REQUEST_HEADER_SIZE }}
             EOF
+            else
+              echo ".env already exists; preserving server-managed .env"
+            fi
             for attempt in 1 2 3; do
               if echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin; then
                 break
