@@ -407,7 +407,7 @@ public class AiFallbackServiceImple implements AiFallbackService {
     }
 
     private String resolveExaoneUrl() {
-        String configuredUrl = firstNonBlank(openAiCompatibleUrl, exaoneBaseUrl);
+        String configuredUrl = firstNonBlank(exaoneBaseUrl, openAiCompatibleUrl);
         if (configuredUrl == null || configuredUrl.isBlank()) {
             return null;
         }
