@@ -43,9 +43,11 @@ public class WebDemoStaticConfig implements WebMvcConfigurer {
      */
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        String[] localhost = {
+        String[] allowedOrigins = {
                 "http://localhost:[*]", "http://127.0.0.1:[*]",
-                "https://localhost:[*]", "https://127.0.0.1:[*]"
+                "https://localhost:[*]", "https://127.0.0.1:[*]",
+                "http://10.255.78.89:[*]", "http://203.255.78.89:[*]",
+                "https://bizplay-api.aiconvergencelab.com"
         };
         String[] paths = {
                 "/api/v1/plans", "/api/v1/plans/**",
@@ -54,7 +56,7 @@ public class WebDemoStaticConfig implements WebMvcConfigurer {
         };
         for (String path : paths) {
             registry.addMapping(path)
-                    .allowedOriginPatterns(localhost)
+                    .allowedOriginPatterns(allowedOrigins)
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                     .allowedHeaders("*");
         }
