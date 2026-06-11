@@ -246,25 +246,18 @@ CREATE TABLE conversational_transportation_expense (
                                                        created_date TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Report HEADER: one row per report. Per-line data lives in conversational_trip_report_detail.
 CREATE TABLE conversational_trip_report (
                                             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                             agent_session_id UUID REFERENCES conversational_agent_session(id) ON UPDATE CASCADE ON DELETE SET NULL,
                                             department_id UUID NOT NULL REFERENCES conversational_department(id) ON UPDATE CASCADE ON DELETE RESTRICT,
                                             trip_plan_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
-                                            transportation_expense_id UUID REFERENCES conversational_transportation_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
-                                            cost_expense_id UUID REFERENCES conversational_cost_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
-                                            section_code VARCHAR(30) NOT NULL,
                                             approval_number VARCHAR(100),
                                             approval_status VARCHAR(50) NOT NULL DEFAULT 'Request for approval',
                                             extras JSONB DEFAULT '{}'::jsonb,
                                             created_date TIMESTAMP NOT NULL DEFAULT NOW(),
                                             CONSTRAINT ck_conversational_trip_report_approval CHECK (
                                                 approval_status IN ('Request for approval', 'Business trip cancellation', 'Approval complete')
-                                                ),
-                                            CONSTRAINT ck_conversational_trip_report_section CHECK (section_code IN ('COST', 'TRANSPORTATION', 'ETC')),
-                                            CONSTRAINT ck_conversational_trip_report_expense_ref CHECK (
-                                                (section_code = 'TRANSPORTATION' AND transportation_expense_id IS NOT NULL AND cost_expense_id IS NULL)
-                                                    OR (section_code IN ('COST', 'ETC') AND cost_expense_id IS NOT NULL AND transportation_expense_id IS NULL)
                                                 )
 );
 
@@ -283,6 +276,23 @@ CREATE TABLE conversational_attachment (
                                            CONSTRAINT ck_conversational_attachment_type CHECK (attachment_type IN ('PLAN', 'REPORT'))
 );
 
+-- Report DETAIL: one row per expense line, linked to the report header. Each line points to its
+-- cost OR transportation expense (per section_code) and, optionally, the source receipt it came from.
+CREATE TABLE conversational_trip_report_detail (
+                                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                                            trip_report_id UUID NOT NULL REFERENCES conversational_trip_report(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                                            section_code VARCHAR(30) NOT NULL,
+                                            transportation_expense_id UUID REFERENCES conversational_transportation_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                                            cost_expense_id UUID REFERENCES conversational_cost_expense(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                                            conversational_attachment_id UUID REFERENCES conversational_attachment(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                                            created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                            CONSTRAINT ck_conversational_trip_report_detail_section CHECK (section_code IN ('COST', 'TRANSPORTATION', 'ETC')),
+                                            CONSTRAINT ck_conversational_trip_report_detail_expense_ref CHECK (
+                                                (section_code = 'TRANSPORTATION' AND transportation_expense_id IS NOT NULL AND cost_expense_id IS NULL)
+                                                    OR (section_code IN ('COST', 'ETC') AND cost_expense_id IS NOT NULL AND transportation_expense_id IS NULL)
+                                                )
+);
+
 CREATE INDEX idx_conversational_department_corp_no ON conversational_department(corp_no);
 CREATE INDEX idx_conversational_staff_department ON conversational_staff(department_id);
 CREATE INDEX idx_conversational_agent_session_corp_no ON conversational_agent_session(corp_no);
@@ -297,10 +307,31 @@ CREATE INDEX idx_conversational_transportation_expense_usage_date ON conversatio
 CREATE INDEX idx_conversational_trip_report_department ON conversational_trip_report(department_id);
 CREATE INDEX idx_conversational_trip_report_plan ON conversational_trip_report(trip_plan_id);
 CREATE INDEX idx_conversational_trip_report_agent_session ON conversational_trip_report(agent_session_id);
-CREATE INDEX idx_conversational_trip_report_transportation ON conversational_trip_report(transportation_expense_id);
-CREATE INDEX idx_conversational_trip_report_cost ON conversational_trip_report(cost_expense_id);
+CREATE INDEX idx_conversational_trip_report_detail_report ON conversational_trip_report_detail(trip_report_id);
+CREATE INDEX idx_conversational_trip_report_detail_transportation ON conversational_trip_report_detail(transportation_expense_id);
+CREATE INDEX idx_conversational_trip_report_detail_cost ON conversational_trip_report_detail(cost_expense_id);
+CREATE INDEX idx_conversational_trip_report_detail_attachment ON conversational_trip_report_detail(conversational_attachment_id);
 CREATE INDEX idx_conversational_attachment_report ON conversational_attachment(report_id);
 CREATE INDEX idx_conversational_attachment_trip_plan ON conversational_attachment(trip_plan_id);
+
+-- ============================================
+-- COMPLIANCE
+-- ============================================
+-- One aggregate compliance-audit result per run: the R10 (requisition mismatch) audit of an approved
+-- trip plan against its expense report. Per-dimension findings (approval gate, date/location/amount
+-- alignment, receipt backing) are stored in rules_json. report_id is left null in aggregate mode.
+CREATE TABLE compliance_audit (
+                                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                                  corp_no VARCHAR(50) NOT NULL,
+                                  trip_plan_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                                  report_id UUID REFERENCES conversational_trip_report(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                                  compliance_status VARCHAR(20),
+                                  confidence_level VARCHAR(20),
+                                  rules_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                                  created_date TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_compliance_audit_trip_plan ON compliance_audit(trip_plan_id);
+CREATE INDEX idx_compliance_audit_corp_no ON compliance_audit(corp_no);
 
 -- ============================================
 -- BIZPLAY CHATBOT
@@ -311,6 +342,13 @@ ON CONFLICT (corp_group_cd) DO NOTHING;
 
 INSERT INTO corp (corp_no, corp_group_id, corp_name)
 SELECT 'DEFAULT', cg.corp_group_id, 'Default Corporation'
+FROM corp_group cg
+WHERE cg.corp_group_cd = 'DEFAULT'
+ON CONFLICT (corp_no) DO NOTHING;
+
+-- Local/test corp used by the conversational module (corpNo=1234567890).
+INSERT INTO corp (corp_no, corp_group_id, corp_name)
+SELECT '1234567890', cg.corp_group_id, 'Test Corporation'
 FROM corp_group cg
 WHERE cg.corp_group_cd = 'DEFAULT'
 ON CONFLICT (corp_no) DO NOTHING;

@@ -40,6 +40,17 @@ public class ReceiptExtractionResult {
     private String destination;
     private String transportationMethod;
 
+    /**
+     * Normalized city/country for the origin and destination of a transport ticket, resolved by the
+     * model from whatever is printed (airport code, station, city). Lets a venue/airport on the
+     * receipt be compared geographically against a plan destination. Null for non-transport receipts
+     * or when the place can't be resolved.
+     */
+    private String originCity;
+    private String originCountry;
+    private String destinationCity;
+    private String destinationCountry;
+
     /** Monetary fields as printed on the receipt. */
     private BigDecimal totalAmount;
     private BigDecimal supplyPrice;

@@ -10,6 +10,30 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- Inline SVG icon sprite (stroke icons, colored via currentColor) -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10.01-3-3"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94a2 2 0 0 0 1.44-1.44l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/><path d="M19 3v4"/><path d="M21 5h-4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+    <symbol id="i-briefcase" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M21.73 18l-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></symbol>
+    <symbol id="i-import" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  </svg>
+
   <!-- Global top loading bar (shown while fetching) -->
   <div id="loadbar" class="loadbar hidden"><span class="loadbar-fill"></span></div>
 
@@ -28,10 +52,16 @@
           <p class="sub">Request · Approve · Report</p>
         </div>
       </div>
-      <div class="corp-tag">
-        <label for="corpInput">CORP No.</label>
-        <input id="corpInput" class="corp-input" inputmode="numeric" maxlength="20"
-               placeholder="Enter corp no." value="1234567890" />
+      <div class="top-right">
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button class="lang-btn active" data-lang="en" type="button">ENG</button>
+          <button class="lang-btn" data-lang="ko" type="button">KOR</button>
+        </div>
+        <div class="corp-tag">
+          <label for="corpInput">CORP No.</label>
+          <input id="corpInput" class="corp-input" inputmode="numeric" maxlength="20"
+                 placeholder="Enter corp no." value="1234567890" />
+        </div>
       </div>
     </div>
   </header>
@@ -39,9 +69,10 @@
   <!-- ======================= TABS ======================= -->
   <nav class="tabbar">
     <div class="wrap tabbar-inner">
-      <button class="tab active" data-tab="plan">📝 Request Plan</button>
-      <button class="tab" data-tab="approve">✅ Approve Plan</button>
-      <button class="tab" data-tab="report">🧾 Expense Report</button>
+      <button class="tab active" data-tab="plan"><svg class="ico" aria-hidden="true"><use href="#i-file-text"/></svg> Request Plan</button>
+      <button class="tab" data-tab="approve"><svg class="ico" aria-hidden="true"><use href="#i-check-circle"/></svg> Approve Plan</button>
+      <button class="tab" data-tab="report"><svg class="ico" aria-hidden="true"><use href="#i-receipt"/></svg> Expense Report</button>
+      <button class="tab" data-tab="audit"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg> Audit</button>
     </div>
   </nav>
 
@@ -51,9 +82,10 @@
     <div class="list-head">
       <span class="list-meta"><strong id="rowCount">0 entries</strong> · sorted by most recent</span>
       <div class="head-actions">
-        <button id="openAgentBtn" class="btn btn-primary">✨ Create with Agent</button>
-        <button id="openResumeBtn" class="btn btn-quiet">↻ Resume draft</button>
+        <button id="openAgentBtn" class="btn btn-primary"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Create with Agent</button>
+        <button id="openResumeBtn" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Resume draft</button>
         <button id="openCreateBtn" class="btn btn-quiet">Create manually</button>
+        <button id="openMasterBtn" class="btn btn-quiet" title="Manage the departments and staff used in trip plans"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Staff &amp; Departments</button>
       </div>
     </div>
 
@@ -68,7 +100,7 @@
     <!-- Search toolbar (client-side filter — no search API in the demo) -->
     <div class="toolbar">
       <div class="search-box">
-        <span class="search-ico">🔍</span>
+        <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
         <input id="planSearch" type="text" autocomplete="off"
                placeholder="Search doc no, title, author, traveler, dept, purpose" />
         <button id="planSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
@@ -81,7 +113,7 @@
       <span class="sel-count"><strong id="selCount">0</strong> selected</span>
       <div class="sel-actions">
         <button id="selClearBtn" class="btn btn-quiet btn-sm">Clear</button>
-        <button id="selDeleteBtn" class="btn btn-danger btn-sm">🗑 Remove</button>
+        <button id="selDeleteBtn" class="btn btn-danger btn-sm"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Remove</button>
       </div>
     </div>
 
@@ -117,7 +149,7 @@
       <div class="list-head">
         <span class="list-meta"><strong id="approveCount">0</strong> entries · approve or cancel requests</span>
         <div class="head-actions">
-          <button id="approveRefresh" class="btn btn-quiet">↻ Refresh</button>
+          <button id="approveRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
         </div>
       </div>
 
@@ -130,7 +162,7 @@
 
       <div class="toolbar">
         <div class="search-box">
-          <span class="search-ico">🔍</span>
+          <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
           <input id="approveSearch" type="text" autocomplete="off"
                  placeholder="Search doc no, title, traveler, dept" />
           <button id="approveSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
@@ -165,14 +197,14 @@
       <div class="list-head">
         <span class="list-meta"><strong id="reportCount">0</strong> expense reports</span>
         <div class="head-actions">
-          <button id="reportRefresh" class="btn btn-quiet">↻ Refresh</button>
+          <button id="reportRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
           <button id="openReportCreateBtn" class="btn btn-primary">+ Create Report</button>
         </div>
       </div>
 
       <div class="toolbar">
         <div class="search-box">
-          <span class="search-ico">🔍</span>
+          <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
           <input id="reportSearch" type="text" autocomplete="off"
                  placeholder="Search doc no, trip, traveler, dept, purpose, status" />
           <button id="reportSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
@@ -184,7 +216,7 @@
         <span class="sel-count"><strong id="reportSelCount">0</strong> selected</span>
         <div class="sel-actions">
           <button id="reportSelClear" class="btn btn-quiet btn-sm">Clear</button>
-          <button id="reportSelDelete" class="btn btn-danger btn-sm">🗑 Remove</button>
+          <button id="reportSelDelete" class="btn btn-danger btn-sm"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Remove</button>
         </div>
       </div>
 
@@ -192,23 +224,80 @@
         <table class="grid">
           <colgroup>
             <col /><col /><col /><col /><col /><col /><col />
-            <col /><col /><col /><col /><col /><col />
+            <col /><col /><col /><col /><col /><col /><col />
           </colgroup>
           <thead>
             <tr>
               <th><input type="checkbox" id="reportSelectAll" class="chk" aria-label="Select all reports" /></th>
               <th class="c-no">No</th>
               <th>Document</th><th>Trip</th><th>Traveler</th><th>Dept.</th><th>Purpose</th>
-              <th>Period</th><th>Lines</th><th>Total</th><th>Status</th><th>Updated</th><th>Actions</th>
+              <th>Period</th><th>Lines</th><th>Total</th><th>Status</th><th>Audit</th><th>Updated</th><th>Actions</th>
             </tr>
           </thead>
-          <tbody id="reportBody"><tr><td colspan="13" class="empty-row">Loading…</td></tr></tbody>
+          <tbody id="reportBody"><tr><td colspan="14" class="empty-row">Loading…</td></tr></tbody>
         </table>
       </div>
 
       <div class="list-foot">
         <span class="foot-info">Showing <strong id="reportShown">0</strong> of <strong id="reportTotal">0</strong> reports</span>
         <span class="foot-page">100 items</span>
+      </div>
+    </section>
+
+    <!-- ===================== TAB 4: AUDIT (R10) ===================== -->
+    <section id="tab-audit" class="tab-pane hidden">
+      <div class="list-head">
+        <span class="list-meta"><strong id="auditCount">0</strong> audits · R10 requisition mismatch — runs automatically when an expense report is created</span>
+        <div class="head-actions">
+          <button id="auditRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
+        </div>
+      </div>
+
+      <div class="statchips" id="auditChips">
+        <button class="statchip active" data-cf="all">entire <span class="chip-count" id="cfAll">0</span></button>
+        <button class="statchip" data-cf="normal">Normal <span class="chip-count" id="cfNorm">0</span></button>
+        <button class="statchip" data-cf="suspicion">Suspicion <span class="chip-count" id="cfSus">0</span></button>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
+          <input id="auditSearch" type="text" autocomplete="off"
+                 placeholder="Search audit id, trip plan, rule, status, summary" />
+          <button id="auditSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+        </div>
+      </div>
+
+      <!-- Bulk-selection toolbar (shown when ≥1 audit is checked) -->
+      <div id="auditSelBar" class="sel-bar hidden">
+        <span class="sel-count"><strong id="auditSelCount">0</strong> selected</span>
+        <div class="sel-actions">
+          <button id="auditSelClear" class="btn btn-quiet btn-sm">Clear</button>
+          <button id="auditSelDelete" class="btn btn-danger btn-sm"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Remove</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <table class="grid">
+          <colgroup>
+            <col style="width:3.5%" /><col style="width:3.5%" /><col style="width:21%" /><col style="width:7%" />
+            <col style="width:9%" /><col style="width:10%" /><col style="width:10%" /><col style="width:26%" /><col style="width:10%" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="auditSelectAll" class="chk" aria-label="Select all audits" /></th>
+              <th class="c-no">No</th>
+              <th>Trip Plan</th><th>Rule</th>
+              <th>Result</th><th>Compliance</th><th>Confidence</th><th>Summary</th><th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="auditBody"><tr><td colspan="9" class="empty-row">No audits yet — create an expense report to run R10 automatically.</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="list-foot">
+        <span class="foot-info">Showing <strong id="auditShown">0</strong> of <strong id="auditTotal">0</strong> audits</span>
+        <span class="foot-page">newest first</span>
       </div>
     </section>
   </main>
@@ -227,7 +316,7 @@
       <div class="sheet-body">
         <!-- Trip Information -->
         <section class="block">
-          <h3 class="block-title"><span class="b-ico">🧳</span> Trip Information</h3>
+          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-briefcase"/></svg></span> Trip Information</h3>
           <div class="grid-2 form-rows">
             <div class="field span-2">
               <label>Travel Purpose <span class="req">*</span></label>
@@ -273,15 +362,15 @@
 
         <!-- Travelers -->
         <section class="block">
-          <h3 class="block-title"><span class="b-ico">👥</span> Travellers <span class="count-badge"><span id="travelerCount">0</span></span></h3>
+          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg></span> Travellers <span class="count-badge"><span id="travelerCount">0</span></span></h3>
           <div id="travelerList"></div>
           <button class="btn btn-dashed" id="addTravelerBtn">+ Add another traveller</button>
         </section>
 
         <!-- Attachment -->
         <section class="block">
-          <h3 class="block-title"><span class="b-ico">📎</span> Attachment</h3>
-          <div class="att-bar"><button class="btn btn-quiet" id="addUrlBtn">🔗 Register a URL</button></div>
+          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg></span> Attachment</h3>
+          <div class="att-bar"><button class="btn btn-quiet" id="addUrlBtn"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg> Register a URL</button></div>
           <div id="attachmentList"></div>
         </section>
       </div>
@@ -354,7 +443,7 @@
             <div class="composer-row">
               <textarea id="agentInput" rows="2" placeholder="e.g. John Doe travels Seoul → Busan by KTX, 2026-07-01 to 2026-07-03, client meetings."></textarea>
               <div class="composer-actions">
-                <label class="attach-btn" title="Attach PDF or spreadsheet">📎
+                <label class="attach-btn" title="Attach PDF or spreadsheet"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg>
                   <input type="file" id="agentFileInput" accept=".pdf,.xlsx,.xls,application/pdf" multiple hidden />
                 </label>
                 <button class="btn btn-primary" id="agentSendBtn">Send</button>
@@ -397,7 +486,7 @@
         <button class="x-btn" id="detailCloseBtn" aria-label="Close">✕</button>
       </div>
       <div class="sheet-body" id="detailBody">
-        <div class="draft-empty-wrap"><span class="ico">⏳</span><p>Loading…</p></div>
+        <div class="draft-empty-wrap"><span class="spin spin-lg"></span><p>Loading…</p></div>
       </div>
       <div class="sheet-foot">
         <button class="btn danger-link" id="detailDeleteBtn">Delete plan</button>
@@ -419,7 +508,7 @@
         <button class="x-btn" id="resumeCloseBtn" aria-label="Close">✕</button>
       </div>
       <div id="resumeList" class="resume-list">
-        <div class="draft-empty-wrap"><span class="ico">⏳</span><p>Loading sessions…</p></div>
+        <div class="draft-empty-wrap"><span class="spin spin-lg"></span><p>Loading sessions…</p></div>
       </div>
     </div>
   </div>
@@ -438,11 +527,11 @@
       <div class="sheet-body">
         <!-- Trip Information -->
         <section class="block">
-          <h3 class="block-title"><span class="b-ico">🧳</span> Trip Information</h3>
+          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-briefcase"/></svg></span> Trip Information</h3>
           <div class="rc-import">
             <label class="rc-import-label">Business Trip Plan</label>
             <div class="rc-import-ctl">
-              <button class="btn btn-quiet" id="rcImportBtn">📄 Import</button>
+              <button class="btn btn-quiet" id="rcImportBtn"><svg class="ico" aria-hidden="true"><use href="#i-import"/></svg> Import</button>
               <span id="rcPlanLabel" class="muted">Please select an approved plan to settle</span>
               <button id="rcClearPlan" class="x-btn hidden" title="Clear">✕</button>
             </div>
@@ -452,8 +541,16 @@
 
         <!-- Cost Items -->
         <section class="block">
-          <h3 class="block-title"><span class="b-ico">📒</span> Cost Items</h3>
+          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg></span> Cost Items</h3>
           <p class="card-note" id="rcReceiptHint">Import a plan, then add receipts — the agent extracts expense lines from each PDF.</p>
+          <!-- Upload / extraction progress (shown while receipts are processed) -->
+          <div id="rcProgress" class="rc-progress hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <div class="rc-progress-top">
+              <span id="rcProgressLabel">Uploading…</span>
+              <span id="rcProgressPct" class="rc-progress-pct">0%</span>
+            </div>
+            <div class="rc-progress-track"><span id="rcProgressFill" class="rc-progress-fill"></span></div>
+          </div>
           <div id="rcSections"></div>
           <input type="file" id="rcFileInput" accept=".pdf,application/pdf" multiple hidden />
         </section>
@@ -462,7 +559,7 @@
       <div class="sheet-foot">
         <span id="rcMsg" class="val-summary"></span>
         <div class="foot-actions">
-          <button class="btn btn-danger hidden" id="rcDeleteBtn">🗑 Delete</button>
+          <button class="btn btn-danger hidden" id="rcDeleteBtn"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button>
           <button class="btn btn-quiet" id="rcCloseBtn">Cancel</button>
           <button class="btn btn-quiet" id="rcSaveBtn">Draft</button>
           <button class="btn btn-primary" id="rcSubmitBtn">Create</button>
@@ -485,7 +582,7 @@
       <div class="sheet-body">
         <div class="toolbar">
           <div class="search-box">
-            <span class="search-ico">🔍</span>
+            <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
             <input id="planPickerSearch" type="text" autocomplete="off"
                    placeholder="Search by title, document number, traveler, author, dept" />
             <button id="planPickerSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
@@ -512,6 +609,92 @@
         <div class="foot-actions">
           <button class="btn btn-quiet" id="planPickerCancelBtn">Cancel</button>
           <button class="btn btn-primary" id="planPickerConfirmBtn" disabled>Import selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= AUDIT DETAIL MODAL ======================= -->
+  <div id="auditOverlay" class="overlay hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <span class="kicker" id="auditKicker" style="display:block">R10 · Requisition Mismatch</span>
+          <h2 id="auditModalTitle">Audit detail</h2>
+          <p class="sub" id="auditModalSub"></p>
+        </div>
+        <button class="x-btn" id="auditModalClose" aria-label="Close">✕</button>
+      </div>
+      <div class="sheet-body" id="auditModalBody">
+        <div class="draft-empty-wrap"><span class="spin spin-lg"></span><p>Loading…</p></div>
+      </div>
+      <div class="sheet-foot">
+        <span id="auditModalMsg" class="val-summary"></span>
+        <div class="foot-actions">
+          <div class="dl-wrap">
+            <button class="btn btn-quiet" id="auditDownloadBtn" disabled aria-haspopup="menu">
+              <svg class="ico" aria-hidden="true"><use href="#i-import"/></svg> Download
+            </button>
+            <div id="auditDlMenu" class="dl-menu hidden" role="menu">
+              <button data-dl="csv" role="menuitem">Audit report — CSV <span class="dl-hint">checks + expense lines, opens in Excel</span></button>
+              <button data-dl="json" role="menuitem">Raw audit — JSON <span class="dl-hint">full payload incl. expense lines</span></button>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="auditRerunBtn"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Re-run audit</button>
+          <button class="btn btn-quiet" id="auditModalClose2">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= STAFF & DEPARTMENTS (master data) ======================= -->
+  <div id="masterOverlay" class="overlay hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <h2>Staff &amp; Departments</h2>
+          <p class="sub">Master data for this corp — travellers and budget departments in trip plans are picked from here.</p>
+        </div>
+        <button class="x-btn" id="masterCloseBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <div class="md-grid">
+          <!-- Departments -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-briefcase"/></svg></span> Departments <span class="count-badge"><span id="mdDeptCount">0</span></span></h3>
+            <div class="md-add">
+              <input type="text" id="mdDeptName" maxlength="100" placeholder="New department name" />
+              <button class="btn btn-primary btn-sm" id="mdDeptAddBtn">+ Add</button>
+            </div>
+            <div id="mdDeptList" class="md-list"><div class="muted-pad"><span class="spin"></span>Loading…</div></div>
+            <p class="card-note">Click a department to filter its staff. A department with staff can’t be deleted.</p>
+          </section>
+
+          <!-- Staff -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg></span> Staff <span class="count-badge"><span id="mdStaffCount">0</span></span><span class="md-filter-tag hidden" id="mdStaffFilterTag"></span></h3>
+            <div class="md-add">
+              <input type="text" id="mdStaffName" maxlength="100" placeholder="Name" />
+              <input type="text" id="mdStaffPosition" maxlength="100" placeholder="Position" />
+              <div class="select-wrap md-add-dept"><select id="mdStaffDept"><option value="">Department…</option></select></div>
+              <button class="btn btn-primary btn-sm" id="mdStaffAddBtn">+ Add</button>
+            </div>
+            <div class="er-table-wrap">
+              <table class="er-table">
+                <thead><tr><th style="width:26%">Name</th><th style="width:22%">Position</th><th style="width:26%">Department</th><th style="width:26%">Actions</th></tr></thead>
+                <tbody id="mdStaffBody"><tr><td colspan="4" class="empty-row"><span class="spin"></span>Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="sheet-foot">
+        <span id="masterMsg" class="val-summary"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="masterRefreshBtn"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
+          <button class="btn btn-quiet" id="masterCloseBtn2">Close</button>
         </div>
       </div>
     </div>

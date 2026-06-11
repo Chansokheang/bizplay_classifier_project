@@ -19,12 +19,16 @@ import com.api.bizplay_conversational.service.pdfAgentService.PdfAgentService;
 import com.api.bizplay_conversational.service.spreadsheetAgentService.SpreadsheetAgentService;
 import com.api.bizplay_conversational.service.staffLookupAgentService.StaffLookupAgentService;
 import com.api.bizplay_conversational.service.textAnalysisAgentService.TextAnalysisAgentService;
+import com.api.bizplay_conversational.service.fileExtractionService.UploadedFile;
 import com.api.bizplay_conversational.service.tripPlanAgentService.TripPlanAgentService;
+import com.api.bizplay_conversational.exception.CustomNotFoundException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -104,6 +108,34 @@ public class AgentConversationController {
         TextAnalysisResult result =
                 pdfAgentService.analyze(corpNo, file.getBytes(), file.getOriginalFilename(), List.of());
         return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
+    /**
+     * Download a previously-uploaded file (a plan/report attachment) by its fileId. Streams the raw
+     * bytes with the original filename and content type. 404 if the fileId is unknown.
+     */
+    @GetMapping("/files/{fileId}/download")
+    public ResponseEntity<byte[]> downloadFile(@PathVariable("fileId") String fileId) {
+        log.info("GET /api/v1/agent-conversations/files/{}/download", fileId);
+        UploadedFile file = fileExtractionService.get(fileId)
+                .orElseThrow(() -> new CustomNotFoundException("File not found: " + fileId));
+
+        String filename = file.filename() != null && !file.filename().isBlank() ? file.filename() : fileId;
+        MediaType contentType = MediaType.APPLICATION_OCTET_STREAM;
+        if (file.contentType() != null && !file.contentType().isBlank()) {
+            try {
+                contentType = MediaType.parseMediaType(file.contentType());
+            } catch (RuntimeException ignored) {
+                // keep octet-stream for an unparseable stored content type
+            }
+        }
+        byte[] content = file.content() != null ? file.content() : new byte[0];
+        return ResponseEntity.ok()
+                .contentType(contentType)
+                .contentLength(content.length)
+                .header("Content-Disposition",
+                        ContentDisposition.attachment().filename(filename).build().toString())
+                .body(content);
     }
 
     /**

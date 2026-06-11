@@ -6,6 +6,7 @@ import com.api.bizplay_conversational.model.response.DraftEditPlan;
 import com.api.bizplay_conversational.model.response.SpreadsheetAnalysisResult;
 import com.api.bizplay_conversational.model.response.StaffLookupResult;
 import com.api.bizplay_conversational.model.response.TextAnalysisResult;
+import com.api.bizplay_conversational.model.response.TravelerResolution;
 
 import java.util.List;
 
@@ -20,8 +21,8 @@ public interface RequestBodyBuilderService {
     void mergeStaff(ConversationalAgentSession session, StaffLookupResult staffResult);
 
     /** Merge extracted trip information authoritatively (existing values may be overwritten). */
-    default void mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis) {
-        mergeTextAnalysis(session, analysis, true);
+    default TravelerResolution mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis) {
+        return mergeTextAnalysis(session, analysis, true);
     }
 
     /**
@@ -30,16 +31,43 @@ public interface RequestBodyBuilderService {
      * @param authoritative when {@code true} (e.g. the user's typed message), present values overwrite
      *                      existing ones; when {@code false} (e.g. a supplementary PDF), only blanks are
      *                      filled so a higher-priority source is never clobbered.
+     * @return which extracted traveler names could not be added (not found / ambiguous), for the reply.
      */
-    void mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis, boolean authoritative);
+    TravelerResolution mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis, boolean authoritative);
 
     /**
      * Merge ONLY the travelers (people + their routes) from an extracted result, ignoring trip-level
      * fields (destination / dates / type / title). Used when an uploaded PDF describes a different
      * trip than the user's authoritative message, but its passengers still belong to this trip.
      * Named travelers are resolved against the staff DB; trip-level details are never touched.
+     *
+     * @return which extracted traveler names could not be added (not found / ambiguous), for the reply.
      */
-    void mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis);
+    TravelerResolution mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis);
+
+    /**
+     * When the draft has pending (ambiguous) travelers, try to resolve them from the user's reply
+     * (a department / position / name that uniquely identifies one candidate). Adds the chosen
+     * travelers to the draft and removes them from the pending list. Returns the names added.
+     */
+    List<String> resolvePendingTravelers(ConversationalAgentSession session, String message);
+
+    /**
+     * Read-only view of the draft's still-pending AMBIGUOUS travelers (a name that matched more than
+     * one staff member and is awaiting the user's pick). Used to surface a "choose which one" prompt
+     * after an Update Agent edit. Returns an empty resolution when nothing is ambiguous.
+     */
+    TravelerResolution pendingResolution(ConversationalAgentSession session);
+
+    /** Names of all travelers currently held pending (ambiguous or not-yet-registered), for skip matching. */
+    List<String> pendingTravelerNames(ConversationalAgentSession session);
+
+    /**
+     * Drop a pending (ambiguous / unresolved) traveler mention so it is no longer treated as a
+     * traveler — used when the user declines to add it. Also removes any unresolved placeholder
+     * traveler (no staffId) added under that name. Returns the removed name, or null if none matched.
+     */
+    String removePendingTraveler(ConversationalAgentSession session, String name);
 
     /** Merge resolved staff rows (from the Spreadsheet Agent) into the session draft_json. */
     void mergeSpreadsheet(ConversationalAgentSession session, SpreadsheetAnalysisResult spreadsheet);

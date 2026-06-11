@@ -6,15 +6,15 @@ import com.api.bizplay_conversational.model.entity.CostExpense;
 import com.api.bizplay_conversational.model.entity.Department;
 import com.api.bizplay_conversational.model.entity.TransportationExpense;
 import com.api.bizplay_conversational.model.entity.TripReport;
+import com.api.bizplay_conversational.model.entity.TripReportDetail;
 import com.api.bizplay_conversational.model.request.ExpenseDetailRequest;
 import com.api.bizplay_conversational.model.request.ExpenseSectionRequest;
 import com.api.bizplay_conversational.model.request.PlanAttachmentRequest;
 import com.api.bizplay_conversational.model.request.ReportCreateRequest;
-import com.api.bizplay_conversational.model.request.ReportLineUpdateRequest;
 import com.api.bizplay_conversational.model.response.PlanResponse;
 import com.api.bizplay_conversational.model.response.PlanTravelerResponse;
 import com.api.bizplay_conversational.model.response.ReportBatchDeleteResponse;
-import com.api.bizplay_conversational.model.response.ReportLineResponse;
+import com.api.bizplay_conversational.model.response.ReportDetailResponse;
 import com.api.bizplay_conversational.model.response.ReportResponse;
 import com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo;
 import com.api.bizplay_conversational.repository.DepartmentRepo;
@@ -29,9 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -44,142 +44,166 @@ public class ExpenseServiceImple implements ExpenseService {
     private static final String SECTION_TRANSPORTATION = "TRANSPORTATION";
     private static final String SECTION_ETC = "ETC";
     private static final String URL_ATTACHMENT_PLACEHOLDER = "URL_ATTACHMENT";
+    private static final String DEFAULT_APPROVAL_STATUS = "Request for approval";
     /** The approved-plan state required before a report may be created. */
     private static final String APPROVED_STATUS = "Approval complete";
-    /** Allowed values for conversational_trip_report.approval_status (matches the DB CHECK). */
+    /** Allowed values for approval_status (matches the DB CHECK). */
     private static final java.util.Set<String> APPROVAL_STATUSES = java.util.Set.of(
             "Request for approval", "Business trip cancellation", "Approval complete");
-    /** Allowed section codes (matches the DB CHECK). */
-    private static final java.util.Set<String> VALID_SECTIONS = java.util.Set.of(
-            SECTION_COST, SECTION_TRANSPORTATION, SECTION_ETC);
 
     private final ExpenseRepo expenseRepo;
     private final DepartmentRepo departmentRepo;
     private final ConversationalAgentSessionRepo sessionRepo;
     private final PlanRepo planRepo;
 
+    // --- reads -------------------------------------------------------------------
+
     @Override
     @Transactional(readOnly = true)
-    public ReportLineResponse getById(String id) {
-        UUID reportId;
-        try {
-            reportId = UUID.fromString(id == null ? null : id.trim());
-        } catch (IllegalArgumentException | NullPointerException e) {
-            throw new CustomNotFoundException("Invalid report id: " + id);
+    public ReportResponse getById(String id) {
+        TripReport header = expenseRepo.findTripReportById(parseId(id).toString());
+        if (header == null) {
+            throw new CustomNotFoundException("Report not found: " + id);
         }
-        TripReport tr = expenseRepo.findTripReportById(reportId.toString());
-        if (tr == null) {
-            throw new CustomNotFoundException("Report line not found: " + id);
-        }
-        return toResponse(tr);
-    }
-
-    @Override
-    @Transactional
-    public ReportLineResponse update(String id, ReportLineUpdateRequest request) {
-        UUID reportId = parseReportId(id);
-        TripReport tr = expenseRepo.findTripReportById(reportId.toString());
-        if (tr == null) {
-            throw new CustomNotFoundException("Report line not found: " + id);
-        }
-        ReportLineUpdateRequest req = request == null ? new ReportLineUpdateRequest() : request;
-        ExpenseDetailRequest detail = req.getDetail() != null ? req.getDetail() : new ExpenseDetailRequest();
-
-        // Section: keep the existing one unless a valid new one is given.
-        String section = blankToNull(req.getSectionCode());
-        section = section != null ? section.toUpperCase(java.util.Locale.ROOT) : tr.getSectionCode();
-        if (!VALID_SECTIONS.contains(section)) {
-            throw new IllegalArgumentException("sectionCode must be one of " + VALID_SECTIONS + " but was: " + req.getSectionCode());
-        }
-
-        // Approval status: keep existing unless a valid new one is given.
-        String approvalStatus = blankToNull(req.getApprovalStatus());
-        if (approvalStatus != null && !APPROVAL_STATUSES.contains(approvalStatus)) {
-            throw new IllegalArgumentException("approvalStatus must be one of " + APPROVAL_STATUSES + " but was: " + req.getApprovalStatus());
-        }
-        if (approvalStatus == null) {
-            approvalStatus = tr.getApprovalStatus();
-        }
-
-        // Department: a provided budget department wins (resolved under the plan's corp); else keep existing.
-        UUID departmentId = tr.getDepartmentId();
-        String budgetDept = blankToNull(detail.getBudgetDepartment());
-        if (budgetDept != null) {
-            PlanResponse plan = planRepo.findPlanResponseById(tr.getTripPlanId().toString());
-            String corpNo = plan != null ? plan.getCorpNo() : null;
-            if (corpNo != null) {
-                departmentId = findOrCreateDepartment(corpNo, budgetDept).getId();
-            }
-        }
-
-        // Replace the linked expense: insert the new row FIRST, repoint the report, THEN drop the old
-        // row(s) — so the section/FK CHECK constraint is always satisfied during the transaction.
-        UUID oldCostId = tr.getCostExpenseId();
-        UUID oldTransportId = tr.getTransportationExpenseId();
-
-        UUID costExpenseId = null;
-        UUID transportationExpenseId = null;
-        if (SECTION_TRANSPORTATION.equals(section)) {
-            transportationExpenseId = insertTransportation(detail);
-        } else {
-            costExpenseId = insertCost(detail, section); // COST or ETC
-        }
-
-        TripReport updated = new TripReport();
-        updated.setId(reportId);
-        updated.setSectionCode(section);
-        updated.setCostExpenseId(costExpenseId);
-        updated.setTransportationExpenseId(transportationExpenseId);
-        updated.setDepartmentId(departmentId);
-        updated.setApprovalNumber(blankToNull(detail.getApprovalNumber()));
-        updated.setApprovalStatus(approvalStatus);
-        expenseRepo.updateTripReportLine(updated);
-
-        if (oldCostId != null) {
-            expenseRepo.deleteCostExpenseById(oldCostId);
-        }
-        if (oldTransportId != null) {
-            expenseRepo.deleteTransportationExpenseById(oldTransportId);
-        }
-
-        return toResponse(expenseRepo.findTripReportById(reportId.toString()));
-    }
-
-    @Override
-    @Transactional
-    public ReportLineResponse updateApprovalStatus(String id, String approvalStatus) {
-        UUID reportId = parseReportId(id);
-        String status = approvalStatus == null ? null : approvalStatus.trim();
-        if (status == null || status.isBlank() || !APPROVAL_STATUSES.contains(status)) {
-            throw new IllegalArgumentException(
-                    "approvalStatus must be one of " + APPROVAL_STATUSES + " but was: " + approvalStatus);
-        }
-        int updated = expenseRepo.updateApprovalStatus(reportId, status);
-        if (updated == 0) {
-            throw new CustomNotFoundException("Report line not found: " + id);
-        }
-        return toResponse(expenseRepo.findTripReportById(reportId.toString()));
+        return toResponse(header);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<ReportLineResponse> getByCorpNo(String corpNo) {
-        List<ReportLineResponse> result = new ArrayList<>();
-        for (TripReport tr : expenseRepo.findTripReportsByCorpNo(corpNo)) {
-            result.add(toResponse(tr));
+    public List<ReportResponse> getByCorpNo(String corpNo) {
+        List<ReportResponse> result = new ArrayList<>();
+        for (TripReport header : expenseRepo.findTripReportsByCorpNo(corpNo)) {
+            result.add(toResponse(header));
         }
         return result;
     }
 
+    // --- create ------------------------------------------------------------------
+
+    @Override
+    @Transactional
+    public ReportResponse create(ReportCreateRequest request) {
+        UUID agentSessionId = parseUuidOrNull(request.getAgentSessionId(), "AgentSessionId");
+        ConversationalAgentSession session = agentSessionId == null
+                ? null
+                : sessionRepo.findById(agentSessionId).orElse(null);
+
+        UUID tripPlanId = resolveTripPlanId(request, session);
+        assertPlanApproved(tripPlanId);
+
+        // Header: one department for the whole report (from the line, else the plan's travelers).
+        String departmentName = firstBudgetDepartment(request);
+        if (departmentName == null) {
+            departmentName = resolvePlanDepartment(tripPlanId);
+        }
+        UUID departmentId = findOrCreateDepartment(request.getCorpNo(), departmentName).getId();
+
+        TripReport header = new TripReport();
+        header.setId(UUID.randomUUID());
+        header.setAgentSessionId(agentSessionId);
+        header.setDepartmentId(departmentId);
+        header.setTripPlanId(tripPlanId);
+        header.setApprovalNumber(firstApprovalNumber(request));
+        header.setApprovalStatus(DEFAULT_APPROVAL_STATUS);
+        expenseRepo.insertTripReport(header);
+
+        Map<String, UUID> attachmentByKey = new LinkedHashMap<>();
+        int lines = 0;
+        lines += addSection(request.getCostInformation(), SECTION_COST, header.getId(), attachmentByKey);
+        lines += addSection(request.getTransportationInformation(), SECTION_TRANSPORTATION, header.getId(), attachmentByKey);
+        lines += addSection(request.getEtc(), SECTION_ETC, header.getId(), attachmentByKey);
+        // Top-level attachments (owned by the report, not bound to a specific line).
+        if (request.getAttachments() != null) {
+            for (PlanAttachmentRequest a : request.getAttachments()) {
+                ensureAttachment(a, header.getId(), attachmentByKey);
+            }
+        }
+
+        if (lines == 0) {
+            throw new IllegalArgumentException(
+                    "The report has no expense lines to create (CostInformation / TransportationInformation / Etc are all empty).");
+        }
+
+        if (session != null) {
+            session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
+            sessionRepo.save(session);
+        }
+        return toResponse(expenseRepo.findTripReportById(header.getId().toString()));
+    }
+
+    // --- update (full replace) ---------------------------------------------------
+
+    @Override
+    @Transactional
+    public ReportResponse update(String id, ReportCreateRequest request) {
+        UUID reportId = parseId(id);
+        TripReport header = expenseRepo.findTripReportById(reportId.toString());
+        if (header == null) {
+            throw new CustomNotFoundException("Report not found: " + id);
+        }
+
+        // Remove the existing content: details + their expenses + attachments (header stays).
+        for (TripReportDetail d : expenseRepo.findDetailsByReportId(reportId.toString())) {
+            expenseRepo.deleteTripReportDetailById(d.getId());
+            deleteDetailExpense(d);
+        }
+        expenseRepo.deleteReportAttachmentsByReportId(reportId);
+
+        // Re-create content under the same header id.
+        Map<String, UUID> attachmentByKey = new LinkedHashMap<>();
+        int lines = 0;
+        lines += addSection(request.getCostInformation(), SECTION_COST, reportId, attachmentByKey);
+        lines += addSection(request.getTransportationInformation(), SECTION_TRANSPORTATION, reportId, attachmentByKey);
+        lines += addSection(request.getEtc(), SECTION_ETC, reportId, attachmentByKey);
+        if (request.getAttachments() != null) {
+            for (PlanAttachmentRequest a : request.getAttachments()) {
+                ensureAttachment(a, reportId, attachmentByKey);
+            }
+        }
+        if (lines == 0) {
+            throw new IllegalArgumentException("The report has no expense lines to replace it with.");
+        }
+
+        // Refresh header's department + approval_number; keep its approval_status.
+        String departmentName = firstBudgetDepartment(request);
+        if (departmentName == null) {
+            departmentName = resolvePlanDepartment(header.getTripPlanId());
+        }
+        header.setDepartmentId(findOrCreateDepartment(request.getCorpNo() != null
+                ? request.getCorpNo() : corpNoOfPlan(header.getTripPlanId()), departmentName).getId());
+        header.setApprovalNumber(firstApprovalNumber(request));
+        expenseRepo.updateTripReportHeader(header);
+
+        return toResponse(expenseRepo.findTripReportById(reportId.toString()));
+    }
+
+    // --- approval status ---------------------------------------------------------
+
+    @Override
+    @Transactional
+    public ReportResponse updateApprovalStatus(String id, String approvalStatus) {
+        UUID reportId = parseId(id);
+        String status = approvalStatus == null ? null : approvalStatus.trim();
+        if (status == null || status.isBlank() || !APPROVAL_STATUSES.contains(status)) {
+            throw new IllegalArgumentException("approvalStatus must be one of " + APPROVAL_STATUSES + " but was: " + approvalStatus);
+        }
+        if (expenseRepo.updateApprovalStatus(reportId, status) == 0) {
+            throw new CustomNotFoundException("Report not found: " + id);
+        }
+        return toResponse(expenseRepo.findTripReportById(reportId.toString()));
+    }
+
+    // --- delete ------------------------------------------------------------------
+
     @Override
     @Transactional
     public void deleteById(String id) {
-        UUID reportId = parseReportId(id);
-        TripReport tr = expenseRepo.findTripReportById(reportId.toString());
-        if (tr == null) {
-            throw new CustomNotFoundException("Report line not found: " + id);
+        UUID reportId = parseId(id);
+        TripReport header = expenseRepo.findTripReportById(reportId.toString());
+        if (header == null) {
+            throw new CustomNotFoundException("Report not found: " + id);
         }
-        deleteLine(tr);
+        deleteReport(header);
     }
 
     @Override
@@ -188,7 +212,7 @@ public class ExpenseServiceImple implements ExpenseService {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("ids must not be empty.");
         }
-        java.util.LinkedHashMap<String, UUID> parsed = new java.util.LinkedHashMap<>();
+        LinkedHashMap<String, UUID> parsed = new LinkedHashMap<>();
         for (String raw : ids) {
             if (raw == null || raw.isBlank()) {
                 continue;
@@ -204,16 +228,15 @@ public class ExpenseServiceImple implements ExpenseService {
         if (parsed.isEmpty()) {
             throw new IllegalArgumentException("ids must not be empty.");
         }
-
         List<String> deletedIds = new ArrayList<>();
         List<String> notFoundIds = new ArrayList<>();
         for (UUID rid : parsed.values()) {
-            TripReport tr = expenseRepo.findTripReportById(rid.toString());
-            if (tr == null) {
+            TripReport header = expenseRepo.findTripReportById(rid.toString());
+            if (header == null) {
                 notFoundIds.add(rid.toString());
                 continue;
             }
-            deleteLine(tr);
+            deleteReport(header);
             deletedIds.add(rid.toString());
         }
         return ReportBatchDeleteResponse.builder()
@@ -224,144 +247,90 @@ public class ExpenseServiceImple implements ExpenseService {
                 .build();
     }
 
-    /** Delete a report line, then its now-orphaned linked expense row (attachments cascade via FK). */
-    private void deleteLine(TripReport tr) {
-        expenseRepo.deleteTripReportById(tr.getId());
-        if (tr.getCostExpenseId() != null) {
-            expenseRepo.deleteCostExpenseById(tr.getCostExpenseId());
-        }
-        if (tr.getTransportationExpenseId() != null) {
-            expenseRepo.deleteTransportationExpenseById(tr.getTransportationExpenseId());
+    /** Delete a report's expense rows, then the header (details + attachments cascade via FK). */
+    private void deleteReport(TripReport header) {
+        List<TripReportDetail> details = expenseRepo.findDetailsByReportId(header.getId().toString());
+        expenseRepo.deleteTripReportById(header.getId());
+        for (TripReportDetail d : details) {
+            deleteDetailExpense(d);
         }
     }
 
-    private ReportLineResponse toResponse(TripReport tr) {
-        CostExpense cost = tr.getCostExpenseId() != null
-                ? expenseRepo.findCostExpenseById(tr.getCostExpenseId()) : null;
-        TransportationExpense transport = tr.getTransportationExpenseId() != null
-                ? expenseRepo.findTransportationExpenseById(tr.getTransportationExpenseId()) : null;
-        String departmentName = tr.getDepartmentId() != null
-                ? expenseRepo.findDepartmentNameById(tr.getDepartmentId()) : null;
-
-        return ReportLineResponse.builder()
-                .id(tr.getId())
-                .tripPlanId(tr.getTripPlanId())
-                .agentSessionId(tr.getAgentSessionId())
-                .sectionCode(tr.getSectionCode())
-                .approvalStatus(tr.getApprovalStatus())
-                .departmentId(tr.getDepartmentId())
-                .department(departmentName)
-                .approvalNumber(tr.getApprovalNumber())
-                .costExpense(cost)
-                .transportationExpense(transport)
-                .build();
-    }
-
-    private UUID parseReportId(String id) {
-        try {
-            return UUID.fromString(id == null ? null : id.trim());
-        } catch (IllegalArgumentException | NullPointerException e) {
-            throw new CustomNotFoundException("Invalid report id: " + id);
+    private void deleteDetailExpense(TripReportDetail d) {
+        if (d.getCostExpenseId() != null) {
+            expenseRepo.deleteCostExpenseById(d.getCostExpenseId());
+        }
+        if (d.getTransportationExpenseId() != null) {
+            expenseRepo.deleteTransportationExpenseById(d.getTransportationExpenseId());
         }
     }
 
-    @Override
-    @Transactional
-    public ReportResponse create(ReportCreateRequest request) {
-        UUID agentSessionId = parseUuidOrNull(request.getAgentSessionId(), "AgentSessionId");
-        ConversationalAgentSession session = agentSessionId == null
-                ? null
-                : sessionRepo.findById(agentSessionId).orElse(null);
+    // --- create helpers ----------------------------------------------------------
 
-        UUID tripPlanId = resolveTripPlanId(request, session);
-
-        // The report can only be created once the trip plan has been approved.
-        String approval = planRepo.findApprovalStatusById(tripPlanId);
-        if (!APPROVED_STATUS.equals(approval)) {
-            throw new IllegalArgumentException(
-                    "Trip plan " + tripPlanId + " is not approved (approval_status='" + approval
-                            + "'). The report can only be created once the plan is '" + APPROVED_STATUS + "'.");
-        }
-
-        // A receipt rarely names a budget department; fall back to the trip plan's traveler department.
-        String planDepartment = resolvePlanDepartment(tripPlanId);
-
-        List<UUID> reportLineIds = new ArrayList<>();
-        int[] counts = new int[3]; // cost, transportation, etc
-
-        counts[0] = addSection(request.getCostInformation(), SECTION_COST, request.getCorpNo(),
-                tripPlanId, agentSessionId, planDepartment, reportLineIds);
-        counts[1] = addSection(request.getTransportationInformation(), SECTION_TRANSPORTATION, request.getCorpNo(),
-                tripPlanId, agentSessionId, planDepartment, reportLineIds);
-        counts[2] = addSection(request.getEtc(), SECTION_ETC, request.getCorpNo(),
-                tripPlanId, agentSessionId, planDepartment, reportLineIds);
-
-        if (reportLineIds.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "The report has no expense lines to create (CostInformation / TransportationInformation / Etc are all empty).");
-        }
-
-        // Attach receipts. conversational_attachment.report_id points at a single trip_report row, so
-        // we own all report attachments under the first created line.
-        int attachmentCount = persistAttachments(request, reportLineIds.get(0));
-
-        // Mark the drafting session as posted.
-        if (session != null) {
-            session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
-            sessionRepo.save(session);
-        }
-
-        return ReportResponse.builder()
-                .tripPlanId(tripPlanId)
-                .agentSessionId(agentSessionId)
-                .corpNo(request.getCorpNo())
-                .costCount(counts[0])
-                .transportationCount(counts[1])
-                .etcCount(counts[2])
-                .totalLines(reportLineIds.size())
-                .attachmentCount(attachmentCount)
-                .reportLineIds(reportLineIds)
-                .build();
-    }
-
-    /** Insert every detail of one section as expense + trip_report rows. Returns the count. */
-    private int addSection(ExpenseSectionRequest section, String sectionCode, String corpNo,
-                           UUID tripPlanId, UUID agentSessionId, String planDepartment, List<UUID> reportLineIds) {
+    /** Insert every detail of one section as expense + detail rows. Returns the count. */
+    private int addSection(ExpenseSectionRequest section, String sectionCode, UUID reportId,
+                           Map<String, UUID> attachmentByKey) {
         if (section == null || section.getDetails() == null || section.getDetails().isEmpty()) {
             return 0;
         }
+        // The line's source receipt: the first attachment of its section (best-effort).
+        UUID sectionAttachmentId = firstSectionAttachment(section, reportId, attachmentByKey);
+
         int count = 0;
         for (ExpenseDetailRequest detail : section.getDetails()) {
             if (detail == null) {
                 continue;
             }
-            // Use the line's own budget department; if blank, fall back to the trip plan's department.
-            String departmentName = blankToNull(detail.getBudgetDepartment());
-            if (departmentName == null) {
-                departmentName = planDepartment;
-            }
-            UUID departmentId = findOrCreateDepartment(corpNo, departmentName).getId();
-            UUID expenseId;
-            TripReport report = new TripReport();
-            report.setId(UUID.randomUUID());
-            report.setAgentSessionId(agentSessionId);
-            report.setDepartmentId(departmentId);
-            report.setTripPlanId(tripPlanId);
-            report.setSectionCode(sectionCode);
-            report.setApprovalNumber(blankToNull(detail.getApprovalNumber()));
-
+            TripReportDetail line = new TripReportDetail();
+            line.setId(UUID.randomUUID());
+            line.setTripReportId(reportId);
+            line.setSectionCode(sectionCode);
+            line.setConversationalAttachmentId(sectionAttachmentId);
             if (SECTION_TRANSPORTATION.equals(sectionCode)) {
-                expenseId = insertTransportation(detail);
-                report.setTransportationExpenseId(expenseId);
+                line.setTransportationExpenseId(insertTransportation(detail));
             } else {
-                expenseId = insertCost(detail, sectionCode);
-                report.setCostExpenseId(expenseId);
+                line.setCostExpenseId(insertCost(detail, sectionCode));
             }
-            expenseRepo.insertTripReport(report);
-            reportLineIds.add(report.getId());
+            expenseRepo.insertTripReportDetail(line);
             count++;
         }
         return count;
+    }
+
+    private UUID firstSectionAttachment(ExpenseSectionRequest section, UUID reportId, Map<String, UUID> attachmentByKey) {
+        if (section.getAttachments() == null) {
+            return null;
+        }
+        UUID first = null;
+        for (PlanAttachmentRequest a : section.getAttachments()) {
+            UUID id = ensureAttachment(a, reportId, attachmentByKey);
+            if (first == null) {
+                first = id;
+            }
+        }
+        return first;
+    }
+
+    /** Create (once per file) a report attachment row and return its id. Null when nothing to attach. */
+    private UUID ensureAttachment(PlanAttachmentRequest a, UUID reportId, Map<String, UUID> attachmentByKey) {
+        if (a == null) {
+            return null;
+        }
+        boolean isUrl = a.getType() != null && a.getType().equalsIgnoreCase("url");
+        String fileId = isUrl ? URL_ATTACHMENT_PLACEHOLDER : blankToNull(a.getFileId());
+        String url = blankToNull(a.getUrl());
+        if (fileId == null && url == null) {
+            return null;
+        }
+        String key = (fileId == null ? "" : fileId) + "|" + (url == null ? "" : url);
+        UUID existing = attachmentByKey.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        UUID id = UUID.randomUUID();
+        expenseRepo.insertReportAttachment(id, reportId, fileId == null ? URL_ATTACHMENT_PLACEHOLDER : fileId, url);
+        attachmentByKey.put(key, id);
+        return id;
     }
 
     private UUID insertCost(ExpenseDetailRequest d, String expenseType) {
@@ -372,7 +341,7 @@ public class ExpenseServiceImple implements ExpenseService {
         e.setCategory(orDefault(d.getType(), "Expense"));
         e.setUsePurpose(orEmpty(d.getUsePurpose()));
         e.setAccount(orEmpty(d.getAccount()));
-        LocalDate proof = firstNonNull(d.getProofDate(), d.getUsageDate(), d.getStartDate(), LocalDate.now());
+        LocalDate evidence = firstNonNull(d.getProofDate(), d.getUsageDate(), d.getStartDate(), LocalDate.now());
         LocalDate start = firstNonNull(d.getStartDate(), d.getProofDate(), d.getUsageDate(), LocalDate.now());
         LocalDate end = firstNonNull(d.getEndDate(), start);
         if (end.isBefore(start)) {
@@ -380,7 +349,7 @@ public class ExpenseServiceImple implements ExpenseService {
         }
         e.setStartDate(start);
         e.setEndDate(end);
-        e.setEvidenceDate(proof);
+        e.setEvidenceDate(evidence);
         e.setDescription(blankToNull(d.getDescription()));
         e.setApplicationAmount(orZero(d.getAmountUsed()));
         e.setPolicyAmount(firstNonNull(d.getRegulatedAmount(), orZero(d.getAmountUsed())));
@@ -402,7 +371,7 @@ public class ExpenseServiceImple implements ExpenseService {
         e.setOriginLocation(orEmpty(d.getOrigin()));
         e.setDestinationLocation(orEmpty(d.getDestination()));
         e.setUsageDate(firstNonNull(d.getUsageDate(), d.getProofDate(), d.getStartDate(), LocalDate.now()));
-        e.setEvidenceDate(firstNonNull(d.getProofDate(), d.getUsageDate())); // nullable; no today fallback
+        e.setEvidenceDate(firstNonNull(d.getProofDate(), d.getUsageDate()));
         e.setVendor(orEmpty(d.getVendor()));
         e.setSupplyPrice(firstNonNull(d.getSupplyPrice(), orZero(d.getAmountUsed())));
         e.setTax(orZero(d.getTax()));
@@ -415,44 +384,45 @@ public class ExpenseServiceImple implements ExpenseService {
         return e.getId();
     }
 
-    private int persistAttachments(ReportCreateRequest request, UUID ownerReportId) {
-        // Collect file ids from the top-level Attachemnt and every section's Attachemnt, de-duplicated.
-        List<PlanAttachmentRequest> all = new ArrayList<>();
-        if (request.getAttachments() != null) {
-            all.addAll(request.getAttachments());
-        }
-        addSectionAttachments(all, request.getCostInformation());
-        addSectionAttachments(all, request.getTransportationInformation());
-        addSectionAttachments(all, request.getEtc());
+    // --- assembly ----------------------------------------------------------------
 
-        Set<String> seen = new LinkedHashSet<>();
-        int count = 0;
-        for (PlanAttachmentRequest a : all) {
-            if (a == null) {
-                continue;
-            }
-            boolean isUrl = a.getType() != null && a.getType().equalsIgnoreCase("url");
-            String fileId = isUrl ? URL_ATTACHMENT_PLACEHOLDER : blankToNull(a.getFileId());
-            String url = blankToNull(a.getUrl());
-            if (fileId == null && url == null) {
-                continue;
-            }
-            String key = (fileId == null ? "" : fileId) + "|" + (url == null ? "" : url);
-            if (!seen.add(key)) {
-                continue;
-            }
-            expenseRepo.insertReportAttachment(UUID.randomUUID(), ownerReportId,
-                    fileId == null ? URL_ATTACHMENT_PLACEHOLDER : fileId, url);
-            count++;
+    private ReportResponse toResponse(TripReport header) {
+        List<ReportDetailResponse> lines = new ArrayList<>();
+        for (TripReportDetail d : expenseRepo.findDetailsByReportId(header.getId().toString())) {
+            lines.add(toDetailResponse(d));
         }
-        return count;
+        String department = header.getDepartmentId() != null
+                ? expenseRepo.findDepartmentNameById(header.getDepartmentId()) : null;
+        return ReportResponse.builder()
+                .id(header.getId())
+                .tripPlanId(header.getTripPlanId())
+                .agentSessionId(header.getAgentSessionId())
+                .departmentId(header.getDepartmentId())
+                .department(department)
+                .approvalStatus(header.getApprovalStatus())
+                .approvalNumber(header.getApprovalNumber())
+                .createdAt(header.getCreatedDate())
+                .costItems(lines)
+                .build();
     }
 
-    private void addSectionAttachments(List<PlanAttachmentRequest> sink, ExpenseSectionRequest section) {
-        if (section != null && section.getAttachments() != null) {
-            sink.addAll(section.getAttachments());
-        }
+    private ReportDetailResponse toDetailResponse(TripReportDetail d) {
+        CostExpense cost = d.getCostExpenseId() != null
+                ? expenseRepo.findCostExpenseById(d.getCostExpenseId()) : null;
+        TransportationExpense transport = d.getTransportationExpenseId() != null
+                ? expenseRepo.findTransportationExpenseById(d.getTransportationExpenseId()) : null;
+        String attachmentFileId = d.getConversationalAttachmentId() != null
+                ? expenseRepo.findAttachmentFileIdById(d.getConversationalAttachmentId()) : null;
+        return ReportDetailResponse.builder()
+                .id(d.getId())
+                .sectionCode(d.getSectionCode())
+                .attachmentFileId(attachmentFileId)
+                .costExpense(cost)
+                .transportationExpense(transport)
+                .build();
     }
+
+    // --- shared helpers ----------------------------------------------------------
 
     private UUID resolveTripPlanId(ReportCreateRequest request, ConversationalAgentSession session) {
         UUID fromRequest = parseUuidOrNull(request.getTripPlanId(), "TripPlanId");
@@ -465,7 +435,7 @@ public class ExpenseServiceImple implements ExpenseService {
                 try {
                     return UUID.fromString(node.asText().trim());
                 } catch (IllegalArgumentException ignored) {
-                    // fall through to the error below
+                    // fall through
                 }
             }
         }
@@ -473,20 +443,64 @@ public class ExpenseServiceImple implements ExpenseService {
                 "TripPlanId is required (directly, or recoverable from the drafting session's draft_json).");
     }
 
-    /**
-     * The department to use when an expense line has no budget department: the single distinct
-     * department across the trip plan's travelers, or the first traveler's department if they differ.
-     * Null when the plan has no travelers/department (caller falls back to the default).
-     */
+    private void assertPlanApproved(UUID tripPlanId) {
+        String approval = planRepo.findApprovalStatusById(tripPlanId);
+        if (!APPROVED_STATUS.equals(approval)) {
+            throw new IllegalArgumentException(
+                    "Trip plan " + tripPlanId + " is not approved (approval_status='" + approval
+                            + "'). The report can only be created once the plan is '" + APPROVED_STATUS + "'.");
+        }
+    }
+
+    /** The first non-blank 예산부서 across all sections, or null. */
+    private String firstBudgetDepartment(ReportCreateRequest request) {
+        for (ExpenseSectionRequest s : List.of(
+                nz(request.getCostInformation()), nz(request.getTransportationInformation()), nz(request.getEtc()))) {
+            if (s.getDetails() == null) {
+                continue;
+            }
+            for (ExpenseDetailRequest d : s.getDetails()) {
+                if (d != null && blankToNull(d.getBudgetDepartment()) != null) {
+                    return d.getBudgetDepartment().trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The first non-blank ApprovalNumber across all sections, or null. */
+    private String firstApprovalNumber(ReportCreateRequest request) {
+        for (ExpenseSectionRequest s : List.of(
+                nz(request.getCostInformation()), nz(request.getTransportationInformation()), nz(request.getEtc()))) {
+            if (s.getDetails() == null) {
+                continue;
+            }
+            for (ExpenseDetailRequest d : s.getDetails()) {
+                if (d != null && blankToNull(d.getApprovalNumber()) != null) {
+                    return d.getApprovalNumber().trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    private ExpenseSectionRequest nz(ExpenseSectionRequest s) {
+        return s != null ? s : new ExpenseSectionRequest();
+    }
+
+    private String corpNoOfPlan(UUID tripPlanId) {
+        PlanResponse plan = planRepo.findPlanResponseById(tripPlanId.toString());
+        return plan != null ? plan.getCorpNo() : null;
+    }
+
     private String resolvePlanDepartment(UUID tripPlanId) {
         if (tripPlanId == null) {
             return null;
         }
         List<PlanTravelerResponse> travelers = planRepo.findTravelerResponsesByPlanId(tripPlanId.toString());
-        if (travelers == null || travelers.isEmpty()) {
+        if (travelers == null) {
             return null;
         }
-        // Use the first non-blank traveler department (better than "Unassigned" when receipts omit it).
         for (PlanTravelerResponse t : travelers) {
             String d = t == null ? null : t.getDepartment();
             if (d != null && !d.isBlank()) {
@@ -499,16 +513,23 @@ public class ExpenseServiceImple implements ExpenseService {
     private Department findOrCreateDepartment(String corpNo, String departmentName) {
         String name = blankToNull(departmentName);
         String finalName = name != null ? name : DEFAULT_DEPARTMENT_NAME;
-        return departmentRepo.findByCorpNoAndName(corpNo, finalName)
+        String finalCorp = corpNo != null ? corpNo : "";
+        return departmentRepo.findByCorpNoAndName(finalCorp, finalName)
                 .orElseGet(() -> {
                     Department department = new Department();
-                    department.setCorpNo(corpNo);
+                    department.setCorpNo(finalCorp);
                     department.setName(finalName);
                     return departmentRepo.save(department);
                 });
     }
 
-    // --- small helpers -----------------------------------------------------------
+    private UUID parseId(String id) {
+        try {
+            return UUID.fromString(id == null ? null : id.trim());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new CustomNotFoundException("Invalid report id: " + id);
+        }
+    }
 
     private UUID parseUuidOrNull(String raw, String label) {
         if (raw == null || raw.isBlank()) {

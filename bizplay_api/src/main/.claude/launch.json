@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bizplay-web",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "echo Spring app expected to be already running on :8080"],
+      "port": 8080,
+      "path": "/web/"
+    }
+  ]
+}

@@ -10,13 +10,230 @@ let CORP_NO = localStorage.getItem("bizplay.corpNo") || "1234567890";
 const PLAN_TYPE = "Business Trip Plan";
 let currentTab = "plan";
 
+/* ================================================================
+ *  Language (ENG / KOR) — dictionary-based chrome translation.
+ *  Exact trimmed strings are swapped in text nodes + placeholder/title/
+ *  aria-label attributes; a MutationObserver keeps dynamically rendered
+ *  tables translated. Strings not in the dictionary stay in English.
+ * ================================================================ */
+let LANG = localStorage.getItem("bizplay.lang") || "en";
+const I18N = {
+  // Header / tabs
+  "Business Trip Workflow": "출장 업무 워크플로우",
+  "Request · Approve · Report": "신청 · 승인 · 보고",
+  "CORP No.": "법인번호", "Enter corp no.": "법인번호 입력",
+  "Request Plan": "출장 신청", "Approve Plan": "출장 승인", "Expense Report": "지출 보고", "Audit": "감사",
+  // Request Plan tab
+  "Create with Agent": "에이전트로 작성", "Resume draft": "임시저장 열기", "Create manually": "직접 작성",
+  "Staff & Departments": "직원 · 부서 관리",
+  "· sorted by most recent": "· 최신순 정렬",
+  "entire": "전체", "Approval Requested": "승인 요청", "Approved": "승인됨", "Canceled": "취소됨",
+  "Search doc no, title, author, traveler, dept, purpose": "문서번호·제목·작성자·출장자·부서·목적 검색",
+  "Show only cancelled": "취소된 항목만 보기",
+  "selected": "건 선택됨", "Clear": "선택 해제", "Remove": "제거",
+  "Document": "문서번호", "Title": "제목", "Author": "작성자", "Traveler": "출장자", "Dept.": "부서",
+  "Purpose": "목적", "Period": "기간", "Route": "경로",
+  "Showing": "표시", "of": "/", "plans": "건의 계획", "reports": "건의 보고서", "audits": "건의 감사",
+  "100 items": "100건", "newest first": "최신순",
+  // Approve tab
+  "entries · approve or cancel requests": "건 · 승인/취소 처리",
+  "Search doc no, title, traveler, dept": "문서번호·제목·출장자·부서 검색",
+  "Status": "상태", "Actions": "작업", "Approve": "승인", "Cancel": "취소",
+  "Request for approval": "승인 요청중", "Approval complete": "승인 완료", "Business trip cancellation": "출장 취소",
+  // Expense Report tab
+  "expense reports": "건의 지출 보고서", "+ Create Report": "+ 보고서 작성", "Refresh": "새로고침",
+  "Search doc no, trip, traveler, dept, purpose, status": "문서번호·출장·출장자·부서·목적·상태 검색",
+  "Trip": "출장", "Lines": "항목", "Total": "합계", "Updated": "수정일", "View": "보기",
+  "Passed": "통과됨", "Failed": "실패", "Not audited": "감사 전",
+  // Audit tab
+  "audits · R10 requisition mismatch — runs automatically when an expense report is created":
+    "감사 · R10 청구 불일치 — 지출 보고서 생성 시 자동 실행",
+  "Normal": "정상", "Suspicion": "의심",
+  "Search audit id, trip plan, rule, status, summary": "감사ID·출장계획·규칙·상태·요약 검색",
+  "Trip Plan": "출장 계획", "Rule": "규칙", "Result": "결과", "Compliance": "준수",
+  "Confidence": "신뢰도", "Summary": "요약", "Created": "생성일",
+  "PASS": "일치", "FAIL": "불일치", "SKIPPED": "평가 제외", "Pass": "통과",
+  "HIGH": "높음", "MEDIUM": "중간", "LOW": "낮음",
+  // Create-plan modal
+  "Create Business Trip Plan": "출장 계획 작성",
+  "A travel-expense limit is granted upon completion.": "작성 완료 시 출장비 한도가 부여됩니다.",
+  "Trip Information": "출장 정보", "Travel Purpose": "출장 유형", "Trip Period": "출장 기간",
+  "Destination": "목적지", "Content": "내용", "Classification": "구분",
+  "Select a purpose…": "유형 선택…", "e.g. Busan": "예: 부산", "Give the trip a name": "출장 이름을 입력하세요",
+  "Notes, agenda, context…": "메모, 일정, 배경…",
+  "Travellers": "출장자 명단", "Traveller": "출장자", "+ Add another traveller": "+ 출장자 추가",
+  "Budget Department": "예산 부서", "Travel Route": "이동 경로",
+  "Select Traveler…": "출장자 선택…", "Select Budget Department…": "예산 부서 선택…",
+  "Set departure · destination · arrival": "출발·목적지·도착 설정",
+  "Attachment": "첨부", "Register a URL": "URL 등록",
+  "No reference documents attached": "첨부된 참고 문서 없음",
+  "Register a URL to attach an itinerary": "URL을 등록해 일정표를 첨부하세요",
+  "Save draft": "임시 저장", "Creation Complete": "작성 완료",
+  // Route popup
+  "Route Setup": "경로 설정", "Departure": "출발지", "Arrival / Return": "도착 / 복귀",
+  "Confirm route": "경로 확인",
+  "Search or select a route. You may type an address directly.": "경로를 검색하거나 선택하세요. 주소를 직접 입력할 수도 있습니다.",
+  "Where the journey begins": "출발 위치", "Where they travel to": "목적지 위치", "Where the journey ends": "도착 위치",
+  // Agent modal
+  "Create Plan with Agent": "에이전트로 계획 작성",
+  "Describe the trip in plain language, or attach a staff spreadsheet / itinerary PDF. The agent fills the draft for you.":
+    "출장을 자유롭게 설명하거나 직원 명단(.xlsx)·일정표(.pdf)를 첨부하세요. 에이전트가 초안을 작성합니다.",
+  "Draft preview": "초안 미리보기", "No draft": "초안 없음", "Send": "전송",
+  "Create this plan": "이 계획 생성", "Submit report": "보고서 제출",
+  // Detail / resume
+  "Business Trip Plan": "출장 계획서", "Plan detail": "계획 상세", "Delete plan": "계획 삭제", "Close": "닫기",
+  "Resume a session": "세션 이어하기",
+  "Pick a saved draft to continue chatting or editing.": "이어서 작업할 임시저장을 선택하세요.",
+  // Report modal
+  "New Expense Report": "신규 지출 보고서",
+  "Import an approved business trip plan, attach receipts, then review.": "승인된 출장 계획을 불러오고 영수증을 첨부한 뒤 검토하세요.",
+  "Import": "불러오기", "Please select an approved plan to settle": "정산할 승인된 계획을 선택하세요",
+  "Cost Items": "비용 항목",
+  "Import a plan, then add receipts — the agent extracts expense lines from each PDF.":
+    "계획을 불러온 뒤 영수증을 추가하세요 — 에이전트가 PDF에서 지출 항목을 추출합니다.",
+  "Draft": "임시저장", "Create": "생성", "Delete": "삭제",
+  "Cost": "비용", "Transportation": "교통비", "Etc": "기타",
+  "+ Load Evidence": "+ 증빙 추가", "No items — add receipts.": "항목 없음 — 영수증을 추가하세요.",
+  "Evidence": "증빙", "Description": "설명", "Note": "비고", "Vendor": "거래처",
+  // Plan picker
+  "Select Plan": "계획 선택",
+  "Choose an approved business trip plan to settle. Only plans with approval complete can be settled.":
+    "정산할 승인된 출장 계획을 선택하세요. 승인 완료된 계획만 정산할 수 있습니다.",
+  "Search by title, document number, traveler, author, dept": "제목·문서번호·출장자·작성자·부서 검색",
+  "Trip Date": "출장일", "Import selected": "선택 불러오기",
+  // Audit detail modal
+  "Re-run audit": "감사 재실행", "Download": "다운로드",
+  "The 5 checks": "5가지 점검", "Expense lines reviewed — by report section": "검토된 지출 항목 — 보고서 섹션별",
+  "Approval Gate": "승인 게이트", "Date Alignment": "날짜 일치", "Location Alignment": "장소 일치",
+  "Amount Alignment": "금액 일치", "Receipt Backing": "영수증 증빙",
+  "Was the trip plan approved before expenses were claimed?": "지출 청구 전에 출장 계획이 승인되었나요?",
+  "Does every expense date fall inside the approved trip period?": "모든 지출 날짜가 승인된 출장 기간 내에 있나요?",
+  "Do expense locations match the planned destination and route?": "지출 장소가 계획된 목적지·경로와 일치하나요?",
+  "Is the claimed total within the plan’s budget?": "청구 총액이 계획 예산 이내인가요?",
+  "Is every expense line backed by an uploaded receipt?": "모든 지출 항목에 업로드된 영수증이 있나요?",
+  "Outside trip period": "출장 기간 외", "Unplanned location": "계획에 없는 장소", "No receipt": "영수증 없음",
+  "Receipt": "영수증", "Check": "점검", "✓ ok": "✓ 정상", "Date": "날짜", "Route / Place": "경로 / 장소", "Amount": "금액",
+  "Skip": "건너뛰기",
+  "There is still a pending choice — pick one to continue:": "아직 선택이 남아 있습니다 — 계속하려면 하나를 선택하세요:",
+  "Analyst override": "분석가 수정", "Save verdict": "판정 저장",
+  "Manually correct the compliance / confidence verdict of this audit.": "이 감사의 준수/신뢰도 판정을 수동으로 수정합니다.",
+  "Audit report — CSV": "감사 보고서 — CSV", "Raw audit — JSON": "원본 감사 — JSON",
+  "checks + expense lines, opens in Excel": "점검 + 지출 항목, 엑셀에서 열림",
+  "full payload incl. expense lines": "지출 항목 포함 전체 데이터",
+  // Master data modal
+  "Master data for this corp — travellers and budget departments in trip plans are picked from here.":
+    "이 법인의 마스터 데이터 — 출장 계획의 출장자와 예산 부서를 여기서 선택합니다.",
+  "Departments": "부서 관리", "Staff": "직원", "New department name": "새 부서 이름", "+ Add": "+ 추가",
+  "Click a department to filter its staff. A department with staff can’t be deleted.":
+    "부서를 클릭하면 해당 직원만 표시됩니다. 직원이 있는 부서는 삭제할 수 없습니다.",
+  "Name": "이름", "Position": "직급", "Department": "소속 부서", "Department…": "부서 선택…",
+  "Save": "저장", "✎ Edit": "✎ 수정",
+  // Empty / loading states
+  "Loading…": "불러오는 중…",
+  "No plans match this filter": "필터와 일치하는 계획이 없습니다",
+  "Try a different search or status chip.": "다른 검색어나 상태 칩을 사용해 보세요.",
+  "No business trip plans yet": "아직 출장 계획이 없습니다",
+  "Create your first plan with the agent or manually.": "에이전트 또는 직접 작성으로 첫 계획을 만들어 보세요.",
+  "No plans to review": "검토할 계획이 없습니다",
+  "Requests appear here once a plan is submitted.": "계획이 제출되면 여기에 표시됩니다.",
+  "No reports match this search": "검색과 일치하는 보고서가 없습니다",
+  "Try different keywords.": "다른 키워드로 검색해 보세요.",
+  "No expense reports yet": "아직 지출 보고서가 없습니다",
+  "Import an approved plan and attach receipts to settle a trip.": "승인된 계획을 불러오고 영수증을 첨부해 정산하세요.",
+  "No audits match this filter": "필터와 일치하는 감사가 없습니다",
+  "Try a different search or compliance chip.": "다른 검색어나 준수 칩을 사용해 보세요.",
+  "No audits yet": "아직 감사가 없습니다",
+  "R10 runs automatically each time an expense report is created.": "지출 보고서가 생성될 때마다 R10이 자동 실행됩니다.",
+  "Go to Expense Report": "지출 보고로 이동",
+  "Confirm": "확인",
+};
+const I18N_REV = {};
+Object.keys(I18N).forEach((k) => { I18N_REV[I18N[k]] = k; });
+
+function i18nMapFor(lang) { return lang === "ko" ? I18N : I18N_REV; }
+
+function i18nSwapText(node, map) {
+  const raw = node.nodeValue;
+  if (!raw) return;
+  const t = raw.trim();
+  if (!t || !map[t]) return;
+  node.nodeValue = raw.replace(t, map[t]);
+}
+
+/* Translate every text node + placeholder/title/aria-label under root. */
+function translateTree(root, lang) {
+  if (!root) return;
+  const map = i18nMapFor(lang);
+  if (root.nodeType === 3) { i18nSwapText(root, map); return; }
+  if (root.nodeType !== 1 && root.nodeType !== 11) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((n) => i18nSwapText(n, map));
+  const sel = "[placeholder],[title],[aria-label]";
+  const els = root.querySelectorAll ? Array.from(root.querySelectorAll(sel)) : [];
+  if (root.nodeType === 1 && root.matches && root.matches(sel)) els.push(root);
+  els.forEach((el) => ["placeholder", "title", "aria-label"].forEach((attr) => {
+    const v = el.getAttribute(attr);
+    if (!v) return;
+    const t = v.trim();
+    if (map[t]) el.setAttribute(attr, v.replace(t, map[t]));
+  }));
+}
+
+function setLanguage(lang) {
+  lang = lang === "ko" ? "ko" : "en";
+  // en→ko applies the dictionary; ko→en applies the reverse map. Re-applying
+  // the active language is a no-op, so this is safe to call any time.
+  translateTree(document.body, lang);
+  LANG = lang;
+  localStorage.setItem("bizplay.lang", LANG);
+  document.documentElement.lang = LANG;
+  document.querySelectorAll(".lang-btn").forEach((b) =>
+    b.classList.toggle("active", b.getAttribute("data-lang") === LANG));
+}
+
+/* Keep dynamically rendered content (table rows, modals) translated in KOR mode. */
+const i18nObserver = new MutationObserver((muts) => {
+  if (LANG !== "ko") return;
+  muts.forEach((m) => m.addedNodes.forEach((n) => translateTree(n, "ko")));
+});
+
+function initI18n() {
+  document.querySelectorAll(".lang-btn").forEach((b) =>
+    b.addEventListener("click", () => setLanguage(b.getAttribute("data-lang"))));
+  i18nObserver.observe(document.body, { childList: true, subtree: true });
+  if (LANG === "ko") setLanguage("ko");
+}
+
 /* ---------- Global loading indicator ----------
  * A counter so overlapping fetches keep the bar visible until the last finishes. */
 let loadCount = 0;
 function beginLoad() { loadCount++; const b = document.getElementById("loadbar"); if (b) b.classList.remove("hidden"); }
 function endLoad() { loadCount = Math.max(0, loadCount - 1); if (loadCount === 0) { const b = document.getElementById("loadbar"); if (b) b.classList.add("hidden"); } }
-/* A table-row "Loading…" placeholder with a spinner. */
-function loadingRow(cols) { return `<tr><td colspan="${cols}" class="empty-row"><span class="spin"></span>Loading…</td></tr>`; }
+/* Inline SVG icon from the sprite in index.html (colored via currentColor). */
+function svgIcon(name, cls) {
+  return `<svg class="ico${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+/* Skeleton placeholder rows shown while a table loads. */
+function loadingRow(cols, rows = 3) {
+  const w = [96, 64, 120, 80, 56, 110, 72];
+  let html = "";
+  for (let r = 0; r < rows; r++) {
+    html += "<tr>" + Array.from({ length: cols }, (_, c) =>
+      `<td><span class="skel-bar" style="max-width:${w[(r + c) % w.length]}px"></span></td>`).join("") + "</tr>";
+  }
+  return html;
+}
+/* Rich table empty state: icon + headline + optional sub-line and CTA button. */
+function emptyRow(cols, { icon = "inbox", title = "Nothing here yet", sub = "", action = "" } = {}) {
+  return `<tr><td colspan="${cols}" class="empty-row"><div class="empty-state">
+    ${svgIcon(icon, "ico-lg")}
+    <span class="es-title">${title}</span>
+    ${sub ? `<span class="es-sub">${sub}</span>` : ""}
+    ${action}
+  </div></td></tr>`;
+}
 
 /* The REST API runs on the Spring app (:8080). When this page is served from the
  * same origin (http://localhost:8080/web/) we use a relative path. If it is opened
@@ -146,11 +363,8 @@ async function loadPlans() {
     applyPlanFilters();
     animateRowsIn("plansBody");
   } catch (e) {
-    const hint = location.protocol === "file:"
-      ? " — open the page at http://localhost:8080/web/ instead of a file:// path."
-      : "";
     plansCache = [];
-    body.innerHTML = `<tr><td colspan="10" class="empty-row">Failed to load plans: ${esc(e.message)}${esc(hint)}</td></tr>`;
+    body.innerHTML = emptyRow(10, { icon: "alert", title: "Couldn’t load plans", sub: esc(friendlyError(e.message)) });
     updateChipCounts();
   } finally {
     endLoad();
@@ -191,10 +405,10 @@ function applyPlanFilters() {
 function renderPlans(plans) {
   const body = $("plansBody");
   if (!plans.length) {
-    const msg = plansCache.length
-      ? "No plans match this filter."
-      : "No plans yet — create your first with the agent or manually.";
-    body.innerHTML = `<tr><td colspan="10" class="empty-row">${msg}</td></tr>`;
+    body.innerHTML = plansCache.length
+      ? emptyRow(10, { icon: "search", title: "No plans match this filter", sub: "Try a different search or status chip." })
+      : emptyRow(10, { icon: "inbox", title: "No business trip plans yet", sub: "Create your first plan with the agent or manually.",
+          action: `<button class="btn btn-primary btn-sm" onclick="openAgent()">${svgIcon("sparkles")} Create with Agent</button>` });
     updateSelectionBar();
     return;
   }
@@ -280,16 +494,16 @@ async function deleteSelectedPlans() {
       body: JSON.stringify({ ids }),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const r = (json && (json.data || json.payload)) || {};
     const deleted = r.deleted != null ? r.deleted : ids.length;
     const missing = (r.notFoundIds && r.notFoundIds.length) ? ` (${r.notFoundIds.length} not found)` : "";
     toast(`Removed ${deleted} plan${deleted === 1 ? "" : "s"}${missing}.`, "ok");
     loadPlans();
   } catch (e) {
-    toast("Remove failed: " + e.message, "err");
+    toast("Remove failed: " + friendlyError(e.message), "err");
   } finally {
-    btn.disabled = false; btn.textContent = "🗑 Remove";
+    btn.disabled = false; btn.innerHTML = svgIcon("trash") + " Remove";
     endLoad();
   }
 }
@@ -353,10 +567,10 @@ function renderTravelers() {
   $("travelerCount").textContent = travelers.length;
   const staffOpts = (sel) =>
     `<option value="">Select Traveler…</option>` +
-    STAFF.map((s) => `<option value="${esc(s.name)}" ${s.name === sel ? "selected" : ""}>${esc(s.name)} (${esc(s.department)} · ${esc(s.position)})</option>`).join("");
+    liveStaffList().map((s) => `<option value="${esc(s.name)}" ${s.name === sel ? "selected" : ""}>${esc(s.name)} (${esc(s.department)} · ${esc(s.position)})</option>`).join("");
   const deptOpts = (sel) =>
     `<option value="">Select Budget Department…</option>` +
-    DEPARTMENTS.map((d) => `<option value="${esc(d)}" ${d === sel ? "selected" : ""}>${esc(d)}</option>`).join("");
+    liveDeptNames().map((d) => `<option value="${esc(d)}" ${d === sel ? "selected" : ""}>${esc(d)}</option>`).join("");
 
   $("travelerList").innerHTML = travelers.map((t, idx) => `
     <div class="trav-card" data-id="${t.id}">
@@ -391,7 +605,7 @@ function renderTravelers() {
 let attachments = [];
 function attachPlaceholder() {
   return `<div class="att-placeholder">
-      <div class="folder">🗂</div><div>No reference documents attached</div>
+      <div class="folder">${svgIcon("folder", "ico-lg")}</div><div>No reference documents attached</div>
       <div class="ap-sub">Register a URL to attach an itinerary</div>
     </div>`;
 }
@@ -405,7 +619,7 @@ function renderAttachments() {
   const box = $("attachmentList");
   if (!attachments.length) { box.innerHTML = attachPlaceholder(); return; }
   box.innerHTML = attachments.map((a, i) =>
-    `<div class="att-row">🔗 <a href="${esc(a.URL)}" target="_blank" rel="noopener">${esc(a.URL)}</a>
+    `<div class="att-row">${svgIcon("link")} <a href="${esc(a.URL)}" target="_blank" rel="noopener">${esc(a.URL)}</a>
        <button class="att-remove" data-rm="${i}" title="Remove">✕</button></div>`).join("");
 }
 
@@ -553,14 +767,14 @@ async function completeCreate() {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       // Error bodies are either the ApiResponse {message} or a ProblemDetail {detail/title}.
-      throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+      throw apiError(json, res);
     }
     toast("Business trip plan created.", "ok");
     closeCreate();
     loadPlans();
   } catch (e) {
-    $("validationSummary").textContent = "Create failed: " + e.message;
-    toast("Create failed: " + e.message, "err");
+    $("validationSummary").textContent = "Create failed: " + friendlyError(e.message);
+    toast("Create failed: " + friendlyError(e.message), "err");
   } finally {
     btns.forEach((b) => (b.disabled = false));
   }
@@ -572,6 +786,69 @@ async function completeCreate() {
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ---------------------------------------------------------------- *
+ *  API error normalization
+ *  Backends can return raw MyBatis dumps ("### Error updating database…"),
+ *  PostgreSQL exceptions (incl. Korean 오류 text), FK/unique violations, or
+ *  network failures. friendlyError() collapses those into one short, human
+ *  sentence so the UI never shows a stack trace. Idempotent: passing an
+ *  already-clean message through again is safe.
+ * ---------------------------------------------------------------- */
+function friendlyError(msg, status) {
+  let s = String(msg == null ? "" : msg).trim();
+  if (!s) return status ? `Request failed (HTTP ${status}).` : "Request failed.";
+
+  // Network / connectivity (fetch rejects before any response).
+  if (/failed to fetch|networkerror|load failed|err_connection|err_network/i.test(s)) {
+    const hint = location.protocol === "file:"
+      ? " Open the page at http://localhost:8080/web/ instead of a file:// path."
+      : " The API server may be offline — check that the app is running on :8080.";
+    return "Can’t reach the server." + hint;
+  }
+
+  // Foreign-key violation on corp_no → corp: the corp isn't seeded in the DB.
+  if (/corp_no_fkey/i.test(s) || (/corp_no/i.test(s) && /(foreign key|참조키|fkey)/i.test(s))) {
+    const m = s.match(/\(corp_no\)=\(([^)]*)\)/);
+    const corp = (m && m[1]) || CORP_NO;
+    return `Corp “${corp}” isn’t registered in the database, so nothing could be saved. Seed this corp in the “corp” table, or switch to a corp that already exists.`;
+  }
+  // Generic FK violation (some other referenced row is missing).
+  if (/(foreign key|참조키).*(violat|위배)|(violat|위배).*(foreign key|참조키)/i.test(s)) {
+    return "This references a record that doesn’t exist yet. Make sure the related data is set up first.";
+  }
+  // Unique / duplicate key.
+  if (/duplicate key|unique constraint|already exists|중복/i.test(s)) {
+    return "A record with these details already exists.";
+  }
+  // Not-null violation.
+  if (/not-null|null value in column|널 값|NOT NULL/i.test(s)) {
+    const m = s.match(/column ["“]?([a-z_]+)["”]?/i);
+    return "A required field is missing" + (m ? ` (${m[1]}).` : ".");
+  }
+
+  // Strip MyBatis/PSQL scaffolding down to the most meaningful line.
+  if (/###|PSQLException|SQLException|nested exception|org\.springframework|오류:/i.test(s)) {
+    const detail = s.match(/Detail:\s*([^\n;#]+)/i);
+    const cause = s.match(/Cause:[^:]*Exception:?\s*([^\n#]+)/i);
+    let core = (detail && detail[1]) || (cause && cause[1]) || s.split(/\n|###/)[0] || s;
+    core = core.replace(/\s+/g, " ").trim();
+    if (core.length > 180) core = core.slice(0, 177) + "…";
+    return "Server error: " + (core || "the request could not be completed.");
+  }
+
+  // Plain message — just tidy whitespace and cap length.
+  s = s.replace(/\s+/g, " ").trim();
+  if (s.length > 240) s = s.slice(0, 237) + "…";
+  return s;
+}
+
+/* Build a cleaned Error from a failed fetch Response + parsed body. */
+function apiError(json, res, fallback) {
+  const raw = json && (json.message || json.detail || json.title || json.error);
+  const status = res && res.status;
+  return new Error(friendlyError(raw || fallback || "", status));
 }
 function joinDates(a, b) { return a && b ? `${a} ~ ${b}` : (a || b || ""); }
 function shortNo(id, fallback) {
@@ -607,6 +884,7 @@ function init() {
     CORP_NO = next;
     localStorage.setItem("bizplay.corpNo", CORP_NO);
     reloadActiveTab();
+    loadMasterDataSilent();
     toast(`Switched to corp ${CORP_NO}.`, "");
   };
   corpInput.addEventListener("change", applyCorp);
@@ -653,7 +931,7 @@ function init() {
     if (!t) return;
     t[field] = sel.value;
     if (field === "name") {
-      const staff = STAFF.find((s) => s.name === sel.value);
+      const staff = liveStaffList().find((s) => s.name === sel.value);
       if (staff) { t.position = staff.position; if (!t.department) t.department = staff.department; }
       renderTravelers();
     }
@@ -768,18 +1046,20 @@ function init() {
     $("approveSearch").focus();
   });
   $("approveBody").addEventListener("click", (ev) => {
-    const v = ev.target.closest("[data-view]");
     const a = ev.target.closest("[data-approve]");
     const c = ev.target.closest("[data-cancel]");
-    if (v) openDetail(v.getAttribute("data-view"));
-    else if (a) setApproval(a.getAttribute("data-approve"), "Approval complete");
-    else if (c) {
+    if (a) { setApproval(a.getAttribute("data-approve"), "Approval complete"); return; }
+    if (c) {
       confirmDialog({
         title: "Cancel business trip",
         message: "Cancel this business trip plan? It will be marked as a trip cancellation.",
         confirmText: "Cancel trip",
       }).then((ok) => { if (ok) setApproval(c.getAttribute("data-cancel"), "Business trip cancellation"); });
+      return;
     }
+    // Anywhere else on the row opens the plan detail.
+    const row = ev.target.closest("[data-plan-row]");
+    if (row) openDetail(row.getAttribute("data-plan-row"));
   });
 
   // --- Report tab (structured) ---
@@ -797,8 +1077,12 @@ function init() {
   $("openReportCreateBtn").addEventListener("click", () => openReportCreate());
   $("reportBody").addEventListener("click", (ev) => {
     if (ev.target.closest(".c-check")) return;
-    const row = ev.target.closest("[data-report-key]");
-    if (row) openReportDetail(row.getAttribute("data-report-key"));
+    const openAudit = ev.target.closest("[data-open-audit]");
+    if (openAudit) { openAuditDetail(openAudit.getAttribute("data-open-audit")); return; }
+    const auditBtn = ev.target.closest("[data-audit-plan]");
+    if (auditBtn) { runR10Audit(auditBtn.getAttribute("data-audit-plan"), { switchTab: true, source: "auto" }); return; }
+    const viewBtn = ev.target.closest("[data-report-key]");
+    if (viewBtn) openReportDetail(viewBtn.getAttribute("data-report-key"));
   });
   $("reportBody").addEventListener("change", (ev) => {
     if (ev.target.classList.contains("report-chk")) updateReportSelBar();
@@ -849,7 +1133,23 @@ function init() {
     if (row) { selectPickerPlan(row.getAttribute("data-pickplan")); confirmPlanPicker(); }
   });
 
+  // Close popups when the backdrop (outside the panel) is clicked. mousedown —
+  // not click — so a text-selection drag that ends on the backdrop doesn't close
+  // a half-filled form.
+  [
+    ["createOverlay", closeCreate],
+    ["routeOverlay", () => closeRoute(false)],
+    ["agentOverlay", closeAgent],
+    ["detailOverlay", closeDetail],
+    ["resumeOverlay", closeResume],
+    ["reportCreateOverlay", closeReportCreate],
+    ["planPickerOverlay", closePlanPicker],
+  ].forEach(([id, close]) => {
+    $(id).addEventListener("mousedown", (ev) => { if (ev.target === $(id)) close(); });
+  });
+
   loadPlans();
+  loadMasterDataSilent();   // live staff/department lists for the traveller dropdowns
 }
 
 function dayCount(s, e) {
@@ -866,34 +1166,63 @@ function dayCount(s, e) {
  * ================================================================ */
 const AGENT_API = API_ORIGIN + "/api/v1/agent-conversations";
 
-async function uploadAgentFiles(files) {
+/* Download URL for a previously-uploaded evidence file (receipt, invoice, spreadsheet…).
+ * The server streams the original bytes with Content-Disposition: attachment. */
+function fileDownloadUrl(fileId) {
+  return `${AGENT_API}/files/${encodeURIComponent(fileId)}/download`;
+}
+/* Compact download anchor for an uploaded file reference. */
+function receiptLink(fileId, label) {
+  if (!fileId) return "";
+  return `<a class="receipt-link" href="${esc(fileDownloadUrl(fileId))}" title="Download ${esc(label || "evidence file")}">${svgIcon("import", "ico-xs")} ${esc(label || "Receipt")}</a>`;
+}
+
+/* POST a FormData via XHR so callers can observe real upload progress
+ * (fetch has no upload-progress API). onPct receives 0..1. */
+function xhrUpload(url, formData, onPct) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    if (xhr.upload && onPct) {
+      xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onPct(ev.loaded / ev.total); };
+    }
+    xhr.onload = () => {
+      let json = {};
+      try { json = JSON.parse(xhr.responseText || "{}"); } catch {}
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, json });
+    };
+    xhr.onerror = () => resolve({ ok: false, status: 0, json: { message: "Failed to fetch" } });
+    xhr.send(formData);
+  });
+}
+
+async function uploadAgentFiles(files, onPct) {
   const fileList = Array.from(files || []).filter(Boolean);
   if (!fileList.length) return [];
 
   const fd = new FormData();
   fileList.forEach((f) => fd.append("files", f));
-  const batchRes = await fetch(`${AGENT_API}/files/create-batch`, { method: "POST", body: fd });
-  const batchJson = await batchRes.json().catch(() => ({}));
-  if (batchRes.ok) {
-    return (batchJson && (batchJson.data || batchJson.payload)) || [];
+  const batch = await xhrUpload(`${AGENT_API}/files/create-batch`, fd, onPct);
+  if (batch.ok) {
+    return (batch.json && (batch.json.data || batch.json.payload)) || [];
   }
 
   // Some production proxies block the batch multipart path while allowing the
   // single-file upload endpoint. Fall back to the narrower endpoint in that case.
-  if (![403, 404, 405].includes(batchRes.status)) {
-    throw new Error((batchJson && (batchJson.message || batchJson.detail)) || `upload HTTP ${batchRes.status}`);
+  if (![403, 404, 405].includes(batch.status)) {
+    throw apiError(batch.json, batch, "Upload failed.");
   }
 
   const uploaded = [];
-  for (const file of fileList) {
+  for (let i = 0; i < fileList.length; i++) {
     const one = new FormData();
-    one.append("file", file);
-    const res = await fetch(`${AGENT_API}/files/create`, { method: "POST", body: one });
-    const json = await res.json().catch(() => ({}));
+    one.append("file", fileList[i]);
+    const res = await xhrUpload(`${AGENT_API}/files/create`, one,
+      onPct ? (p) => onPct((i + p) / fileList.length) : null);
     if (!res.ok) {
-      throw new Error((json && (json.message || json.detail)) || `upload HTTP ${res.status}`);
+      throw apiError(res.json, res, "Upload failed.");
     }
-    const data = json && (json.data || json.payload);
+    const data = res.json && (res.json.data || res.json.payload);
     if (data) uploaded.push(data);
   }
   return uploaded;
@@ -970,11 +1299,15 @@ function openAgentResumed(d, mode = "plan") {
   // Rebuild the conversation from saved history.
   const label = mode === "report" ? "report" : "session";
   $("agentThread").innerHTML =
-    `<div class="msg msg-assistant"><div class="bubble">↻ Resumed ${label} <code>${esc(String(d.sessionId).slice(0, 8))}</code> — continue chatting${mode === "report" ? "." : " or edit the draft."}</div></div>`;
+    `<div class="msg msg-assistant"><div class="bubble">${svgIcon("refresh")} Resumed ${label} <code>${esc(String(d.sessionId).slice(0, 8))}</code> — continue chatting${mode === "report" ? "." : " or edit the draft."}</div></div>`;
   (d.chatEventJson || []).forEach((t) => {
     if (!t || !t.content) return;
     appendMsg(t.role === "assistant" ? "assistant" : "user", t.content, {});
   });
+  // If the session was saved mid-disambiguation, re-offer the choice as chips.
+  if (d.pendingChoices && d.pendingChoices.length) {
+    appendMsg("assistant", "There is still a pending choice — pick one to continue:", { choiceGroups: d.pendingChoices });
+  }
   renderDraft();
   $("agentOverlay").classList.remove("hidden");
 }
@@ -990,7 +1323,7 @@ async function onAgentFiles(ev) {
     uploaded.forEach((u) => agent.pending.push({ fileId: u.fileId, filename: u.filename }));
     renderAgentFiles();
   } catch (e) {
-    toast("Upload failed: " + e.message, "err");
+    toast("Upload failed: " + friendlyError(e.message), "err");
   } finally {
     ev.target.value = "";
     setAgentBusy(false);
@@ -1000,7 +1333,7 @@ function renderAgentFiles() {
   const box = $("agentFiles");
   if (!agent.pending.length) { box.innerHTML = ""; return; }
   box.innerHTML = agent.pending.map((f, i) => {
-    const icon = /\.pdf$/i.test(f.filename) ? "📄" : "📊";
+    const icon = /\.pdf$/i.test(f.filename) ? svgIcon("file-text") : svgIcon("table");
     return `<span class="fchip">${icon} ${esc(f.filename || f.fileId)}<button data-fchip="${i}" title="Remove">✕</button></span>`;
   }).join("");
 }
@@ -1034,16 +1367,19 @@ async function sendAgent() {
     });
     const json = await res.json().catch(() => ({}));
     typing.remove();
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
     agent.sessionId = data.sessionId || agent.sessionId;
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
-    appendMsg("assistant", data.reply || "(no reply)", { intent: data.intent, subAgents: data.subAgents });
+    appendMsg("assistant", data.reply || "(no reply)", {
+      intent: data.intent, subAgents: data.subAgents,
+      choiceGroups: data.pendingChoices,
+    });
     renderDraft();
   } catch (e) {
     typing.remove();
-    appendMsg("assistant", "⚠ " + e.message, { error: true });
+    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
     // restore the attachments the user tried to send so they aren't lost
     agent.pending = sentFiles;
     renderAgentFiles();
@@ -1066,13 +1402,50 @@ function appendMsg(role, text, meta = {}) {
   wrap.className = "msg msg-" + role;
   let metaHtml = "";
   if (meta.files && meta.files.length) {
-    metaHtml += `<div class="bubble-files">${meta.files.map((f) => `<span>📎 ${esc(f)}</span>`).join("")}</div>`;
+    metaHtml += `<div class="bubble-files">${meta.files.map((f) => `<span>${svgIcon("paperclip")} ${esc(f)}</span>`).join("")}</div>`;
   }
   let foot = "";
   if (meta.subAgents && meta.subAgents.length) {
     foot = `<div class="msg-meta">${meta.intent ? `<span class="chip-intent">${esc(meta.intent)}</span>` : ""}${meta.subAgents.map((a) => `<span class="chip-agent">${esc(prettyAgent(a))}</span>`).join("")}</div>`;
   }
   wrap.innerHTML = `<div class="bubble ${meta.error ? "bubble-error" : ""}">${text ? esc(text) : "<i>(file only)</i>"}${metaHtml}</div>${foot}`;
+  // Interactive disambiguation chips (pendingChoices from the agent): one row per
+  // ambiguous name; clicking a chip sends its sendText as the next chat turn.
+  if (meta.choiceGroups && meta.choiceGroups.length) {
+    meta.choiceGroups.forEach((g) => {
+      const row = document.createElement("div");
+      row.className = "choice-row";
+      if (g.name) {
+        const cap = document.createElement("span");
+        cap.className = "choice-cap";
+        cap.textContent = `“${g.name}”:`;
+        row.appendChild(cap);
+      }
+      const addChip = (label, sendText, extraClass) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "choice-chip" + (extraClass ? " " + extraClass : "");
+        btn.textContent = label;
+        btn.addEventListener("click", () => {
+          if (agent.busy || row.classList.contains("choice-done")) return;
+          row.classList.add("choice-done");
+          btn.classList.add("choice-picked");
+          $("agentInput").value = sendText;
+          sendAgent();
+        });
+        row.appendChild(btn);
+      };
+      (g.options || []).forEach((opt) => {
+        const isSkip = !opt.staffId && /^skip$/i.test(opt.label || "");
+        addChip(opt.label || opt.sendText || "?", opt.sendText || opt.label || "", isSkip ? "choice-skip" : "");
+      });
+      // Opt-out fallback for older backends whose options don't include a Skip.
+      if (!(g.options || []).some((opt) => /^skip$/i.test(opt.label || ""))) {
+        addChip("Skip", `Don't add ${g.name || "that person"} to this trip.`, "choice-skip");
+      }
+      wrap.appendChild(row);
+    });
+  }
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
 }
@@ -1129,7 +1502,7 @@ function renderDraft() {
 
   if (!d || !ti) {
     agent.editing = false;
-    body.innerHTML = `<div class="draft-empty-wrap"><span class="ico">📝</span><p>No draft yet — send a message and the plan will build here.</p></div>`;
+    body.innerHTML = `<div class="draft-empty-wrap">${svgIcon("file-text", "ico-lg")}<p>No draft yet — send a message and the plan will build here.</p></div>`;
     btn.disabled = true; btn.classList.remove("hidden"); saveBtn.classList.add("hidden"); hint.textContent = "";
     return;
   }
@@ -1157,12 +1530,12 @@ function renderDraft() {
   let html = `<div class="dp-hero">
       <div class="h-title">${ti.Title ? esc(ti.Title) : '<span class="ph">Untitled trip</span>'}</div>
       <div class="h-route">
-        <span class="pin">📍</span>
+        <span class="pin">${svgIcon("pin")}</span>
         <span>${ti.Destination ? esc(ti.Destination) : '<span class="ph">—</span>'}</span>
       </div>
       <div class="h-meta">
         ${ti.Purpose ? `<span class="tagpill accent">${esc(ti.Purpose)}</span>` : ""}
-        ${period ? `<span class="tagpill">🗓 ${esc(period)}</span>` : ""}
+        ${period ? `<span class="tagpill">${svgIcon("calendar")} ${esc(period)}</span>` : ""}
         ${classification ? `<span class="tagpill">${esc(classification)}</span>` : ""}
       </div>
     </div>`;
@@ -1203,12 +1576,16 @@ function renderDraft() {
   const atts = d.Attachemnt || d.Attachment || [];
   if (atts.length) {
     html += `<div class="dp-block"><div class="dp-block-h">Attachments <span class="sec-count">${atts.length}</span></div>
-      ${atts.map((a) => `<div class="att-mini">📎 ${esc(a.FileID || a.URL || a.Type || "file")}</div>`).join("")}</div>`;
+      ${atts.map((a) => {
+        if (a.FileID) return `<div class="att-mini">${svgIcon("paperclip")} ${receiptLink(a.FileID, a.Filename || a.FileID)}</div>`;
+        if (a.URL) return `<div class="att-mini">${svgIcon("link")} <a href="${esc(a.URL)}" target="_blank" rel="noopener">${esc(a.URL)}</a></div>`;
+        return `<div class="att-mini">${svgIcon("paperclip")} ${esc(a.Type || "file")}</div>`;
+      }).join("")}</div>`;
   }
 
   // Missing fields
   if (missing.length) {
-    html += `<div class="draft-missing"><strong>⚠ Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
+    html += `<div class="draft-missing"><strong>${svgIcon("alert")} Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
   }
   body.innerHTML = html;
 
@@ -1261,12 +1638,12 @@ async function createPlanFromDraft() {
       body: JSON.stringify(payload),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     toast("Plan created from the agent draft.", "ok");
     closeAgent();
     loadPlans();
   } catch (e) {
-    toast("Create failed: " + e.message, "err");
+    toast("Create failed: " + friendlyError(e.message), "err");
     btn.disabled = false;
   } finally {
     btn.textContent = "Create this plan";
@@ -1289,12 +1666,12 @@ async function openDetail(id) {
   try {
     const res = await fetch(`${API}/${encodeURIComponent(id)}`);
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const plan = (json && (json.data || json.payload)) || null;
     if (!plan) throw new Error("Plan not found.");
     renderDetail(plan);
   } catch (e) {
-    $("detailBody").innerHTML = `<div class="draft-empty-wrap"><span class="ico">⚠️</span><p>${esc(e.message)}</p></div>`;
+    $("detailBody").innerHTML = `<div class="draft-empty-wrap">${svgIcon("alert", "ico-lg")}<p>${esc(friendlyError(e.message))}</p></div>`;
   }
 }
 function closeDetail() { $("detailOverlay").classList.add("hidden"); currentDetailId = null; }
@@ -1312,12 +1689,12 @@ function renderDetail(p) {
 
   let html = `<div class="dp-hero">
       <div class="h-title">${p.title ? esc(p.title) : '<span class="ph">Untitled trip</span>'}</div>
-      <div class="h-route"><span class="pin">📍</span><span>${p.destination ? esc(p.destination) : '<span class="ph">—</span>'}</span></div>
+      <div class="h-route"><span class="pin">${svgIcon("pin")}</span><span>${p.destination ? esc(p.destination) : '<span class="ph">—</span>'}</span></div>
       <div class="h-meta">
         ${p.purpose ? `<span class="tagpill accent">${esc(p.purpose)}</span>` : ""}
-        ${period ? `<span class="tagpill">🗓 ${esc(period)}</span>` : ""}
+        ${period ? `<span class="tagpill">${svgIcon("calendar")} ${esc(period)}</span>` : ""}
         ${p.businessTripClassification ? `<span class="tagpill">${esc(p.businessTripClassification)}</span>` : ""}
-        ${p.agentSessionId ? `<span class="tagpill agent">✨ via Agent</span>` : `<span class="tagpill">✍ Manual</span>`}
+        ${p.agentSessionId ? `<span class="tagpill agent">${svgIcon("sparkles")} via Agent</span>` : `<span class="tagpill">✍ Manual</span>`}
       </div>
     </div>`;
 
@@ -1356,10 +1733,9 @@ function renderDetail(p) {
   if (atts.length) {
     html += `<div class="dp-block"><div class="dp-block-h">Attachments <span class="sec-count">${atts.length}</span></div>
       ${atts.map((a) => {
-        const label = a.url || a.fileId || a.type || "file";
-        return a.url
-          ? `<div class="att-mini">🔗 <a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.url)}</a></div>`
-          : `<div class="att-mini">📎 ${esc(label)}</div>`;
+        if (a.url) return `<div class="att-mini">${svgIcon("link")} <a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.url)}</a></div>`;
+        if (a.fileId) return `<div class="att-mini">${svgIcon("paperclip")} ${receiptLink(a.fileId, a.filename || a.fileId)}</div>`;
+        return `<div class="att-mini">${svgIcon("paperclip")} ${esc(a.type || "file")}</div>`;
       }).join("")}</div>`;
   }
 
@@ -1378,12 +1754,12 @@ async function deleteCurrentPlan() {
   try {
     const res = await fetch(`${API}/${encodeURIComponent(currentDetailId)}`, { method: "DELETE" });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     toast("Plan deleted.", "ok");
     closeDetail();
     loadPlans();
   } catch (e) {
-    toast("Delete failed: " + e.message, "err");
+    toast("Delete failed: " + friendlyError(e.message), "err");
     btn.disabled = false;
   } finally {
     btn.textContent = "Delete plan";
@@ -1404,17 +1780,17 @@ async function loadSessions() {
   try {
     const res = await fetch(`${AGENT_API}/sessions?corpNo=${encodeURIComponent(CORP_NO)}`);
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     renderResumeList((json && (json.data || json.payload)) || []);
   } catch (e) {
-    $("resumeList").innerHTML = `<div class="draft-empty-wrap"><span class="ico">⚠️</span><p>${esc(e.message)}</p></div>`;
+    $("resumeList").innerHTML = `<div class="draft-empty-wrap">${svgIcon("alert", "ico-lg")}<p>${esc(friendlyError(e.message))}</p></div>`;
   }
 }
 function renderResumeList(sessions) {
   const box = $("resumeList");
   const trip = sessions.filter((s) => (s.agentType || "") === "TRIP_PLAN");
   if (!trip.length) {
-    box.innerHTML = `<div class="draft-empty-wrap"><span class="ico">🗂</span><p>No saved sessions yet. Start one with “Create with Agent”.</p></div>`;
+    box.innerHTML = `<div class="draft-empty-wrap">${svgIcon("folder", "ico-lg")}<p>No saved sessions yet. Start one with “Create with Agent”.</p></div>`;
     return;
   }
   trip.sort((a, b) => String(b.updatedDate || "").localeCompare(String(a.updatedDate || "")));
@@ -1438,13 +1814,13 @@ async function loadSession(id) {
   try {
     const res = await fetch(`${AGENT_API}/sessions/${encodeURIComponent(id)}`);
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const detail = (json && (json.data || json.payload)) || null;
     if (!detail) throw new Error("Session not found.");
     closeResume();
     openAgentResumed(detail);
   } catch (e) {
-    toast("Could not load session: " + e.message, "err");
+    toast("Could not load session: " + friendlyError(e.message), "err");
   }
 }
 
@@ -1556,7 +1932,7 @@ async function saveDraftEdit() {
       body: JSON.stringify(draft),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
     agent.draft = data.draftJson || draft;
     agent.status = data.status || agent.status;
@@ -1564,7 +1940,7 @@ async function saveDraftEdit() {
     renderDraft();
     toast("Draft checkpoint saved.", "ok");
   } catch (e) {
-    toast("Save failed: " + e.message, "err");
+    toast("Save failed: " + friendlyError(e.message), "err");
   } finally {
     btn.disabled = false; btn.textContent = "Save draft";
   }
@@ -1576,16 +1952,18 @@ async function saveDraftEdit() {
 function showTab(name) {
   currentTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.getAttribute("data-tab") === name));
-  ["plan", "approve", "report"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
+  ["plan", "approve", "report", "audit"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
   animatePane(name);
   if (name === "approve") loadApprovals();
   if (name === "report") loadReports();
+  if (name === "audit") loadAudits();
 }
 
 /* Re-fetch whichever tab is visible (used after the corp number changes). */
 function reloadActiveTab() {
   if (currentTab === "approve") loadApprovals();
   else if (currentTab === "report") loadReports();
+  else if (currentTab === "audit") loadAudits();
   else loadPlans();
 }
 
@@ -1606,7 +1984,7 @@ async function loadApprovals() {
     renderApprovals();
     animateRowsIn("approveBody");
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="8" class="empty-row">Failed to load: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = emptyRow(8, { icon: "alert", title: "Couldn’t load plans", sub: esc(friendlyError(e.message)) });
   } finally {
     endLoad();
   }
@@ -1643,8 +2021,9 @@ function renderApprovals() {
   $("approveTotal").textContent = approveCache.length;
   const body = $("approveBody");
   if (!plans.length) {
-    const msg = approveCache.length ? "No plans match this filter." : "No plans to review.";
-    body.innerHTML = `<tr><td colspan="8" class="empty-row">${msg}</td></tr>`;
+    body.innerHTML = approveCache.length
+      ? emptyRow(8, { icon: "search", title: "No plans match this filter", sub: "Try a different search or status chip." })
+      : emptyRow(8, { icon: "check-circle", title: "No plans to review", sub: "Requests appear here once a plan is submitted." });
     return;
   }
   body.innerHTML = plans.map((p, i) => {
@@ -1655,7 +2034,7 @@ function renderApprovals() {
     const docNo = `2026-출장계획서-${shortNo(p.id, i + 1)}`;
     const isDone = s === "Approval complete";
     const isCancel = s === "Business trip cancellation";
-    return `<tr>
+    return `<tr class="row-click" data-plan-row="${esc(p.id)}">
       <td class="c-no">${i + 1}</td>
       <td title="${esc(docNo)}"><span class="doc-no">${esc(docNo)}</span></td>
       <td class="c-title" title="${esc(p.title || "")}">${esc(p.title || "—")}</td>
@@ -1664,7 +2043,6 @@ function renderApprovals() {
       <td class="c-period">${esc(period)}</td>
       <td><span class="appr-pill ${approvalClass(s)}">${esc(s)}</span></td>
       <td><div class="row-actions">
-        <button class="btn-xs btn-view" data-view="${esc(p.id)}">View</button>
         ${isDone ? "" : `<button class="btn-xs btn-approve" data-approve="${esc(p.id)}">Approve</button>`}
         ${isCancel ? "" : `<button class="btn-xs btn-cancel" data-cancel="${esc(p.id)}">Cancel</button>`}
       </div></td>
@@ -1679,14 +2057,14 @@ async function setApproval(id, status) {
       body: JSON.stringify({ id, approvalStatus: status }),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const data = json && (json.data || json.payload);
     const idx = approveCache.findIndex((p) => p.id === id);
     if (idx >= 0) approveCache[idx] = data || { ...approveCache[idx], approvalStatus: status };
     renderApprovals();
     toast(status === "Approval complete" ? "Plan approved." : status === "Business trip cancellation" ? "Plan cancelled." : "Status updated.", "ok");
   } catch (e) {
-    toast("Update failed: " + e.message, "err");
+    toast("Update failed: " + friendlyError(e.message), "err");
   }
 }
 
@@ -1713,11 +2091,11 @@ async function loadReportPlanList() {
             <div class="mi-title">${esc(p.title || "Untitled")}</div>
             <div class="mi-sub">${esc(p.destination || "—")} · ${esc(formatPeriod(p))}${approved ? ' · <span style="color:#157a47">approved</span>' : ""}</div>
           </div>
-          <span class="mi-go">📝 Report →</span>
+          <span class="mi-go">${svgIcon("file-text")} Report →</span>
         </button>`;
     }).join("");
   } catch (e) {
-    box.innerHTML = `<div class="muted-pad">Failed: ${esc(e.message)}</div>`;
+    box.innerHTML = `<div class="muted-pad">Failed: ${esc(friendlyError(e.message))}</div>`;
   }
 }
 async function loadReportSessions() {
@@ -1740,7 +2118,7 @@ async function loadReportSessions() {
         </button>`;
     }).join("");
   } catch (e) {
-    box.innerHTML = `<div class="muted-pad">Failed: ${esc(e.message)}</div>`;
+    box.innerHTML = `<div class="muted-pad">Failed: ${esc(friendlyError(e.message))}</div>`;
   }
 }
 async function loadReportSession(id) {
@@ -1748,10 +2126,10 @@ async function loadReportSession(id) {
     const res = await fetch(`${AGENT_API}/agents/expense-report/sessions/${encodeURIComponent(id)}`);
     const json = await res.json();
     const d = json && (json.data || json.payload);
-    if (!res.ok || !d) throw new Error((json && (json.message || json.detail)) || "Report not found.");
+    if (!res.ok || !d) throw apiError(json, res, "Report not found.");
     openAgentResumed(d, "report");
   } catch (e) {
-    toast("Could not load report: " + e.message, "err");
+    toast("Could not load report: " + friendlyError(e.message), "err");
   }
 }
 
@@ -1782,7 +2160,7 @@ function txtCell(v) { return (v === null || v === undefined || v === "") ? "—"
 function renderReportBody(d, hint, btn) {
   const body = $("draftBody");
   if (!d) {
-    body.innerHTML = `<div class="draft-empty-wrap"><span class="ico">🧾</span><p>No report yet — describe an expense or attach a receipt.</p></div>`;
+    body.innerHTML = `<div class="draft-empty-wrap">${svgIcon("receipt", "ico-lg")}<p>No report yet — describe an expense or attach a receipt.</p></div>`;
     btn.disabled = true; hint.textContent = "";
     return;
   }
@@ -1791,8 +2169,8 @@ function renderReportBody(d, hint, btn) {
 
   let head = `<div class="dp-hero">
       <div class="h-title">${ti.Title ? esc(ti.Title) : '<span class="ph">Trip report</span>'}</div>
-      <div class="h-route"><span class="pin">📍</span><span>${ti.Destination ? esc(ti.Destination) : "—"}</span></div>
-      <div class="h-meta">${ti.BusinessPeriod ? `<span class="tagpill">🗓 ${esc(ti.BusinessPeriod)}</span>` : ""}<span class="tagpill accent">Expense report</span></div>
+      <div class="h-route"><span class="pin">${svgIcon("pin")}</span><span>${ti.Destination ? esc(ti.Destination) : "—"}</span></div>
+      <div class="h-meta">${ti.BusinessPeriod ? `<span class="tagpill">${svgIcon("calendar")} ${esc(ti.BusinessPeriod)}</span>` : ""}<span class="tagpill accent">Expense report</span></div>
     </div>`;
 
   let grand = 0, count = 0, secHtml = "";
@@ -1814,7 +2192,7 @@ function renderReportBody(d, hint, btn) {
   html += secHtml || `<p class="muted-pad">No expense lines yet. Describe one in the chat.</p>`;
 
   const missing = d.missingFields || [];
-  if (missing.length) html += `<div class="draft-missing"><strong>⚠ Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
+  if (missing.length) html += `<div class="draft-missing"><strong>${svgIcon("alert")} Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
 
   body.innerHTML = html;
   btn.disabled = count === 0;
@@ -1840,13 +2218,13 @@ async function submitReport() {
       body: JSON.stringify(payload),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
-    toast(`Expense report submitted (${data.totalLines != null ? data.totalLines + " lines" : "ok"}).`, "ok");
+    toast(`Expense report submitted (${(data.costItems||data.lines) ? (data.costItems||data.lines).length + " lines" : "ok"}).`, "ok");
     closeAgent();
     loadReportTab();
   } catch (e) {
-    toast("Submit failed: " + e.message, "err");
+    toast("Submit failed: " + friendlyError(e.message), "err");
     btn.disabled = false;
   } finally {
     btn.textContent = "Submit report";
@@ -1866,67 +2244,79 @@ const SECTIONS = [
   { key: "TransportationInformation", label: "Transportation", ko: "교통비" },
   { key: "Etc", label: "Etc", ko: "기타" },
 ];
-const rc = { planId: null, plan: null, sessionId: null, draft: null };
+const rc = { planId: null, plan: null, sessionId: null, draft: null, uploading: false };
 
-/* ---- Posted reports table: GET /api/v1/reports returns flat expense LINES;
-        we group them into one row per report (session, or trip plan as fallback). ---- */
-let reportsCache = [];   // grouped: [{ key, sessionId, tripPlanId, title, lines, total, date }]
+/* ---- Reports table: GET /api/v1/reports returns one report per row
+        (header + its lines[]). Each row is keyed by the report id. ---- */
+let reportsCache = [];   // [{ key (=report id), tripPlanId, sessionId, department, approvalStatus, lineCount, total, date, lines, plan, title }]
 
 function reportLineAmount(line) {
   const e = line.costExpense || line.transportationExpense || {};
-  return num(e.amountUsed);
+  return num(e.applicationAmount ?? e.amountUsed);
 }
 function reportLineDate(line) {
   const t = line.transportationExpense, c = line.costExpense;
-  return (t && t.usageDate) || (c && (c.proofDate || c.startDate)) || "";
+  return (t && (t.usageDate || t.evidenceDate)) || (c && (c.evidenceDate || c.proofDate || c.startDate)) || "";
 }
 
 async function loadReports() {
   const body = $("reportBody");
-  body.innerHTML = loadingRow(13);
+  body.innerHTML = loadingRow(14);
   beginLoad();
   try {
-    // Lines from the reports API, plus plans (to resolve each report's trip title).
-    const [rRes, pRes] = await Promise.all([
+    // Reports, plus plans (trip title/traveler) and audits (latest R10 verdict per plan).
+    const [rRes, pRes, aRes] = await Promise.all([
       fetch(`${EXPENSE_API}?corpNo=${encodeURIComponent(CORP_NO)}`),
       fetch(`${API}?corpNo=${encodeURIComponent(CORP_NO)}`),
+      fetch(`${RULE_ENGINE_API}/audits?corpNo=${encodeURIComponent(CORP_NO)}`).catch(() => null),
     ]);
     const rJson = await rRes.json();
     if (!rRes.ok) throw new Error((rJson && (rJson.message || rJson.detail)) || `HTTP ${rRes.status}`);
     const pJson = await pRes.json().catch(() => ({}));
-    const lines = (rJson && (rJson.data || rJson.payload)) || [];
+    const reports = (rJson && (rJson.data || rJson.payload)) || [];
     const plans = (pJson && (pJson.data || pJson.payload)) || [];
     const planMap = {};
     plans.forEach((p) => { planMap[p.id] = p; });
-
-    const groups = {};
-    lines.forEach((ln) => {
-      const key = ln.agentSessionId || ln.tripPlanId || ln.id;
-      if (!groups[key]) {
-        groups[key] = { key, sessionId: ln.agentSessionId || null, tripPlanId: ln.tripPlanId || null, approvalStatus: null, lines: 0, total: 0, date: "", items: [], itemIds: [] };
+    // Latest audit per trip plan (audit display is best-effort — never fails the table).
+    const auditByPlan = {};
+    if (aRes) {
+      const aJson = await aRes.json().catch(() => ({}));
+      if (aRes.ok) {
+        const audits = ((aJson && (aJson.payload || aJson.data)) || []).map(normalizeAudit).filter(Boolean);
+        audits.sort((a, b) => String(b.createdDate || "").localeCompare(String(a.createdDate || "")));
+        audits.forEach((a) => { if (a.tripPlanId && !auditByPlan[a.tripPlanId]) auditByPlan[a.tripPlanId] = a; });
       }
-      const g = groups[key];
-      g.lines += 1;
-      g.total += reportLineAmount(ln);
-      if (ln.approvalStatus) g.approvalStatus = ln.approvalStatus;
-      g.items.push(ln);
-      if (ln.id) g.itemIds.push(ln.id);
-      const d = reportLineDate(ln);
-      if (d && d > g.date) g.date = d;
-      if (!g.tripPlanId && ln.tripPlanId) g.tripPlanId = ln.tripPlanId;
-    });
-    reportsCache = Object.values(groups).map((g) => {
-      const plan = g.tripPlanId ? planMap[g.tripPlanId] : null;
-      g.plan = plan;
-      g.title = (plan && plan.title) || (g.tripPlanId ? "(trip plan removed)" : "Untitled report");
-      return g;
+    }
+
+    reportsCache = reports.map((rep) => {
+      const lines = rep.costItems || rep.lines || [];
+      let total = 0, date = "";
+      lines.forEach((ln) => {
+        total += reportLineAmount(ln);
+        const d = reportLineDate(ln);
+        if (d && d > date) date = d;
+      });
+      const plan = rep.tripPlanId ? planMap[rep.tripPlanId] : null;
+      return {
+        key: rep.id,
+        audit: rep.tripPlanId ? auditByPlan[rep.tripPlanId] || null : null,
+        tripPlanId: rep.tripPlanId || null,
+        sessionId: rep.agentSessionId || null,
+        department: rep.department || "",
+        approvalNumber: rep.approvalNumber || "",
+        approvalStatus: rep.approvalStatus || "Request for approval",
+        createdAt: rep.createdAt || "",
+        lineCount: lines.length,
+        total, date, lines, plan,
+        title: (plan && plan.title) || (rep.tripPlanId ? "(trip plan removed)" : "Untitled report"),
+      };
     });
     renderReports();
     animateRowsIn("reportBody");
   } catch (e) {
     reportsCache = [];
     $("reportCount").textContent = 0; $("reportShown").textContent = 0; $("reportTotal").textContent = 0;
-    body.innerHTML = `<tr><td colspan="13" class="empty-row">Failed to load: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = emptyRow(14, { icon: "alert", title: "Couldn’t load reports", sub: esc(friendlyError(e.message)) });
   } finally {
     endLoad();
   }
@@ -1952,7 +2342,8 @@ function renderReports() {
     const aprStatus = g.approvalStatus || "Request for approval";
     const aprLabel = aprStatus === "Approval complete" ? "Approved"
       : aprStatus === "Business trip cancellation" ? "Cancelled" : "Request for approval";
-    const hay = [g.title, p.purpose, p.destination, t0.name, t0.department, aprStatus, aprLabel, "2026-지출보고서"]
+    const hay = [g.title, p.purpose, p.destination, t0.name, t0.department, aprStatus, aprLabel, "2026-지출보고서",
+      g.audit && ("audit " + g.audit.status + " " + g.audit.complianceStatus)]
       .filter(Boolean).join(" ").toLowerCase();
     return hay.includes(q);
   });
@@ -1962,8 +2353,10 @@ function renderReports() {
   $("reportTotal").textContent = reportsCache.length;
   const body = $("reportBody");
   if (!list.length) {
-    const msg = reportsCache.length ? "No reports match this search." : "No reports yet — click “Create Report”.";
-    body.innerHTML = `<tr><td colspan="13" class="empty-row">${msg}</td></tr>`;
+    body.innerHTML = reportsCache.length
+      ? emptyRow(14, { icon: "search", title: "No reports match this search", sub: "Try different keywords." })
+      : emptyRow(14, { icon: "receipt", title: "No expense reports yet", sub: "Import an approved plan and attach receipts to settle a trip.",
+          action: `<button class="btn btn-primary btn-sm" onclick="openReportCreate()">+ Create Report</button>` });
     updateReportSelBar();
     return;
   }
@@ -1973,14 +2366,19 @@ function renderReports() {
     const t0 = (p.travelers && p.travelers[0]) || {};
     const extra = p.travelers && p.travelers.length > 1 ? ` 외 ${p.travelers.length - 1}명` : "";
     const traveler = (t0.name || "—") + extra;
-    const dept = t0.department || "—";
+    const dept = g.department || t0.department || "—";
     const purpose = p.purpose ? shortPurpose(p.purpose) : "—";
     const period = (p.businessStartDate || p.businessPeriod) ? formatPeriod(p) : (g.date || "—");
     const aprStatus = g.approvalStatus || "Request for approval";
     const aprLabel = aprStatus === "Approval complete" ? "Approved"
       : aprStatus === "Business trip cancellation" ? "Cancelled" : "Request for approval";
+    const a = g.audit;
+    const auditCell = a
+      ? `<button class="audit-pill pill-btn ${resultClass(a.status)}" data-open-audit="${esc(a.auditId)}"
+           title="${esc(a.summary || "Open the latest R10 audit")}">${esc(a.status === "Pass" ? "Passed" : a.status)}</button>`
+      : `<span class="muted" title="No R10 audit has run for this trip plan yet">Not audited</span>`;
     return `<tr class="row-click" data-report-key="${esc(g.key)}">
-      <td class="c-check"><input type="checkbox" class="chk report-chk" data-ids="${esc((g.itemIds || []).join(","))}" data-title="${esc(g.title)}" aria-label="Select report" /></td>
+      <td class="c-check"><input type="checkbox" class="chk report-chk" data-id="${esc(g.key)}" data-title="${esc(g.title)}" aria-label="Select report" /></td>
       <td class="c-no">${i + 1}</td>
       <td title="${esc(doc)}"><span class="doc-no">${esc(doc)}</span></td>
       <td class="c-title" title="${esc(g.title)}">${esc(g.title)}</td>
@@ -1988,11 +2386,15 @@ function renderReports() {
       <td class="c-dept" title="${esc(dept)}">${esc(dept)}</td>
       <td>${purpose === "—" ? "—" : `<span class="purpose-tag" title="${esc(p.purpose || "")}">${esc(purpose)}</span>`}</td>
       <td class="c-period" title="${esc(p.businessPeriod || "")}">${esc(period)}</td>
-      <td>${g.lines}</td>
+      <td>${g.lineCount}</td>
       <td class="er-amt">${fmtMoney(g.total)}</td>
       <td><span class="appr-pill ${approvalClass(aprStatus)}">${esc(aprLabel)}</span></td>
+      <td>${auditCell}</td>
       <td class="c-period">${esc(g.date || "—")}</td>
-      <td><button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button></td>
+      <td><div class="row-actions">
+        <button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button>
+        ${g.tripPlanId ? `<button class="btn-xs" data-audit-plan="${esc(g.tripPlanId)}" title="Run R10 compliance audit">${svgIcon("shield")} Audit</button>` : ""}
+      </div></td>
     </tr>`;
   }).join("");
   updateReportSelBar();
@@ -2022,12 +2424,12 @@ function clearReportSelection() {
 }
 async function deleteSelectedReports() {
   const checks = Array.from(document.querySelectorAll(".report-chk")).filter((c) => c.checked);
-  const ids = checks.flatMap((c) => (c.getAttribute("data-ids") || "").split(",").filter(Boolean));
+  const ids = checks.map((c) => c.getAttribute("data-id")).filter(Boolean);
   if (!ids.length) return;
-  const label = checks.length === 1 ? `“${checks[0].getAttribute("data-title")}”` : `${checks.length} reports`;
+  const label = ids.length === 1 ? `“${checks[0].getAttribute("data-title")}”` : `${ids.length} reports`;
   const ok = await confirmDialog({
-    title: "Remove expense report" + (checks.length === 1 ? "" : "s"),
-    message: `Remove ${label}? This deletes ${ids.length} expense line${ids.length === 1 ? "" : "s"} and cannot be undone.`,
+    title: "Remove expense report" + (ids.length === 1 ? "" : "s"),
+    message: `Remove ${label}? This deletes the report${ids.length === 1 ? "" : "s"} and all expense lines, and cannot be undone.`,
     confirmText: "Remove",
   });
   if (!ok) return;
@@ -2041,15 +2443,15 @@ async function deleteSelectedReports() {
       body: JSON.stringify({ ids }),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const r = (json && (json.data || json.payload)) || {};
     const deleted = r.deleted != null ? r.deleted : ids.length;
-    toast(`Removed ${deleted} line${deleted === 1 ? "" : "s"}.`, "ok");
+    toast(`Removed ${deleted} report${deleted === 1 ? "" : "s"}.`, "ok");
     loadReports();
   } catch (e) {
-    toast("Remove failed: " + e.message, "err");
+    toast("Remove failed: " + friendlyError(e.message), "err");
   } finally {
-    btn.disabled = false; btn.textContent = "🗑 Remove";
+    btn.disabled = false; btn.innerHTML = svgIcon("trash") + " Remove";
     endLoad();
   }
 }
@@ -2078,14 +2480,14 @@ async function deleteCurrentReport() {
       });
     }
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     toast("Report deleted.", "ok");
     closeReportCreate();
     loadReports();
   } catch (e) {
-    toast("Delete failed: " + e.message, "err");
+    toast("Delete failed: " + friendlyError(e.message), "err");
   } finally {
-    btn.disabled = false; btn.textContent = "🗑 Delete";
+    btn.disabled = false; btn.innerHTML = svgIcon("trash") + " Delete";
     endLoad();
   }
 }
@@ -2108,28 +2510,32 @@ function openReportCreate() {
   $("rcTripInfo").classList.add("hidden"); $("rcTripInfo").innerHTML = "";
   $("rcReceiptHint").textContent = "Import a plan, then add receipts — the agent extracts expense lines from each PDF.";
   $("rcMsg").textContent = "";
+  rcProgressHide();
   renderRcSections();
   $("reportCreateOverlay").classList.remove("hidden");
 }
-function closeReportCreate() { $("reportCreateOverlay").classList.add("hidden"); }
+function closeReportCreate() { rcProgressHide(); $("reportCreateOverlay").classList.add("hidden"); }
 
 /* ---- View a posted report (read-only) in the same popup ----
    GET /api/v1/reports/{id} per line, then reconstruct the report's sections. */
-function lineToDetail(ln, i) {
+/* ctx = report-header fields shared by all lines: { department, approvalNumber } */
+function lineToDetail(ln, i, ctx) {
   const ce = ln.costExpense, te = ln.transportationExpense;
-  const dept = ln.department || "";
+  const dept = (ctx && ctx.department) || "";
+  const aprNo = (ctx && ctx.approvalNumber) || "";
   if (te) {
     return {
       "순번": i + 1, Type: "법인", Use: te.usePurpose || "", BudgetDept: dept,
-      AccountSubjects: te.account || "", EvidenceDate: te.usageDate || "",
-      "교통수단": te.transportationMethod || "", Grade: te.category || "",
+      AccountSubjects: te.account || "", EvidenceDate: te.evidenceDate || te.usageDate || "",
+      "교통수단": te.transportationMethod || "", Grade: te.grade || "",
       Origin: te.originLocation || "", Destination: te.destinationLocation || "",
       UsageDate: te.usageDate || "", "거래처": te.vendor || "",
-      "Supply price": te.supplyPrice, Tax: te.tax, AmountUsed: te.amountUsed,
-      PolicyAmount: te.regulatedAmount, ApplicationAmount: te.amountUsed,
-      RegulatedAmount: te.regulatedAmount,
-      ExcessReason: ln.excessReason || "", Description: ln.briefs || "",
-      Note: ln.note || "", TaxCode: te.taxCode || "", ApprovalNumber: ln.approvalNumber || "",
+      "Supply price": te.supplyPrice, Tax: te.tax,
+      AmountUsed: te.applicationAmount, ApplicationAmount: te.applicationAmount,
+      PolicyAmount: te.policyAmount, RegulatedAmount: te.policyAmount,
+      ExcessReason: te.excessReason || "", Description: te.description || "",
+      Note: te.note || "", TaxCode: te.taxCode || "", ApprovalNumber: aprNo,
+      FileID: ln.attachmentFileId || "",
     };
   }
   const c = ce || {};
@@ -2137,14 +2543,15 @@ function lineToDetail(ln, i) {
     "순번": i + 1, Type: "법인", Use: c.usePurpose || "", BudgetDept: dept,
     AccountSubjects: c.account || "", TaxCode: c.taxCode || "",
     StartDate: c.startDate || "", EndDate: c.endDate || "",
-    EvidenceDate: c.proofDate || "", UsageDate: c.proofDate || "", "거래처": "",
-    Description: c.description || "", "Supply price": c.amountUsed, Tax: null,
-    AmountUsed: c.amountUsed, PolicyAmount: c.regulatedAmount, ApplicationAmount: c.amountUsed,
-    RegulatedAmount: c.regulatedAmount,
-    ExcessReason: ln.excessReason || "", Note: ln.note || "",
+    EvidenceDate: c.evidenceDate || "", UsageDate: c.evidenceDate || "", "거래처": "",
+    Description: c.description || "",
+    AmountUsed: c.applicationAmount, ApplicationAmount: c.applicationAmount,
+    PolicyAmount: c.policyAmount, RegulatedAmount: c.policyAmount,
+    ExcessReason: c.excessReason || "", Note: c.note || "", ApprovalNumber: aprNo,
+    FileID: ln.attachmentFileId || "",
   };
 }
-function buildReportDraftFromLines(lines, plan) {
+function buildReportDraftFromLines(lines, plan, ctx) {
   const draft = plan ? planToReportDraft(plan) : {
     TripInformation: {}, CostInformation: { Detail: [] },
     TransportationInformation: { Detail: [] }, Etc: { Detail: [] },
@@ -2157,7 +2564,7 @@ function buildReportDraftFromLines(lines, plan) {
     const sc = (ln.sectionCode || "COST").toUpperCase();
     const bucket = sc === "TRANSPORTATION" ? draft.TransportationInformation
       : sc === "ETC" ? draft.Etc : draft.CostInformation;
-    bucket.Detail.push(lineToDetail(ln, ci[sc] !== undefined ? ci[sc]++ : 0));
+    bucket.Detail.push(lineToDetail(ln, ci[sc] !== undefined ? ci[sc]++ : 0, ctx));
   });
   return draft;
 }
@@ -2168,26 +2575,22 @@ async function openReportDetail(key) {
   setReportModalMode(true);
   $("rcMsg").textContent = "Loading report…";
   rc.sessionId = null; rc.planId = g.tripPlanId || null; rc.plan = g.plan || null;
-  rc.detailIds = (g.itemIds || []).slice();
+  rc.detailIds = [g.key];   // the report id (for delete)
   $("rcPlanLabel").innerHTML = `<b>${esc(g.title)}</b>${g.tripPlanId ? ` <span class="muted">(${esc(String(g.tripPlanId).slice(0, 8))})</span>` : ""}`;
   try {
-    // Fetch each line fresh via GET /api/v1/reports/{id}; fall back to cached items.
-    let lines = g.items || [];
-    if (g.itemIds && g.itemIds.length) {
-      const fetched = await Promise.all(g.itemIds.map((id) =>
-        fetch(`${EXPENSE_API}/${encodeURIComponent(id)}`)
-          .then((r) => r.json()).then((j) => (j && (j.data || j.payload)) || null)
-          .catch(() => null)
-      ));
-      const ok = fetched.filter(Boolean);
-      if (ok.length) lines = ok;
-    }
-    rc.draft = buildReportDraftFromLines(lines, g.plan);
+    // Fetch the full report fresh via GET /api/v1/reports/{id}; fall back to the cached row.
+    let rep = null;
+    const res = await fetch(`${EXPENSE_API}/${encodeURIComponent(g.key)}`);
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) rep = (json && (json.data || json.payload)) || null;
+    const lines = (rep && (rep.costItems || rep.lines)) || g.lines || [];
+    const ctx = { department: (rep && rep.department) || g.department, approvalNumber: (rep && rep.approvalNumber) || g.approvalNumber };
+    rc.draft = buildReportDraftFromLines(lines, g.plan, ctx);
     renderRcTrip(rc.draft.TripInformation || {});
     renderRcSections();
     $("rcMsg").textContent = "";
   } catch (e) {
-    $("rcMsg").textContent = "Load failed: " + e.message;
+    $("rcMsg").textContent = "Load failed: " + friendlyError(e.message);
   }
 }
 
@@ -2198,7 +2601,7 @@ async function openReportFromSession(id) {
     const res = await fetch(`${REPORTS_API}/sessions/${encodeURIComponent(id)}`);
     const json = await res.json();
     const d = json && (json.data || json.payload);
-    if (!res.ok || !d) throw new Error((json && (json.message || json.detail)) || "Report not found.");
+    if (!res.ok || !d) throw apiError(json, res, "Report not found.");
     rc.sessionId = d.sessionId; rc.draft = d.draftJson || {}; rc.planId = rc.draft.TripPlanId || null;
     $("rcPlanLabel").innerHTML = rc.planId
       ? `<b>${esc((rc.draft.TripInformation || {}).Title || "Imported plan")}</b> <span class="muted">(${esc(String(rc.planId).slice(0, 8))})</span>`
@@ -2209,7 +2612,7 @@ async function openReportFromSession(id) {
     $("rcReceiptHint").textContent = "Add more receipts, or review and complete.";
     $("rcMsg").textContent = "";
   } catch (e) {
-    $("rcMsg").textContent = "Load failed: " + e.message;
+    $("rcMsg").textContent = "Load failed: " + friendlyError(e.message);
   }
 }
 
@@ -2231,13 +2634,13 @@ async function openPlanPicker() {
     const url = `${API}/by-approval-status?corpNo=${encodeURIComponent(CORP_NO)}&approvalStatus=${encodeURIComponent("Approval complete")}`;
     const res = await fetch(url);
     const json = await res.json();
-    if (!res.ok) throw new Error((json && (json.message || json.detail)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     pickerCache = (json && (json.data || json.payload)) || [];
     pickerCache.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     renderPlanPicker();
   } catch (e) {
     pickerCache = [];
-    $("planPickerList").innerHTML = `<tr><td colspan="8" class="empty-row">Failed: ${esc(e.message)}</td></tr>`;
+    $("planPickerList").innerHTML = emptyRow(8, { icon: "alert", title: "Couldn’t load approved plans", sub: esc(friendlyError(e.message)) });
   } finally {
     endLoad();
   }
@@ -2249,10 +2652,9 @@ function renderPlanPicker() {
   $("planPickerCount").innerHTML = `<strong>${list.length}</strong> approved plan${list.length === 1 ? "" : "s"}`;
   const body = $("planPickerList");
   if (!list.length) {
-    const msg = pickerCache.length
-      ? "No plans match this search."
-      : "No approved plans yet. Approve a plan in the “Approve Plan” tab first.";
-    body.innerHTML = `<tr><td colspan="8" class="empty-row">${msg}</td></tr>`;
+    body.innerHTML = pickerCache.length
+      ? emptyRow(8, { icon: "search", title: "No plans match this search", sub: "Try different keywords." })
+      : emptyRow(8, { icon: "check-circle", title: "No approved plans yet", sub: "Approve a plan in the “Approve Plan” tab first." });
     return;
   }
   body.innerHTML = list.map((p, i) => {
@@ -2299,7 +2701,7 @@ async function importPlan(id) {
     const res = await fetch(`${API}/${encodeURIComponent(id)}`);
     const json = await res.json();
     const p = json && (json.data || json.payload);
-    if (!res.ok || !p) throw new Error((json && (json.message || json.detail)) || "Plan not found.");
+    if (!res.ok || !p) throw apiError(json, res, "Plan not found.");
     rc.planId = id; rc.plan = p; rc.sessionId = null;
     rc.draft = planToReportDraft(p);
     $("rcPlanLabel").innerHTML = `<b>${esc(p.title || "Plan")}</b> <span class="muted">(${esc(String(id).slice(0, 8))})</span>`;
@@ -2308,7 +2710,7 @@ async function importPlan(id) {
     renderRcSections();
     $("rcReceiptHint").textContent = "Now add receipts to populate the expense lines below.";
   } catch (e) {
-    toast("Import failed: " + e.message, "err");
+    toast("Import failed: " + friendlyError(e.message), "err");
   }
 }
 function clearReportPlan() {
@@ -2354,7 +2756,7 @@ function renderRcTrip(ti) {
 /* Product-style placeholder control for fields the demo has no data/API for
    (tax code, account subject, budget dept) — looks like the Bizplay "선택" select. */
 function selCell(ph, icon) {
-  const ic = icon === "search" ? "🔍" : "▾";
+  const ic = icon === "search" ? svgIcon("search", "ico-xs") : "▾";
   return `<span class="cell-sel"><span class="cell-sel-ph">${esc(ph)}</span><span class="cell-sel-ic">${ic}</span></span>`;
 }
 /* Column layouts mirroring the Bizplay product — different per section.
@@ -2377,6 +2779,7 @@ const RC_COLUMNS = {
     { h: "Excess Reason", w: 140, get: (it) => it.ExcessReason },
     { h: "Description", w: 180, get: (it) => it.Description },
     { h: "Note", w: 120, get: (it) => it.Note },
+    { h: "Evidence", w: 104, kind: "file", get: (it) => it.FileID || it.attachmentFileId || it.fileId },
   ],
   TransportationInformation: [
     { h: "Seq", w: 46, kind: "seq" },
@@ -2401,12 +2804,17 @@ const RC_COLUMNS = {
     { h: "Note", w: 120, get: (it) => it.Note },
     { h: "Tax Code", w: 120, kind: "sel", ph: "세금코드 선택", get: (it) => it.TaxCode },
     { h: "Approval No.", w: 130, get: (it) => it.ApprovalNumber },
+    { h: "Evidence", w: 104, kind: "file", get: (it) => it.FileID || it.attachmentFileId || it.fileId },
   ],
 };
 RC_COLUMNS.Etc = RC_COLUMNS.CostInformation;
 
 function rcCell(col, it, i) {
   if (col.kind === "seq") return `<td>${esc(String(lineSeq(it, i)))}</td>`;
+  if (col.kind === "file") {
+    const v = col.get ? col.get(it) : null;
+    return `<td>${v ? receiptLink(v, "PDF") : `<span class="muted">—</span>`}</td>`;
+  }
   if (col.kind === "sel") {
     const v = col.get ? col.get(it) : null;
     if (v) return `<td title="${esc(String(v))}">${txtCell(v)}</td>`;
@@ -2459,29 +2867,75 @@ function updateRcSubmitState() {
   [$("rcSubmitBtn")].forEach((b) => { if (b) b.disabled = lines === 0; });
 }
 
+/* ---- Receipt upload progress bar (Create Report modal) ----
+ * Upload is measured for real via XHR (0→35%); the agent-extraction phase has
+ * no progress events, so the bar crawls asymptotically toward 92% until the
+ * response lands, then snaps to 100%. */
+let rcCrawlTimer = null;
+function rcProgressSet(label, pct) {
+  const box = $("rcProgress");
+  box.classList.remove("hidden");
+  const v = Math.max(0, Math.min(100, pct));
+  $("rcProgressLabel").textContent = label;
+  $("rcProgressFill").style.width = v + "%";
+  $("rcProgressPct").textContent = Math.round(v) + "%";
+  box.setAttribute("aria-valuenow", String(Math.round(v)));
+}
+function rcProgressCrawl(label, from, to) {
+  clearInterval(rcCrawlTimer);
+  let cur = from;
+  rcProgressSet(label, cur);
+  rcCrawlTimer = setInterval(() => {
+    cur = Math.min(to, cur + Math.max(0.15, (to - cur) * 0.03));
+    rcProgressSet(label, cur);
+  }, 180);
+}
+function rcProgressFinish(label) {
+  clearInterval(rcCrawlTimer); rcCrawlTimer = null;
+  rcProgressSet(label || "Done", 100);
+  setTimeout(() => $("rcProgress").classList.add("hidden"), 700);
+}
+function rcProgressHide() {
+  clearInterval(rcCrawlTimer); rcCrawlTimer = null;
+  $("rcProgress").classList.add("hidden");
+}
+
 async function onReceiptFiles(ev) {
   const files = Array.from(ev.target.files || []);
   ev.target.value = "";
   if (!files.length) return;
   if (!rc.planId) { toast("Import a plan first.", "err"); return; }
-  $("rcMsg").textContent = "Uploading & extracting receipts… (this can take a moment)";
+  if (rc.uploading) { toast("Still processing the previous upload — one moment.", ""); return; }
+  rc.uploading = true;
+  const nm = files.length === 1 ? `“${files[0].name}”` : `${files.length} files`;
+  $("rcMsg").textContent = "";
+  rcProgressSet(`Uploading ${nm}…`, 2);
+  const busyBtns = [$("rcSaveBtn"), $("rcSubmitBtn")];
+  busyBtns.forEach((b) => (b.disabled = true));
   try {
-    const fileIds = (await uploadAgentFiles(files)).map((u) => u.fileId);
+    const uploaded = await uploadAgentFiles(files, (p) => rcProgressSet(`Uploading ${nm}…`, 2 + p * 33));
+    const fileIds = uploaded.map((u) => u.fileId);
+    rcProgressCrawl("Extracting expense lines with the agent… (this can take a moment)", 35, 92);
     const body = { corpNo: CORP_NO, fileIds };
     if (rc.sessionId) body.sessionId = rc.sessionId; else body.planId = rc.planId;
     const res = await fetch(REPORTS_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const d = (json && (json.data || json.payload)) || {};
     rc.sessionId = d.sessionId || rc.sessionId;
     rc.draft = d.draftJson || rc.draft;
     renderRcTrip((rc.draft && rc.draft.TripInformation) || {});
     renderRcSections();
-    $("rcMsg").textContent = "";
+    rcProgressFinish("Receipts processed");
     toast("Receipts processed.", "ok");
   } catch (e) {
-    $("rcMsg").textContent = "Receipt processing failed: " + e.message;
-    toast("Failed: " + e.message, "err");
+    rcProgressHide();
+    $("rcMsg").textContent = "Receipt processing failed: " + friendlyError(e.message);
+    toast("Failed: " + friendlyError(e.message), "err");
+  } finally {
+    rc.uploading = false;
+    busyBtns.forEach((b) => (b.disabled = false));
+    updateRcSubmitState();
   }
 }
 
@@ -2505,13 +2959,17 @@ async function submitReportCreate() {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json && (json.message || json.detail || json.title)) || `HTTP ${res.status}`);
+    if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
-    toast(`Expense report created (${data.totalLines != null ? data.totalLines + " lines" : "ok"}).`, "ok");
+    toast(`Expense report created (${(data.costItems||data.lines) ? (data.costItems||data.lines).length + " lines" : "ok"}).`, "ok");
     closeReportCreate();
     loadReports();
+    // After a report is created, automatically run the R10 requisition-mismatch audit
+    // against its trip plan and surface the result on the Audit tab.
+    const planId = data.tripPlanId || rc.planId;
+    if (planId) runR10Audit(planId, { switchTab: true, source: "auto" });
   } catch (e) {
-    $("rcMsg").textContent = "Submit failed: " + e.message;
+    $("rcMsg").textContent = "Submit failed: " + friendlyError(e.message);
   } finally {
     btns.forEach((b) => (b.disabled = false));
   }
@@ -2521,4 +2979,902 @@ function tempSaveReport() {
   toast(rc.sessionId ? "Saved — the report session auto-saves each upload." : "Nothing to save yet.", rc.sessionId ? "ok" : "");
 }
 
-document.addEventListener("DOMContentLoaded", init);
+/* ================================================================
+ *  TAB 4 — AUDIT  (rule engine v2, server-backed)
+ *    POST /api/v2/rule-engine/r10            run an audit
+ *    GET  /api/v2/rule-engine/audits?corpNo= list persisted audits
+ *    GET  /api/v2/rule-engine/audits/{id}    one persisted audit
+ * ================================================================ */
+const RULE_ENGINE_API = API_ORIGIN + "/api/v2/rule-engine";
+let auditsCache = [];          // newest-first list of normalized audits
+let auditFilter = "all";       // all | normal | suspicion
+
+/* The live R10 response and the persisted ComplianceAudit row have different
+ * shapes (auditId vs id, findings vs rulesJson; the row stores no ruleId /
+ * status / summary). Normalize both into one canonical audit object. */
+function normalizeAudit(raw) {
+  if (!raw) return null;
+  const findings = raw.findings || raw.rulesJson || [];
+  const up = (f) => (f.status || "").toUpperCase();
+  const fails = findings.filter((f) => up(f) === "FAIL").length;
+  const passes = findings.filter((f) => up(f) === "PASS").length;
+  return {
+    auditId: raw.auditId || raw.id,
+    corpNo: raw.corpNo || "",
+    tripPlanId: raw.tripPlanId || null,
+    reportId: raw.reportId || null,
+    ruleId: raw.ruleId || "R10",
+    ruleName: raw.ruleName || "Requisition Mismatch",
+    status: raw.status || (fails ? "Failed" : passes ? "Pass" : "SKIPPED"),
+    complianceStatus: raw.complianceStatus || "",
+    confidenceLevel: raw.confidenceLevel || "",
+    summary: raw.summary || (fails
+      ? `R10 found ${fails} mismatch dimension(s) between the trip plan and its expense lines.`
+      : "R10 found no mismatch between the trip plan and its expense lines."),
+    findings,
+    createdDate: raw.createdDate || "",
+  };
+}
+
+/* Run R10 for a trip plan. Returns the normalized audit (or null on failure). */
+async function runR10Audit(tripPlanId, opts = {}) {
+  if (!tripPlanId) { toast("No trip plan to audit.", "err"); return null; }
+  const { switchTab = false, source = "manual" } = opts;
+  beginLoad();
+  if (source === "auto") toast("Running R10 compliance audit…", "");
+  try {
+    const res = await fetch(`${RULE_ENGINE_API}/r10`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ corpNo: CORP_NO, tripPlanId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const payload = normalizeAudit((json && (json.payload || json.data)) || null);
+    if (!payload) throw new Error("Audit returned no result.");
+    // Keep the in-memory list fresh; the tab re-fetches from the server when shown.
+    auditsCache = [payload, ...auditsCache.filter((x) => x.auditId !== payload.auditId)];
+    const sus = payload.complianceStatus === "SUSPICION";
+    toast(`R10 ${sus ? "flagged a mismatch" : "passed"} — ${payload.status}.`, sus ? "err" : "ok");
+    if (switchTab) showTab("audit"); else if (currentTab === "audit") renderAudits();
+    return payload;
+  } catch (e) {
+    toast("Audit failed: " + friendlyError(e.message), "err");
+    return null;
+  } finally {
+    endLoad();
+  }
+}
+
+/* The Audit tab lists the persisted audits for the active corp. */
+async function loadAudits() {
+  const body = $("auditBody");
+  body.innerHTML = loadingRow(9);
+  beginLoad();
+  try {
+    const res = await fetch(`${RULE_ENGINE_API}/audits?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const list = (json && (json.payload || json.data)) || [];
+    auditsCache = list.map(normalizeAudit).filter(Boolean);
+    auditsCache.sort((a, b) => String(b.createdDate || "").localeCompare(String(a.createdDate || "")));
+    renderAudits();
+    animateRowsIn("auditBody");
+  } catch (e) {
+    auditsCache = [];
+    updateAuditChipCounts();
+    $("auditCount").textContent = 0; $("auditShown").textContent = 0; $("auditTotal").textContent = 0;
+    body.innerHTML = emptyRow(9, { icon: "alert", title: "Couldn’t load audits", sub: esc(friendlyError(e.message)) });
+  } finally {
+    endLoad();
+  }
+}
+
+function auditComplianceKey(a) {
+  return (a.complianceStatus || "").toUpperCase() === "SUSPICION" ? "suspicion" : "normal";
+}
+function resultClass(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "pass") return "audit-pass";
+  if (s === "failed" || s === "fail") return "audit-fail";
+  return "audit-skip";
+}
+function confidenceClass(c) {
+  const s = (c || "").toLowerCase();
+  if (s === "high") return "audit-conf-high";
+  if (s === "medium") return "audit-conf-medium";
+  if (s === "low") return "audit-conf-low";
+  return "audit-skip";
+}
+function shortDateTime(s) {
+  if (!s) return "—";
+  return String(s).replace("T", " ").slice(0, 16);
+}
+function planTitleFor(tripPlanId) {
+  if (!tripPlanId) return "—";
+  const p = (plansCache || []).find((x) => x.id === tripPlanId);
+  return (p && p.title) || ("…" + String(tripPlanId).slice(-8));
+}
+
+function updateAuditChipCounts() {
+  let norm = 0, sus = 0;
+  auditsCache.forEach((a) => { auditComplianceKey(a) === "suspicion" ? sus++ : norm++; });
+  $("cfAll").textContent = auditsCache.length;
+  $("cfNorm").textContent = norm;
+  $("cfSus").textContent = sus;
+}
+
+function renderAudits() {
+  updateAuditChipCounts();
+  const q = ($("auditSearch").value || "").trim().toLowerCase();
+  const list = auditsCache.filter((a) => {
+    if (auditFilter !== "all" && auditComplianceKey(a) !== auditFilter) return false;
+    if (!q) return true;
+    const hay = [a.auditId, a.tripPlanId, a.ruleId, a.ruleName, a.status, a.complianceStatus, a.confidenceLevel, a.summary, planTitleFor(a.tripPlanId)]
+      .filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+  $("auditCount").textContent = auditsCache.length;
+  $("auditShown").textContent = list.length;
+  $("auditTotal").textContent = auditsCache.length;
+  const body = $("auditBody");
+  if (!list.length) {
+    body.innerHTML = auditsCache.length
+      ? emptyRow(9, { icon: "search", title: "No audits match this filter", sub: "Try a different search or compliance chip." })
+      : emptyRow(9, { icon: "shield", title: "No audits yet", sub: "R10 runs automatically each time an expense report is created.",
+          action: `<button class="btn btn-primary btn-sm" onclick="showTab('report')">Go to Expense Report</button>` });
+    updateAuditSelBar();
+    return;
+  }
+  body.innerHTML = list.map((a, i) => {
+    const compKey = auditComplianceKey(a);
+    const compLabel = compKey === "suspicion" ? "Suspicion" : "Normal";
+    return `<tr class="row-click" data-audit-id="${esc(a.auditId)}">
+      <td class="c-check"><input type="checkbox" class="chk audit-chk" data-id="${esc(a.auditId)}" aria-label="Select audit" /></td>
+      <td class="c-no">${i + 1}</td>
+      <td class="c-title" title="${esc(a.tripPlanId || "")}">${esc(planTitleFor(a.tripPlanId))}</td>
+      <td><span class="purpose-tag" title="${esc(a.ruleName || "")}">${esc(a.ruleId || "R10")}</span></td>
+      <td><span class="audit-pill ${resultClass(a.status)}">${esc(a.status || "—")}</span></td>
+      <td><span class="audit-pill audit-${compKey}">${esc(compLabel)}</span></td>
+      <td><span class="audit-pill ${confidenceClass(a.confidenceLevel)}">${esc(a.confidenceLevel || "—")}</span></td>
+      <td class="audit-summary" title="${esc(a.summary || "")}">${esc(a.summary || "—")}</td>
+      <td class="c-period">${esc(shortDateTime(a.createdDate))}</td>
+    </tr>`;
+  }).join("");
+  updateAuditSelBar();
+}
+
+/* ---- audit selection + delete (DELETE /audits/batch and /audits/{id}) ---- */
+function updateAuditSelBar() {
+  const all = Array.from(document.querySelectorAll(".audit-chk"));
+  const checked = all.filter((c) => c.checked);
+  $("auditSelCount").textContent = checked.length;
+  $("auditSelBar").classList.toggle("hidden", checked.length === 0);
+  const head = $("auditSelectAll");
+  if (head) {
+    head.checked = all.length > 0 && checked.length === all.length;
+    head.indeterminate = checked.length > 0 && checked.length < all.length;
+  }
+}
+function toggleAuditSelectAll() {
+  const on = $("auditSelectAll").checked;
+  document.querySelectorAll(".audit-chk").forEach((c) => { c.checked = on; });
+  updateAuditSelBar();
+}
+function clearAuditSelection() {
+  document.querySelectorAll(".audit-chk").forEach((c) => { c.checked = false; });
+  const head = $("auditSelectAll"); if (head) { head.checked = false; head.indeterminate = false; }
+  updateAuditSelBar();
+}
+async function deleteSelectedAudits() {
+  const ids = Array.from(document.querySelectorAll(".audit-chk"))
+    .filter((c) => c.checked).map((c) => c.getAttribute("data-id")).filter(Boolean);
+  if (!ids.length) return;
+  const ok = await confirmDialog({
+    title: "Remove audit" + (ids.length === 1 ? "" : "s"),
+    message: `Remove ${ids.length === 1 ? "this audit" : ids.length + " audits"}? This deletes the persisted audit result${ids.length === 1 ? "" : "s"} and cannot be undone.`,
+    confirmText: "Remove",
+  });
+  if (!ok) return;
+  const btn = $("auditSelDelete");
+  btn.disabled = true; btn.textContent = "Removing…";
+  beginLoad();
+  try {
+    let deleted = ids.length;
+    if (ids.length === 1) {
+      const res = await fetch(`${RULE_ENGINE_API}/audits/${encodeURIComponent(ids[0])}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw apiError(json, res);
+    } else {
+      const res = await fetch(`${RULE_ENGINE_API}/audits/batch`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw apiError(json, res);
+      const r = (json && (json.payload || json.data)) || {};
+      if (r.deleted != null) deleted = r.deleted;
+    }
+    toast(`Removed ${deleted} audit${deleted === 1 ? "" : "s"}.`, "ok");
+    loadAudits();
+  } catch (e) {
+    toast("Remove failed: " + friendlyError(e.message), "err");
+  } finally {
+    btn.disabled = false; btn.innerHTML = svgIcon("trash") + " Remove";
+    endLoad();
+  }
+}
+
+/* ---- analyst override (PUT /audits/{id}) ---- */
+async function saveAuditOverride(auditId) {
+  const complianceStatus = $("aoCompliance").value;
+  const confidenceLevel = $("aoConfidence").value;
+  const btn = $("aoSaveBtn");
+  btn.disabled = true; btn.textContent = "Saving…";
+  beginLoad();
+  try {
+    const res = await fetch(`${RULE_ENGINE_API}/audits/${encodeURIComponent(auditId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ complianceStatus, confidenceLevel }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const updated = normalizeAudit((json && (json.payload || json.data)) || null);
+    if (updated) {
+      auditsCache = auditsCache.map((x) => (x.auditId === updated.auditId ? updated : x));
+      if (currentTab === "audit") renderAudits();
+      toast("Audit verdict updated.", "ok");
+      await renderAuditDetail(updated);
+    }
+  } catch (e) {
+    toast("Update failed: " + friendlyError(e.message), "err");
+    btn.disabled = false; btn.textContent = "Save verdict";
+  } finally {
+    endLoad();
+  }
+}
+
+/* ---- Audit detail modal ---- */
+let auditModalPlanId = null;
+function findingClass(status) {
+  const s = (status || "").toUpperCase();
+  if (s === "PASS") return "finding-pass";
+  if (s === "FAIL") return "finding-fail";
+  return "finding-skip";
+}
+function findingIcon(status) {
+  const s = (status || "").toUpperCase();
+  if (s === "PASS") return "✓";
+  if (s === "FAIL") return "✕";
+  return "–";
+}
+function prettyDimension(d) {
+  return String(d || "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+/* Plain-language explanation of what each R10 dimension verifies. */
+const DIMENSION_INFO = {
+  APPROVAL_GATE:      { name: "Approval Gate",      what: "Was the trip plan approved before expenses were claimed?" },
+  DATE_ALIGNMENT:     { name: "Date Alignment",     what: "Does every expense date fall inside the approved trip period?" },
+  LOCATION_ALIGNMENT: { name: "Location Alignment", what: "Do expense locations match the planned destination and route?" },
+  AMOUNT_ALIGNMENT:   { name: "Amount Alignment",   what: "Is the claimed total within the plan’s budget?" },
+  RECEIPT_BACKING:    { name: "Receipt Backing",    what: "Is every expense line backed by an uploaded receipt?" },
+};
+
+/* The approved trip period for an audit: prefer the cached plan, fall back to
+ * the "[YYYY-MM-DD .. YYYY-MM-DD]" range embedded in the DATE_ALIGNMENT detail. */
+function auditPlanPeriod(a) {
+  const p = (plansCache || []).find((x) => x.id === a.tripPlanId);
+  if (p && p.businessStartDate && p.businessEndDate) return [String(p.businessStartDate), String(p.businessEndDate)];
+  if (p && p.businessPeriod) {
+    const m = String(p.businessPeriod).split(/\s+to\s+/i);
+    if (m.length === 2) return [m[0].trim(), m[1].trim()];
+  }
+  const df = (a.findings || []).find((f) => f.dimension === "DATE_ALIGNMENT");
+  const m = df && String(df.detail || "").match(/\[(\d{4}-\d{2}-\d{2}) \.\. (\d{4}-\d{2}-\d{2})\]/);
+  return m ? [m[1], m[2]] : null;
+}
+
+/* Locations the rule engine flagged as unrelated (parsed from the FAIL detail,
+ * e.g. "…unrelated to the planned destination/legs: Phnom Penh."). */
+function auditFlaggedLocations(a) {
+  const lf = (a.findings || []).find((f) => f.dimension === "LOCATION_ALIGNMENT" && (f.status || "").toUpperCase() === "FAIL");
+  if (!lf) return [];
+  const m = String(lf.detail || "").match(/:\s*([^:]+?)\.?\s*$/);
+  return m ? m[1].split(/,\s*/).map((x) => x.trim()).filter(Boolean) : [];
+}
+
+/* Normalize one report line for the audit breakdown table. */
+function auditLineView(ln) {
+  const te = ln.transportationExpense, c = ln.costExpense || {};
+  if (te) {
+    return {
+      desc: te.description || te.transportationMethod || te.vendor || "Transport",
+      date: te.usageDate || te.evidenceDate || "",
+      place: [te.originLocation, te.destinationLocation].filter(Boolean).join(" → "),
+      amount: num(te.applicationAmount),
+    };
+  }
+  return {
+    desc: c.description || c.category || c.account || "Expense",
+    date: c.evidenceDate || c.startDate || "",
+    place: c.note || c.usePurpose || "",
+    amount: num(c.applicationAmount),
+  };
+}
+
+/* All expense lines of the report(s) settling this trip plan. */
+async function fetchAuditReportLines(tripPlanId) {
+  if (!tripPlanId) return [];
+  const res = await fetch(`${EXPENSE_API}?corpNo=${encodeURIComponent(CORP_NO)}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw apiError(json, res);
+  const reports = (json && (json.data || json.payload)) || [];
+  return reports.filter((r) => r.tripPlanId === tripPlanId).flatMap((r) => r.costItems || r.lines || []);
+}
+
+/* Section catalogue + per-line flag computation, shared by the on-screen
+ * breakdown and the CSV export so both always agree. */
+const AUDIT_SECTIONS = [
+  { code: "COST", label: "Cost — accommodation, meals & other costs", ko: "비용" },
+  { code: "TRANSPORTATION", label: "Transportation", ko: "교통비" },
+  { code: "ETC", label: "Etc", ko: "기타" },
+];
+function auditLineSection(ln) {
+  return String(ln.sectionCode || (ln.transportationExpense ? "TRANSPORTATION" : "COST")).toUpperCase();
+}
+function auditFlagContext(a) {
+  return {
+    period: auditPlanPeriod(a),
+    badLocs: auditFlaggedLocations(a).map((l) => l.toLowerCase()),
+    receiptFail: (a.findings || []).some((f) => f.dimension === "RECEIPT_BACKING" && (f.status || "").toUpperCase() === "FAIL"),
+  };
+}
+/* Plain-text flags for one line (["Outside trip period", ...]; empty = ok). */
+function auditLineFlags(ctx, ln, v) {
+  const flags = [];
+  if (ctx.period && v.date && (String(v.date) < ctx.period[0] || String(v.date) > ctx.period[1])) flags.push("Outside trip period");
+  const hay = (v.place + " " + v.desc).toLowerCase();
+  if (ctx.badLocs.some((l) => hay.includes(l))) flags.push("Unplanned location");
+  if (ctx.receiptFail && !ln.attachmentFileId) flags.push("No receipt");
+  return flags;
+}
+
+/* Per-section (Cost / Transportation / Etc) breakdown with problem lines flagged. */
+function renderAuditLines(a, lines) {
+  if (!lines.length) {
+    return `<p class="muted-pad">No expense lines found for this trip plan — the report may have been deleted since this audit ran.</p>`;
+  }
+  const ctx = auditFlagContext(a);
+  return AUDIT_SECTIONS.map((sec) => {
+    const items = lines.filter((ln) => auditLineSection(ln) === sec.code);
+    if (!items.length) return "";
+    const rows = items.map((ln) => {
+      const v = auditLineView(ln);
+      const flags = auditLineFlags(ctx, ln, v);
+      const chips = flags.map((f) =>
+        `<span class="flag-chip"${f === "Outside trip period" && ctx.period ? ` title="Trip period is ${esc(ctx.period[0])} ~ ${esc(ctx.period[1])}"` : ""}>${esc(f)}</span>`);
+      return `<tr class="${flags.length ? "al-bad" : ""}">
+        <td title="${esc(v.desc)}">${esc(v.desc)}</td>
+        <td class="c-period">${esc(v.date || "—")}</td>
+        <td title="${esc(v.place)}">${esc(v.place || "—")}</td>
+        <td class="amt">${fmtMoney(v.amount)}</td>
+        <td>${ln.attachmentFileId ? receiptLink(ln.attachmentFileId, "Receipt") : `<span class="muted">—</span>`}</td>
+        <td>${chips.join(" ") || `<span class="flag-ok">✓ ok</span>`}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="al-sec">
+      <div class="al-sec-head">${esc(sec.label)} <span class="ko-sub">${esc(sec.ko)}</span><span class="al-count">${items.length} line${items.length === 1 ? "" : "s"}</span></div>
+      <div class="er-table-wrap"><table class="er-table">
+        <thead><tr><th style="width:30%">Description</th><th>Date</th><th style="width:21%">Route / Place</th><th style="text-align:right">Amount</th><th style="width:11%">Receipt</th><th style="width:19%">Check</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }).join("");
+}
+
+/* Open the detail modal: show a loading shell, fetch the persisted audit by id
+ * (GET /audits/{id}), and fall back to the listing copy if the fetch fails. */
+async function openAuditDetail(auditId) {
+  $("auditModalMsg").textContent = "";
+  $("auditModalTitle").textContent = "Audit detail";
+  $("auditKicker").textContent = "R10";
+  $("auditModalSub").textContent = "";
+  $("auditModalBody").innerHTML = `<div class="draft-empty-wrap"><span class="spin spin-lg"></span><p>Loading audit…</p></div>`;
+  $("auditRerunBtn").disabled = true;
+  $("auditDownloadBtn").disabled = true;
+  $("auditDlMenu").classList.add("hidden");
+  auditModalPlanId = null; auditModalAudit = null; auditModalLines = [];
+  $("auditOverlay").classList.remove("hidden");
+
+  let a = null;
+  try {
+    const res = await fetch(`${RULE_ENGINE_API}/audits/${encodeURIComponent(auditId)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    a = normalizeAudit((json && (json.payload || json.data)) || null);
+  } catch (e) {
+    a = auditsCache.find((x) => x.auditId === auditId) || null;
+    if (!a) {
+      $("auditModalBody").innerHTML = `<div class="draft-empty-wrap">${svgIcon("alert", "ico-lg")}<p>${esc(friendlyError(e.message))}</p></div>`;
+      return;
+    }
+  }
+  await renderAuditDetail(a);
+}
+
+async function renderAuditDetail(a) {
+  auditModalPlanId = a.tripPlanId || null;
+  auditModalAudit = a;
+  auditModalLines = [];
+  $("auditDownloadBtn").disabled = false;
+  $("auditModalMsg").textContent = "";
+  $("auditModalTitle").textContent = a.ruleName || "Audit detail";
+  $("auditKicker").textContent = `${a.ruleId || "R10"} · ${shortDateTime(a.createdDate)}`;
+  $("auditModalSub").textContent = `Trip plan: ${planTitleFor(a.tripPlanId)}`;
+  const findings = a.findings || [];
+  const fails = findings.filter((f) => (f.status || "").toUpperCase() === "FAIL").length;
+  const passes = findings.filter((f) => (f.status || "").toUpperCase() === "PASS").length;
+  const skips = findings.length - fails - passes;
+  const sus = auditComplianceKey(a) === "suspicion";
+  $("auditModalBody").innerHTML = `
+    <div class="audit-verdict ${sus ? "av-bad" : "av-ok"}">
+      ${svgIcon(sus ? "alert" : "check-circle", "ico-lg")}
+      <div>
+        <strong>${sus
+          ? `${fails} of ${findings.length} checks failed — this expense report needs review before approval.`
+          : "All evaluable checks passed — the expenses match the approved trip plan."}</strong>
+        <span>${passes} passed · ${fails} failed · ${skips} skipped — details below, with the affected expense lines flagged per section.</span>
+      </div>
+    </div>
+    <div class="audit-detail-head">
+      <div class="adh-item"><span class="adh-k">Result</span><span class="adh-v"><span class="audit-pill ${resultClass(a.status)}">${esc(a.status || "—")}</span></span></div>
+      <div class="adh-item"><span class="adh-k">Compliance</span><span class="adh-v"><span class="audit-pill audit-${auditComplianceKey(a)}">${esc(a.complianceStatus || "—")}</span></span></div>
+      <div class="adh-item"><span class="adh-k">Confidence</span><span class="adh-v"><span class="audit-pill ${confidenceClass(a.confidenceLevel)}">${esc(a.confidenceLevel || "—")}</span></span></div>
+      <div class="adh-item"><span class="adh-k">Audit ID</span><span class="adh-v"><span class="audit-id">${esc(a.auditId)}</span></span></div>
+    </div>
+    <div class="audit-override">
+      <span class="ao-label">Analyst override</span>
+      <div class="select-wrap"><select id="aoCompliance" aria-label="Compliance status">
+        ${["NORMAL", "SUSPICION"].map((v) => `<option value="${v}" ${v === (a.complianceStatus || "").toUpperCase() ? "selected" : ""}>${v}</option>`).join("")}
+      </select></div>
+      <div class="select-wrap"><select id="aoConfidence" aria-label="Confidence level">
+        ${["HIGH", "MEDIUM", "LOW"].map((v) => `<option value="${v}" ${v === (a.confidenceLevel || "").toUpperCase() ? "selected" : ""}>${v}</option>`).join("")}
+      </select></div>
+      <button class="btn btn-quiet btn-sm" id="aoSaveBtn">Save verdict</button>
+      <span class="ao-hint">Manually correct the compliance / confidence verdict of this audit.</span>
+    </div>
+    <div class="al-title-h">The 5 checks</div>
+    <div class="findings">
+      ${findings.map((f) => {
+        const info = DIMENSION_INFO[String(f.dimension || "").toUpperCase()] || { name: prettyDimension(f.dimension), what: "" };
+        return `
+        <div class="finding ${findingClass(f.status)}">
+          <span class="finding-ico">${findingIcon(f.status)}</span>
+          <div class="finding-main">
+            <div class="finding-dim">${esc(info.name)}</div>
+            ${info.what ? `<div class="finding-what">${esc(info.what)}</div>` : ""}
+            <div class="finding-detail">${esc(f.detail || "")}</div>
+          </div>
+          <span class="audit-pill ${resultClass(f.status === "PASS" ? "pass" : f.status === "FAIL" ? "failed" : "skip")}">${esc(f.status || "—")}</span>
+        </div>`;
+      }).join("") || `<p class="draft-empty">No dimension findings.</p>`}
+    </div>
+    <div class="al-title-h">Expense lines reviewed — by report section</div>
+    <div id="auditLines"><p class="muted-pad"><span class="spin"></span>Loading expense lines…</p></div>`;
+  $("aoSaveBtn").addEventListener("click", () => saveAuditOverride(a.auditId));
+  $("auditRerunBtn").disabled = !auditModalPlanId;
+  $("auditOverlay").classList.remove("hidden");
+  // Load the report lines asynchronously so the verdict shows instantly.
+  try {
+    const lines = await fetchAuditReportLines(a.tripPlanId);
+    auditModalLines = lines;
+    const el = $("auditLines");
+    if (el) el.innerHTML = renderAuditLines(a, lines);
+  } catch (e) {
+    const el = $("auditLines");
+    if (el) el.innerHTML = `<p class="muted-pad">Couldn’t load expense lines: ${esc(friendlyError(e.message))}</p>`;
+  }
+}
+function closeAuditDetail() {
+  $("auditOverlay").classList.add("hidden");
+  $("auditDlMenu").classList.add("hidden");
+  auditModalPlanId = null; auditModalAudit = null; auditModalLines = [];
+}
+async function rerunCurrentAudit() {
+  if (!auditModalPlanId) return;
+  const btn = $("auditRerunBtn");
+  btn.disabled = true; btn.textContent = "Running…";
+  const payload = await runR10Audit(auditModalPlanId, { source: "manual" });
+  btn.disabled = false; btn.innerHTML = svgIcon("refresh") + " Re-run audit";
+  if (payload) openAuditDetail(payload.auditId);
+}
+
+/* ---- Download the open audit (CSV report / raw JSON) ---- */
+let auditModalAudit = null;   // normalized audit shown in the modal
+let auditModalLines = [];     // its expense lines (loaded async)
+
+function downloadBlob(filename, mime, content) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* One CSV with three blocks: audit header, the five checks, expense lines.
+ * UTF-8 BOM so Excel renders the Korean section names correctly. */
+function auditToCsv(a, lines) {
+  const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const row = (...cells) => cells.map(q).join(",");
+  const out = [];
+  out.push(row(`${a.ruleId} — ${a.ruleName} audit`));
+  out.push(row("Audit ID", a.auditId));
+  out.push(row("Corp No", a.corpNo || CORP_NO));
+  out.push(row("Trip plan", planTitleFor(a.tripPlanId)), row("Trip plan ID", a.tripPlanId || ""));
+  out.push(row("Result", a.status), row("Compliance", a.complianceStatus), row("Confidence", a.confidenceLevel));
+  out.push(row("Created", a.createdDate), row("Summary", a.summary));
+  out.push("");
+  out.push(row("Checks"));
+  out.push(row("Check", "What it verifies", "Status", "Detail"));
+  (a.findings || []).forEach((f) => {
+    const info = DIMENSION_INFO[String(f.dimension || "").toUpperCase()] || { name: prettyDimension(f.dimension), what: "" };
+    out.push(row(info.name, info.what, f.status, f.detail));
+  });
+  out.push("");
+  out.push(row("Expense lines"));
+  out.push(row("Section", "Description", "Date", "Route / Place", "Amount", "Flags", "Receipt download"));
+  const ctx = auditFlagContext(a);
+  AUDIT_SECTIONS.forEach((sec) => {
+    lines.filter((ln) => auditLineSection(ln) === sec.code).forEach((ln) => {
+      const v = auditLineView(ln);
+      const flags = auditLineFlags(ctx, ln, v);
+      const dl = ln.attachmentFileId ? fileDownloadUrl(ln.attachmentFileId) : "";
+      out.push(row(sec.label, v.desc, v.date, v.place, v.amount, flags.join("; ") || "ok",
+        dl && !/^https?:/i.test(dl) ? location.origin + dl : dl));
+    });
+  });
+  return "\uFEFF" + out.join("\r\n");
+}
+
+function downloadAudit(kind) {
+  const a = auditModalAudit;
+  if (!a) return;
+  const stem = `r10-audit-${String(a.auditId).slice(0, 8)}`;
+  if (kind === "json") {
+    downloadBlob(`${stem}.json`, "application/json;charset=utf-8",
+      JSON.stringify({ ...a, tripPlanTitle: planTitleFor(a.tripPlanId), expenseLines: auditModalLines }, null, 2));
+  } else {
+    downloadBlob(`${stem}.csv`, "text/csv;charset=utf-8", auditToCsv(a, auditModalLines));
+  }
+  $("auditDlMenu").classList.add("hidden");
+  toast(`Downloaded ${stem}.${kind === "json" ? "json" : "csv"}`, "ok");
+}
+
+/* ---- Audit tab wiring ---- */
+function initAuditTab() {
+  $("auditRefresh").addEventListener("click", loadAudits);
+  $("auditChips").addEventListener("click", (ev) => {
+    const c = ev.target.closest(".statchip");
+    if (!c) return;
+    auditFilter = c.getAttribute("data-cf");
+    document.querySelectorAll("#auditChips .statchip").forEach((x) => x.classList.toggle("active", x === c));
+    renderAudits();
+  });
+  $("auditSearch").addEventListener("input", () => {
+    $("auditSearchClear").classList.toggle("hidden", !$("auditSearch").value);
+    renderAudits();
+  });
+  $("auditSearchClear").addEventListener("click", () => {
+    $("auditSearch").value = "";
+    $("auditSearchClear").classList.add("hidden");
+    renderAudits();
+    $("auditSearch").focus();
+  });
+  $("auditBody").addEventListener("click", (ev) => {
+    if (ev.target.closest(".c-check")) return;
+    const row = ev.target.closest("[data-audit-id]");
+    if (row) openAuditDetail(row.getAttribute("data-audit-id"));
+  });
+  $("auditBody").addEventListener("change", (ev) => {
+    if (ev.target.classList.contains("audit-chk")) updateAuditSelBar();
+  });
+  $("auditSelectAll").addEventListener("change", toggleAuditSelectAll);
+  $("auditSelClear").addEventListener("click", clearAuditSelection);
+  $("auditSelDelete").addEventListener("click", deleteSelectedAudits);
+  $("auditModalClose").addEventListener("click", closeAuditDetail);
+  $("auditModalClose2").addEventListener("click", closeAuditDetail);
+  $("auditOverlay").addEventListener("click", (ev) => { if (ev.target === $("auditOverlay")) closeAuditDetail(); });
+  $("auditRerunBtn").addEventListener("click", rerunCurrentAudit);
+  // Download menu: toggle on the button, act on an item, dismiss on outside click / Esc.
+  $("auditDownloadBtn").addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    $("auditDlMenu").classList.toggle("hidden");
+  });
+  $("auditDlMenu").addEventListener("click", (ev) => {
+    const item = ev.target.closest("[data-dl]");
+    if (item) downloadAudit(item.getAttribute("data-dl"));
+  });
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest(".dl-wrap")) $("auditDlMenu").classList.add("hidden");
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") $("auditDlMenu").classList.add("hidden");
+  });
+}
+
+/* ================================================================
+ *  STAFF & DEPARTMENTS — master-data CRUD (modal on the Request Plan tab)
+ *    GET / POST  /api/v1/departments (?corpNo=)   PUT / DELETE  /{id}
+ *    GET / POST  /api/v1/staff       (?corpNo=)   PUT / DELETE  /{id}
+ *  Also feeds the create-plan traveller dropdowns (liveStaffList / liveDeptNames).
+ * ================================================================ */
+const DEPT_API = API_ORIGIN + "/api/v1/departments";
+const STAFF_API = API_ORIGIN + "/api/v1/staff";
+let mdDepts = [], mdStaff = [];
+let mdDeptFilter = null;                       // department id, or null = all staff
+let mdEditDeptId = null, mdEditStaffId = null; // rows currently in edit mode
+
+/* Live lists for the create-plan dropdowns; fall back to the seed constants
+ * while the corp has no master data (or the API is unreachable). */
+function liveStaffList() {
+  return mdStaff.length
+    ? mdStaff.map((s) => ({ name: s.name, department: s.departmentName || "", position: s.position || "" }))
+    : STAFF;
+}
+function liveDeptNames() {
+  return mdDepts.length ? mdDepts.map((d) => d.name) : DEPARTMENTS;
+}
+
+async function fetchMasterData() {
+  const [dRes, sRes] = await Promise.all([
+    fetch(`${DEPT_API}?corpNo=${encodeURIComponent(CORP_NO)}`),
+    fetch(`${STAFF_API}?corpNo=${encodeURIComponent(CORP_NO)}`),
+  ]);
+  const dJson = await dRes.json().catch(() => ({}));
+  const sJson = await sRes.json().catch(() => ({}));
+  if (!dRes.ok) throw apiError(dJson, dRes);
+  if (!sRes.ok) throw apiError(sJson, sRes);
+  mdDepts = (dJson && (dJson.data || dJson.payload)) || [];
+  mdStaff = (sJson && (sJson.data || sJson.payload)) || [];
+}
+
+/* Background refresh (app start / corp switch) — errors keep the seed fallback. */
+async function loadMasterDataSilent() {
+  try { await fetchMasterData(); } catch { mdDepts = []; mdStaff = []; }
+}
+
+async function loadMasterData() {
+  beginLoad();
+  try {
+    await fetchMasterData();
+    $("masterMsg").textContent = "";
+  } catch (e) {
+    $("masterMsg").textContent = friendlyError(e.message);
+  } finally {
+    endLoad();
+    renderMdDepts();
+    renderMdStaff();
+  }
+}
+
+function openMaster() {
+  mdDeptFilter = null; mdEditDeptId = null; mdEditStaffId = null;
+  $("mdDeptName").value = ""; $("mdStaffName").value = ""; $("mdStaffPosition").value = "";
+  $("masterMsg").textContent = "";
+  $("masterOverlay").classList.remove("hidden");
+  loadMasterData();
+}
+function closeMaster() { $("masterOverlay").classList.add("hidden"); }
+
+function renderMdDepts() {
+  $("mdDeptCount").textContent = mdDepts.length;
+  // keep the add-staff department select in sync
+  const keep = $("mdStaffDept").value;
+  $("mdStaffDept").innerHTML = `<option value="">Department…</option>` +
+    mdDepts.map((d) => `<option value="${esc(d.id)}" ${d.id === keep ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+  const box = $("mdDeptList");
+  if (!mdDepts.length) {
+    box.innerHTML = `<div class="muted-pad">No departments yet — add the first one above.</div>`;
+    return;
+  }
+  box.innerHTML = mdDepts.map((d) => {
+    if (mdEditDeptId === d.id) {
+      return `<div class="md-row md-active">
+        <input type="text" id="mdDeptEditInput" maxlength="100" value="${esc(d.name)}" />
+        <span class="md-acts">
+          <button class="btn-xs btn-view" data-act="dept-save" data-id="${esc(d.id)}">Save</button>
+          <button class="btn-xs" data-act="dept-cancel">Cancel</button>
+        </span>
+      </div>`;
+    }
+    const n = mdStaff.filter((s) => s.departmentId === d.id).length;
+    return `<div class="md-row ${mdDeptFilter === d.id ? "md-active" : ""}" data-act="dept-filter" data-id="${esc(d.id)}">
+      <span class="md-name" title="${esc(d.name)}">${esc(d.name)}</span>
+      <span class="md-sub">${n} staff</span>
+      <span class="md-acts">
+        <button class="btn-xs btn-view" data-act="dept-edit" data-id="${esc(d.id)}" title="Rename">✎</button>
+        <button class="btn-xs btn-cancel" data-act="dept-del" data-id="${esc(d.id)}" title="Delete">${svgIcon("trash")}</button>
+      </span>
+    </div>`;
+  }).join("");
+}
+
+function renderMdStaff() {
+  const list = mdDeptFilter ? mdStaff.filter((s) => s.departmentId === mdDeptFilter) : mdStaff;
+  $("mdStaffCount").textContent = list.length;
+  const fd = mdDeptFilter ? mdDepts.find((d) => d.id === mdDeptFilter) : null;
+  const tag = $("mdStaffFilterTag");
+  tag.classList.toggle("hidden", !fd);
+  tag.textContent = fd ? `${fd.name} ✕` : "";
+  const body = $("mdStaffBody");
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="4" class="empty-row">${mdStaff.length ? "No staff in this department." : "No staff yet — add the first one above."}</td></tr>`;
+    return;
+  }
+  body.innerHTML = list.map((s) => {
+    if (mdEditStaffId === s.id) {
+      const opts = mdDepts.map((d) => `<option value="${esc(d.id)}" ${d.id === s.departmentId ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+      return `<tr>
+        <td><input class="md-cell-input" id="mdsName" maxlength="100" value="${esc(s.name)}" /></td>
+        <td><input class="md-cell-input" id="mdsPos" maxlength="100" value="${esc(s.position || "")}" /></td>
+        <td><div class="select-wrap"><select id="mdsDept"><option value="">Department…</option>${opts}</select></div></td>
+        <td><span class="md-acts">
+          <button class="btn-xs btn-view" data-act="staff-save" data-id="${esc(s.id)}">Save</button>
+          <button class="btn-xs" data-act="staff-cancel">Cancel</button>
+        </span></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td title="${esc(s.name)}">${esc(s.name)}</td>
+      <td>${esc(s.position || "—")}</td>
+      <td>${esc(s.departmentName || "—")}</td>
+      <td><span class="md-acts">
+        <button class="btn-xs btn-view" data-act="staff-edit" data-id="${esc(s.id)}">✎ Edit</button>
+        <button class="btn-xs btn-cancel" data-act="staff-del" data-id="${esc(s.id)}">${svgIcon("trash")} Delete</button>
+      </span></td>
+    </tr>`;
+  }).join("");
+}
+
+/* Shared JSON request for the CRUD calls. */
+async function mdRequest(url, method, bodyObj) {
+  const res = await fetch(url, {
+    method,
+    headers: bodyObj ? { "Content-Type": "application/json" } : undefined,
+    body: bodyObj ? JSON.stringify(bodyObj) : undefined,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw apiError(json, res);
+  return (json && (json.data || json.payload)) || null;
+}
+
+async function mdAddDept() {
+  const name = $("mdDeptName").value.trim();
+  if (!name) { toast("Enter a department name.", "err"); return; }
+  try {
+    await mdRequest(DEPT_API, "POST", { corpNo: CORP_NO, name });
+    $("mdDeptName").value = "";
+    toast(`Department “${name}” created.`, "ok");
+    await loadMasterData();
+  } catch (e) { toast("Create failed: " + friendlyError(e.message), "err"); }
+}
+async function mdSaveDept(id) {
+  const input = $("mdDeptEditInput");
+  const name = input ? input.value.trim() : "";
+  if (!name) { toast("Name is required.", "err"); return; }
+  try {
+    await mdRequest(`${DEPT_API}/${encodeURIComponent(id)}`, "PUT", { corpNo: CORP_NO, name });
+    mdEditDeptId = null;
+    toast("Department renamed.", "ok");
+    await loadMasterData();
+  } catch (e) { toast("Update failed: " + friendlyError(e.message), "err"); }
+}
+async function mdDeleteDept(id) {
+  const d = mdDepts.find((x) => x.id === id);
+  const n = mdStaff.filter((s) => s.departmentId === id).length;
+  const ok = await confirmDialog({
+    title: "Delete department",
+    message: `Delete “${(d && d.name) || id}”?` + (n
+      ? ` It still has ${n} staff member${n === 1 ? "" : "s"} — move or delete them first if the server rejects this.`
+      : " This cannot be undone."),
+    confirmText: "Delete",
+  });
+  if (!ok) return;
+  try {
+    await mdRequest(`${DEPT_API}/${encodeURIComponent(id)}`, "DELETE");
+    if (mdDeptFilter === id) mdDeptFilter = null;
+    toast("Department deleted.", "ok");
+    await loadMasterData();
+  } catch (e) { toast("Delete failed: " + friendlyError(e.message), "err"); }
+}
+
+async function mdAddStaff() {
+  const name = $("mdStaffName").value.trim();
+  const position = $("mdStaffPosition").value.trim();
+  const departmentId = $("mdStaffDept").value;
+  if (!name) { toast("Enter a staff name.", "err"); return; }
+  if (!departmentId) { toast("Pick a department for the new staff member.", "err"); return; }
+  try {
+    await mdRequest(STAFF_API, "POST", { departmentId, name, position });
+    $("mdStaffName").value = ""; $("mdStaffPosition").value = "";
+    toast(`Staff “${name}” created.`, "ok");
+    await loadMasterData();
+  } catch (e) { toast("Create failed: " + friendlyError(e.message), "err"); }
+}
+async function mdSaveStaff(id) {
+  const nameEl = $("mdsName"), posEl = $("mdsPos"), deptEl = $("mdsDept");
+  const name = nameEl ? nameEl.value.trim() : "";
+  const position = posEl ? posEl.value.trim() : "";
+  const departmentId = deptEl ? deptEl.value : "";
+  if (!name) { toast("Name is required.", "err"); return; }
+  if (!departmentId) { toast("Department is required.", "err"); return; }
+  try {
+    await mdRequest(`${STAFF_API}/${encodeURIComponent(id)}`, "PUT", { departmentId, name, position });
+    mdEditStaffId = null;
+    toast("Staff updated.", "ok");
+    await loadMasterData();
+  } catch (e) { toast("Update failed: " + friendlyError(e.message), "err"); }
+}
+async function mdDeleteStaff(id) {
+  const s = mdStaff.find((x) => x.id === id);
+  const ok = await confirmDialog({
+    title: "Delete staff member",
+    message: `Delete “${(s && s.name) || id}”? This cannot be undone.`,
+    confirmText: "Delete",
+  });
+  if (!ok) return;
+  try {
+    await mdRequest(`${STAFF_API}/${encodeURIComponent(id)}`, "DELETE");
+    toast("Staff deleted.", "ok");
+    await loadMasterData();
+  } catch (e) { toast("Delete failed: " + friendlyError(e.message), "err"); }
+}
+
+function initMasterData() {
+  $("openMasterBtn").addEventListener("click", openMaster);
+  $("masterCloseBtn").addEventListener("click", closeMaster);
+  $("masterCloseBtn2").addEventListener("click", closeMaster);
+  $("masterOverlay").addEventListener("click", (ev) => { if (ev.target === $("masterOverlay")) closeMaster(); });
+  $("masterRefreshBtn").addEventListener("click", loadMasterData);
+  $("mdDeptAddBtn").addEventListener("click", mdAddDept);
+  $("mdDeptName").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); mdAddDept(); } });
+  $("mdStaffAddBtn").addEventListener("click", mdAddStaff);
+  [$("mdStaffName"), $("mdStaffPosition")].forEach((el) =>
+    el.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); mdAddStaff(); } }));
+  $("mdStaffFilterTag").addEventListener("click", () => { mdDeptFilter = null; renderMdDepts(); renderMdStaff(); });
+  // Delegated actions: innermost [data-act] wins, so buttons beat the row's filter action.
+  $("mdDeptList").addEventListener("click", (ev) => {
+    const act = ev.target.closest("[data-act]");
+    if (!act) return;
+    const id = act.getAttribute("data-id");
+    const kind = act.getAttribute("data-act");
+    if (kind === "dept-edit") {
+      mdEditDeptId = id; mdEditStaffId = null;
+      renderMdDepts();
+      const i = $("mdDeptEditInput"); if (i) { i.focus(); i.select(); }
+    } else if (kind === "dept-save") mdSaveDept(id);
+    else if (kind === "dept-cancel") { mdEditDeptId = null; renderMdDepts(); }
+    else if (kind === "dept-del") mdDeleteDept(id);
+    else if (kind === "dept-filter") { mdDeptFilter = mdDeptFilter === id ? null : id; renderMdDepts(); renderMdStaff(); }
+  });
+  $("mdStaffBody").addEventListener("click", (ev) => {
+    const act = ev.target.closest("[data-act]");
+    if (!act) return;
+    const id = act.getAttribute("data-id");
+    const kind = act.getAttribute("data-act");
+    if (kind === "staff-edit") {
+      mdEditStaffId = id; mdEditDeptId = null;
+      renderMdStaff();
+      const i = $("mdsName"); if (i) { i.focus(); i.select(); }
+    } else if (kind === "staff-save") mdSaveStaff(id);
+    else if (kind === "staff-cancel") { mdEditStaffId = null; renderMdStaff(); }
+    else if (kind === "staff-del") mdDeleteStaff(id);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); });

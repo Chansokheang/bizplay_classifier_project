@@ -3,13 +3,16 @@ package com.api.bizplay_conversational.repository;
 import com.api.bizplay_classifier_api.config.UUIDTypeHandler;
 import com.api.bizplay_conversational.model.entity.Department;
 import com.api.bizplay_conversational.model.entity.Staff;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.One;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.ResultMap;
 import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.type.JdbcType;
 
 import java.util.List;
@@ -105,6 +108,39 @@ public interface StaffRepo {
             @Result(property = "createdDate", column = "created_date")
     })
     List<Staff> searchByCorpNoAndName(@Param("corpNo") String corpNo, @Param("name") String name);
+
+    /** A single staff member by id (with department). Null if not found. */
+    @Select("""
+            SELECT s.id, s.department_id, s.name, s.position, s.created_date
+            FROM conversational_staff s
+            WHERE s.id = #{id}::uuid
+            """)
+    @ResultMap("staffResultMap")
+    Staff findById(@Param("id") String id);
+
+    /** All staff for a corp (newest first by name), each with department. */
+    @Select("""
+            SELECT s.id, s.department_id, s.name, s.position, s.created_date
+            FROM conversational_staff s
+            JOIN conversational_department d ON d.id = s.department_id
+            WHERE d.corp_no = #{corpNo}
+            ORDER BY s.name ASC
+            """)
+    @ResultMap("staffResultMap")
+    List<Staff> findByCorpNo(@Param("corpNo") String corpNo);
+
+    @Update("""
+            UPDATE conversational_staff SET
+                department_id = #{departmentId, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler},
+                name = #{name},
+                position = #{position}
+            WHERE id = #{id, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}
+            """)
+    int update(@Param("id") UUID id, @Param("departmentId") UUID departmentId,
+               @Param("name") String name, @Param("position") String position);
+
+    @Delete("DELETE FROM conversational_staff WHERE id = #{id, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}")
+    int deleteById(@Param("id") UUID id);
 
     @Insert("""
             INSERT INTO conversational_staff (id, department_id, name, position)

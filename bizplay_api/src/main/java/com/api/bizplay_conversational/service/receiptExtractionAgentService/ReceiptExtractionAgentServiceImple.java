@@ -40,6 +40,10 @@ public class ReceiptExtractionAgentServiceImple implements ReceiptExtractionAgen
               "endDate": "YYYY-MM-DD",
               "origin": "...",
               "destination": "...",
+              "originCity": "...",
+              "originCountry": "...",
+              "destinationCity": "...",
+              "destinationCountry": "...",
               "transportationMethod": "...",
               "totalAmount": 0,
               "supplyPrice": 0,
@@ -49,6 +53,13 @@ public class ReceiptExtractionAgentServiceImple implements ReceiptExtractionAgen
             Rules:
             - Report ONLY what is printed on the receipt. Use null for anything not present. Do NOT guess.
             - origin/destination/transportationMethod apply only to transport tickets; leave null otherwise.
+            - origin/destination are the literal place text as printed (airport code, station, or city).
+            - originCity/originCountry/destinationCity/destinationCountry: ONLY for transport tickets,
+              resolve the printed place to its city and country using common geographic knowledge
+              (e.g. airport code "PNH" or "Phnom Penh Intl" -> city "Phnom Penh", country "Cambodia";
+              "ICN"/"Incheon" -> city "Seoul", country "South Korea"). Use the English city/country name.
+              Leave null if the place is genuinely unknown. This is the ONLY place you may use outside
+              knowledge; every other field must be copied literally from the receipt.
             - startDate/endDate apply to stays (lodging); leave null otherwise.
             - Amounts are plain numbers (no currency symbols, no thousands separators).
             """;

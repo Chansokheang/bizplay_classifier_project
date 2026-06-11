@@ -22,9 +22,9 @@ import java.util.TimeZone;
 })
 @MapperScan({
         "com.api.bizplay_classifier_api.repository",
-        "com.api.bizplay_conversational.repository"
+        "com.api.bizplay_conversational.repository",
+        "com.api.bizplay_compliance.repository"
 })
-//@MapperScan("com.api.bizplay_compliance.repository")
 @SecurityScheme(
         name = "bearerAuth",
         type = SecuritySchemeType.HTTP,

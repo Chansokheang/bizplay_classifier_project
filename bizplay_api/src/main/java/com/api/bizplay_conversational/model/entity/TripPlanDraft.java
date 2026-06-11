@@ -32,4 +32,7 @@ public class TripPlanDraft {
 
     private List<String> missingFields = new ArrayList<>();
 
+    /** Travelers whose name matched several staff; awaiting the user's pick before being added. */
+    private List<PendingTravelerDraft> pendingTravelers = new ArrayList<>();
+
 }

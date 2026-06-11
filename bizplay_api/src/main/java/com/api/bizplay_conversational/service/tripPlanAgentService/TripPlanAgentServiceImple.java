@@ -13,6 +13,7 @@ import com.api.bizplay_conversational.model.response.MissingFieldsResult;
 import com.api.bizplay_conversational.model.response.SpreadsheetAnalysisResult;
 import com.api.bizplay_conversational.model.response.StaffLookupAgentResponse;
 import com.api.bizplay_conversational.model.response.TextAnalysisResult;
+import com.api.bizplay_conversational.model.response.TravelerResolution;
 import com.api.bizplay_conversational.model.response.TripPlanAgentResponse;
 import com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo;
 import com.api.bizplay_conversational.service.clarificationAgentService.ClarificationAgentService;
@@ -197,11 +198,28 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         // (Excel -> Spreadsheet Agent, PDF -> PDF Agent) — no LLM intent classification needed.
         // A bare approval ("yes" / "approve" / "create") is handled directly: creation is done by the
         // UI button, so we just point the user there instead of routing it to the Update Agent.
+        // Re-resolve travelers awaiting the staff DB on EVERY turn: staff registered since a prior turn
+        // now get added (with the route held from the original extraction), and a duplicate-name pick in
+        // this message is applied.
+        // Detect a skip/decline for a still-pending ambiguous name BEFORE any resolution or lookup, so
+        // "skip traveler: X" / "don't add X" never re-triggers staff lookup and loops forever.
+        String skipName = (hasMessage && !hasFiles)
+                ? detectPendingSkip(request.getMessage(), session)
+                : null;
+
+        List<String> pickedTravelers = (skipName == null)
+                ? requestBodyBuilderService.resolvePendingTravelers(session, hasMessage ? request.getMessage() : null)
+                : List.of();
+
         String intent;
-        if (hasFiles) {
+        if (skipName != null) {
+            intent = "SKIP";
+        } else if (hasFiles) {
             intent = "FILE_UPLOAD";
         } else if (isApprovalPhrase(request.getMessage())) {
             intent = "APPROVE";
+        } else if (!pickedTravelers.isEmpty()) {
+            intent = "DISAMBIGUATE";
         } else {
             intent = classifyIntent(request.getMessage(), history);
         }
@@ -215,6 +233,8 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         // Whether this turn actually built/changed the draft (gates the clarification pass).
         boolean draftModified = false;
         String reply;
+        // Structured disambiguation options for this turn (non-null only when a name is ambiguous).
+        List<TripPlanAgentResponse.PendingChoice> pendingChoices = null;
 
         if ("FILE_UPLOAD".equals(intent)) {
             // Fetch every uploaded file and route by type: Excel -> Spreadsheet Agent (WHO),
@@ -272,10 +292,13 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                 }
             }
 
+            // Travelers that couldn't be added (not found / ambiguous), accumulated for the reply.
+            TravelerResolution turnRes = new TravelerResolution();
+
             // Text (the message) is the priority source — merged first and authoritatively.
             TextAnalysisResult msgAnalysis = msgFuture.join();
             if (msgAnalysis != null) {
-                requestBodyBuilderService.mergeTextAnalysis(session, msgAnalysis, true);
+                turnRes.merge(requestBodyBuilderService.mergeTextAnalysis(session, msgAnalysis, true));
             }
 
             // PDFs are supplementary. A PDF with no usable trip info is skipped entirely. Otherwise:
@@ -296,10 +319,10 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                 }
                 if (alignsWith(msgAnalysis, pdf)) {
                     // Authoritative only when there is no message to defer to; otherwise fill blanks only.
-                    requestBodyBuilderService.mergeTextAnalysis(session, pdf, msgAnalysis == null);
+                    turnRes.merge(requestBodyBuilderService.mergeTextAnalysis(session, pdf, msgAnalysis == null));
                 } else {
                     log.info("PDF '{}' describes a different trip; taking its travelers only.", f.filename());
-                    requestBodyBuilderService.mergeTravelersOnly(session, pdf);
+                    turnRes.merge(requestBodyBuilderService.mergeTravelersOnly(session, pdf));
                     pdfTravelersOnly++;
                 }
                 requestBodyBuilderService.mergeAttachment(session, f.fileId());
@@ -345,6 +368,8 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             if (!unsupported.isEmpty()) {
                 sb.append("Skipped unsupported file type(s): ").append(String.join(", ", unsupported)).append(". ");
             }
+            appendResolutionNotes(sb, turnRes);
+            pendingChoices = buildPendingChoices(turnRes);
             reply = sb.toString().trim();
             if (reply.isEmpty()) {
                 reply = "I could not process the uploaded file(s).";
@@ -374,11 +399,13 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             if (staffMatched) {
                 requestBodyBuilderService.mergeStaff(session, staffLookup.getResult());
             }
-            requestBodyBuilderService.mergeTextAnalysis(session, analysis);
+            TravelerResolution textRes = requestBodyBuilderService.mergeTextAnalysis(session, analysis);
 
-            reply = "I updated the trip plan draft from your message"
-                    + (staffMatched ? " (staff: " + staffLookup.getResult().getStaffName() + ")" : "")
-                    + ".";
+            StringBuilder textSb = new StringBuilder("I updated the trip plan draft from your message"
+                    + (staffMatched ? " (staff: " + staffLookup.getResult().getStaffName() + ")" : "") + ". ");
+            appendResolutionNotes(textSb, textRes);
+            pendingChoices = buildPendingChoices(textRes);
+            reply = textSb.toString().trim();
             subAgents.add("STAFF_LOOKUP_AGENT");
             subAgents.add("TEXT_ANALYSIS_AGENT");
             delegated = true;
@@ -392,12 +419,26 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             List<String> applied = requestBodyBuilderService.applyEdits(session, plan);
             subAgents.add("UPDATE_AGENT");
             delegated = true;
+            // A duplicate-name "add" doesn't add a traveler — it holds candidates pending so the user
+            // can choose. Surface that here instead of silently picking the first match.
+            com.api.bizplay_conversational.model.response.TravelerResolution res =
+                    requestBodyBuilderService.pendingResolution(session);
+            boolean needsPick = res != null && !res.getAmbiguous().isEmpty();
+            StringBuilder updateSb = new StringBuilder();
             if (!applied.isEmpty()) {
                 draftModified = true;
-                reply = "Applied " + applied.size() + " update(s): " + String.join("; ", applied) + ".";
-            } else {
-                reply = "I couldn't find a valid change to make from that. Could you rephrase what to update?";
+                updateSb.append("Applied ").append(applied.size()).append(" update(s): ")
+                        .append(String.join("; ", applied)).append(". ");
             }
+            if (needsPick) {
+                draftModified = true; // persist the reply + keep the draft in COLLECTING
+                appendResolutionNotes(updateSb, res);
+                pendingChoices = buildPendingChoices(res);
+            }
+            if (updateSb.length() == 0) {
+                updateSb.append("I couldn't find a valid change to make from that. Could you rephrase what to update?");
+            }
+            reply = updateSb.toString().trim();
             assistantTurn = reply;
         } else if ("STAFF_LOOKUP".equals(intent)) {
             // Fixed-query path: a single, well-defined "who is X" lookup. Deterministic
@@ -431,6 +472,28 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             delegated = true;
             // Persist the generated SQL so follow-ups (e.g. "also join the trip") can extend it.
             assistantTurn = lookup.getSql() != null ? lookup.getSql() : reply;
+        } else if ("DISAMBIGUATE".equals(intent)) {
+            // The user picked which staff member an ambiguous (duplicate) traveler name refers to.
+            reply = "Added " + String.join(", ", pickedTravelers) + " to the trip.";
+            subAgents.add("STAFF_LOOKUP_AGENT");
+            delegated = true;
+            draftModified = true;
+            assistantTurn = reply;
+        } else if ("SKIP".equals(intent)) {
+            // The user declined a pending ambiguous mention. Drop it WITHOUT any staff lookup or text
+            // analysis (which would re-detect the same duplicates and loop). Confirm and move on.
+            String removed = requestBodyBuilderService.removePendingTraveler(session, skipName);
+            subAgents.add("UPDATE_AGENT");
+            delegated = true;
+            if (removed != null) {
+                draftModified = true;
+                reply = "Okay — not adding '" + removed + "'.";
+                // If other ambiguous mentions remain, keep offering them.
+                pendingChoices = buildPendingChoices(requestBodyBuilderService.pendingResolution(session));
+            } else {
+                reply = "Okay — '" + skipName + "' wasn't pending, so nothing changed.";
+            }
+            assistantTurn = reply;
         } else if ("APPROVE".equals(intent)) {
             // Creation is performed by the UI "Create this plan" button, not by a chat reply. Point the
             // user there rather than trying to interpret the affirmation as an edit.
@@ -440,6 +503,14 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         } else {
             reply = "I can help create a trip plan. For now, this initial setup delegates department, staff, and traveler lookup tasks to the database lookup sub-agent.";
             assistantTurn = reply;
+        }
+
+        // If pending travelers were auto-resolved (newly-registered staff) alongside another action,
+        // note them and make sure the clarification pass runs.
+        if (!pickedTravelers.isEmpty() && !"DISAMBIGUATE".equals(intent)) {
+            reply = "Added previously pending traveler(s): " + String.join(", ", pickedTravelers) + ". " + reply;
+            assistantTurn = reply;
+            draftModified = true;
         }
 
         // Clarification / Field-Completion pass: only after a turn that actually built the draft.
@@ -463,7 +534,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             subAgents.add("CLARIFICATION_AGENT");
         }
 
-        response.delegated(delegated).subAgents(subAgents).reply(reply);
+        response.delegated(delegated).subAgents(subAgents).reply(reply).pendingChoices(pendingChoices);
 
         String userTurn = hasMessage
                 ? request.getMessage()
@@ -607,6 +678,79 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         return value != null && !value.isBlank();
     }
 
+    /**
+     * Append messages about extracted travelers that could not be added: names not found in the staff
+     * DB, and ambiguous (duplicate) names whose candidates the user must choose between.
+     */
+    private void appendResolutionNotes(StringBuilder sb, com.api.bizplay_conversational.model.response.TravelerResolution res) {
+        if (res == null) {
+            return;
+        }
+        if (!res.getNotFound().isEmpty()) {
+            sb.append("These traveler name(s) are not in the staff database: ")
+                    .append(String.join(", ", res.getNotFound()))
+                    .append(" — add them to staff first, or check the spelling. ");
+        }
+        for (com.api.bizplay_conversational.model.response.TravelerResolution.Ambiguous a : res.getAmbiguous()) {
+            List<String> opts = new ArrayList<>();
+            for (com.api.bizplay_conversational.model.response.StaffLookupResult c : a.getCandidates()) {
+                String d = c.getDepartmentName() != null ? c.getDepartmentName() : "?";
+                String p = c.getPosition() != null ? c.getPosition() : "?";
+                opts.add(c.getStaffName() + " (" + d + " / " + p + ")");
+            }
+            sb.append("Multiple staff match '").append(a.getName()).append("': ")
+                    .append(String.join("; ", opts))
+                    .append(" — reply with the department to pick which one. ");
+        }
+    }
+
+    /**
+     * Structured form of the ambiguous (duplicate-name) travelers from a resolution, for the UI to
+     * render as clickable chips. Returns null when there is nothing to disambiguate (so the field is
+     * omitted from JSON). The {@code sendText} of each option is a phrase the disambiguation resolver
+     * understands (name + department / position), so the UI can send it verbatim as the next turn.
+     */
+    private List<TripPlanAgentResponse.PendingChoice> buildPendingChoices(
+            com.api.bizplay_conversational.model.response.TravelerResolution res) {
+        if (res == null || res.getAmbiguous().isEmpty()) {
+            return null;
+        }
+        List<TripPlanAgentResponse.PendingChoice> choices = new ArrayList<>();
+        for (com.api.bizplay_conversational.model.response.TravelerResolution.Ambiguous a : res.getAmbiguous()) {
+            List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+            for (com.api.bizplay_conversational.model.response.StaffLookupResult c : a.getCandidates()) {
+                String dept = notBlank(c.getDepartmentName()) ? c.getDepartmentName() : "?";
+                String pos = notBlank(c.getPosition()) ? c.getPosition() : "?";
+                // Same label the plain-text sentence uses, e.g. "Chan Sokheang (IT / Developer)".
+                String label = c.getStaffName() + " (" + dept + " / " + pos + ")";
+                // A token the resolver can uniquely match: prefer department, then position. Falls back
+                // to the name alone if neither is known (rare; then identical duplicates stay ambiguous).
+                String discriminator = notBlank(c.getDepartmentName()) ? c.getDepartmentName()
+                        : (notBlank(c.getPosition()) ? c.getPosition() : null);
+                String sendText = discriminator != null
+                        ? c.getStaffName() + " from " + discriminator
+                        : c.getStaffName();
+                options.add(TripPlanAgentResponse.Option.builder()
+                        .staffId(c.getStaffId())
+                        .label(label)
+                        .sendText(sendText)
+                        .build());
+            }
+            // Always offer a way out: "Skip" declines this mention without re-triggering lookup.
+            options.add(TripPlanAgentResponse.Option.builder()
+                    .staffId(null)
+                    .label("Skip")
+                    .sendText("skip traveler: " + a.getName())
+                    .build());
+            choices.add(TripPlanAgentResponse.PendingChoice.builder()
+                    .kind("STAFF")
+                    .name(a.getName())
+                    .options(options)
+                    .build());
+        }
+        return choices;
+    }
+
     /** Bare affirmations/approvals that should point the user at the Create button, not the Update Agent. */
     private static final java.util.Set<String> APPROVAL_PHRASES = java.util.Set.of(
             "yes", "y", "ok", "okay", "approve", "approved", "confirm", "confirmed",
@@ -620,6 +764,58 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         }
         String m = message.trim().toLowerCase(Locale.ROOT).replaceAll("[.!\\s]+$", "");
         return APPROVAL_PHRASES.contains(m);
+    }
+
+    /** Explicit chip command from the UI's "Skip" option: "skip traveler: &lt;name&gt;". */
+    private static final java.util.regex.Pattern SKIP_TRAVELER_PATTERN =
+            java.util.regex.Pattern.compile("^\\s*skip\\s+traveler\\s*:\\s*(.+)$", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Negative verbs that, paired with a currently-pending name, mean "don't add this one". */
+    private static final java.util.List<String> SKIP_MARKERS = java.util.List.of(
+            "don't add", "dont add", "do not add", "not add", "don't include", "dont include",
+            "do not include", "exclude", "without", "remove", "skip", "drop");
+
+    /**
+     * Detect a request to DROP a still-pending ambiguous traveler, so it is resolved against the
+     * pending list instead of re-running staff lookup (which would re-detect the duplicates and loop).
+     * Returns the pending name to skip, or null when the message is not a skip/decline for a pending
+     * mention. The explicit "skip traveler: X" chip command is always honored; natural negatives
+     * ("don't add X", "skip X", "remove X") are honored ONLY when X is currently pending — so a
+     * legitimate "remove &lt;added traveler&gt;" still flows to the Update Agent.
+     */
+    private String detectPendingSkip(String message, ConversationalAgentSession session) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        String trimmed = message.trim();
+        // 1. Explicit chip command always wins.
+        java.util.regex.Matcher m = SKIP_TRAVELER_PATTERN.matcher(trimmed);
+        if (m.matches()) {
+            String name = m.group(1).trim();
+            return name.isEmpty() ? null : name;
+        }
+        // 2. Natural negative phrasing — only honored when it references a CURRENTLY-pending name.
+        List<String> pending = requestBodyBuilderService.pendingTravelerNames(session);
+        if (pending.isEmpty()) {
+            return null;
+        }
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        boolean negative = false;
+        for (String marker : SKIP_MARKERS) {
+            if (lower.contains(marker)) {
+                negative = true;
+                break;
+            }
+        }
+        if (!negative) {
+            return null;
+        }
+        for (String name : pending) {
+            if (name != null && lower.contains(name.toLowerCase(Locale.ROOT))) {
+                return name;
+            }
+        }
+        return null;
     }
 
     private String classifyIntent(String message, List<Message> history) {

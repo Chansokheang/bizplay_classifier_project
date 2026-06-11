@@ -4,9 +4,7 @@ import com.api.bizplay_chatbot.common.dto.ApiResponse;
 import com.api.bizplay_conversational.model.request.ReportApprovalStatusRequest;
 import com.api.bizplay_conversational.model.request.ReportBatchDeleteRequest;
 import com.api.bizplay_conversational.model.request.ReportCreateRequest;
-import com.api.bizplay_conversational.model.request.ReportLineUpdateRequest;
 import com.api.bizplay_conversational.model.response.ReportBatchDeleteResponse;
-import com.api.bizplay_conversational.model.response.ReportLineResponse;
 import com.api.bizplay_conversational.model.response.ReportResponse;
 import com.api.bizplay_conversational.service.expenseService.ExpenseService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @Slf4j
-@Tag(name = "Business Trip Reports", description = "Create the actual business trip expense report from an approved draft")
+@Tag(name = "Business Trip Reports", description = "Create and manage business trip expense reports")
 @RestController
 @RequestMapping("/api/v1/reports")
 @RequiredArgsConstructor
@@ -38,67 +36,24 @@ public class ExpenseController {
 
     private final ExpenseService expenseService;
 
-    /** Get all expense-report lines for a corp (each with its linked expense). */
-    @Operation(summary = "Get all expense report lines by corpNo")
+    /** Get all reports for a corp (each header with its expense lines). */
+    @Operation(summary = "Get all reports by corpNo")
     @GetMapping
-    public ResponseEntity<ApiResponse<List<ReportLineResponse>>> getByCorpNo(@RequestParam("corpNo") String corpNo) {
+    public ResponseEntity<ApiResponse<List<ReportResponse>>> getByCorpNo(@RequestParam("corpNo") String corpNo) {
         log.info("GET /api/v1/reports - corpNo={}", corpNo);
         return ResponseEntity.ok(ApiResponse.ok(expenseService.getByCorpNo(corpNo)));
     }
 
-    /** Get a single expense-report line (conversational_trip_report) by its id, with its expense. */
-    @Operation(summary = "Get an expense report line by id")
+    /** Get a full report (header + all expense lines) by its id. */
+    @Operation(summary = "Get a report by id")
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<ReportLineResponse>> getById(@PathVariable("id") String id) {
+    public ResponseEntity<ApiResponse<ReportResponse>> getById(@PathVariable("id") String id) {
         log.info("GET /api/v1/reports/{}", id);
         return ResponseEntity.ok(ApiResponse.ok(expenseService.getById(id)));
     }
 
-    /** Full update of one expense-report line (its expense, section, department, approvals) by id. */
-    @Operation(summary = "Update an expense report line by id")
-    @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<ReportLineResponse>> update(
-            @PathVariable("id") String id,
-            @Valid @RequestBody ReportLineUpdateRequest request) {
-        log.info("PUT /api/v1/reports/{} - section={}", id, request.getSectionCode());
-        return ResponseEntity.ok(ApiResponse.ok(expenseService.update(id, request)));
-    }
-
-    /** Update only the approval_status of an expense-report line, by its id in the body. */
-    @Operation(summary = "Update an expense report line's approval_status by id")
-    @PatchMapping("/approval_status")
-    public ResponseEntity<ApiResponse<ReportLineResponse>> updateApprovalStatus(
-            @Valid @RequestBody ReportApprovalStatusRequest request) {
-        log.info("PATCH /api/v1/reports/approval_status - id={}, approvalStatus={}",
-                request.getId(), request.getApprovalStatus());
-        return ResponseEntity.ok(
-                ApiResponse.ok(expenseService.updateApprovalStatus(request.getId(), request.getApprovalStatus())));
-    }
-
-    /** Delete several expense-report lines by id (each with its linked expense + attachments). */
-    @Operation(summary = "Delete multiple expense report lines by id")
-    @DeleteMapping("/batch")
-    public ResponseEntity<ApiResponse<ReportBatchDeleteResponse>> deleteBatch(
-            @Valid @RequestBody ReportBatchDeleteRequest request) {
-        log.info("DELETE /api/v1/reports/batch - {} id(s)", request.getIds() == null ? 0 : request.getIds().size());
-        return ResponseEntity.ok(ApiResponse.ok(expenseService.deleteByIds(request.getIds())));
-    }
-
-    /** Delete one expense-report line (and its linked expense + attachments) by id. */
-    @Operation(summary = "Delete an expense report line by id")
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<String>> deleteById(@PathVariable("id") String id) {
-        log.info("DELETE /api/v1/reports/{}", id);
-        expenseService.deleteById(id);
-        return ResponseEntity.ok(ApiResponse.ok("Deleted report line " + id));
-    }
-
-    /**
-     * Create a business trip report from the approved conversational draft (the report body, including
-     * its expense sections and the trip plan / session it links to). Normalizes the expense sections
-     * into the report tables and marks the drafting session POSTED.
-     */
-    @Operation(summary = "Create a business trip report")
+    /** Create a report (header + expense lines) from an approved trip plan's draft. */
+    @Operation(summary = "Create a report")
     @PostMapping
     public ResponseEntity<ApiResponse<ReportResponse>> create(@Valid @RequestBody ReportCreateRequest request) {
         log.info("POST /api/v1/reports - corpNo={}, tripPlanId={}, sessionId={}",
@@ -106,5 +61,44 @@ public class ExpenseController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(expenseService.create(request)));
+    }
+
+    /** Replace an existing report's content (all expense lines + header approval fields) by id. */
+    @Operation(summary = "Update a report by id")
+    @PutMapping("/{id}")
+    public ResponseEntity<ApiResponse<ReportResponse>> update(
+            @PathVariable("id") String id,
+            @Valid @RequestBody ReportCreateRequest request) {
+        log.info("PUT /api/v1/reports/{}", id);
+        return ResponseEntity.ok(ApiResponse.ok(expenseService.update(id, request)));
+    }
+
+    /** Update only the approval_status of a report, by its id in the body. */
+    @Operation(summary = "Update a report's approval_status by id")
+    @PatchMapping("/approval_status")
+    public ResponseEntity<ApiResponse<ReportResponse>> updateApprovalStatus(
+            @Valid @RequestBody ReportApprovalStatusRequest request) {
+        log.info("PATCH /api/v1/reports/approval_status - id={}, approvalStatus={}",
+                request.getId(), request.getApprovalStatus());
+        return ResponseEntity.ok(
+                ApiResponse.ok(expenseService.updateApprovalStatus(request.getId(), request.getApprovalStatus())));
+    }
+
+    /** Delete several reports by id (each with its lines, expenses, attachments). */
+    @Operation(summary = "Delete multiple reports by id")
+    @DeleteMapping("/batch")
+    public ResponseEntity<ApiResponse<ReportBatchDeleteResponse>> deleteBatch(
+            @Valid @RequestBody ReportBatchDeleteRequest request) {
+        log.info("DELETE /api/v1/reports/batch - {} id(s)", request.getIds() == null ? 0 : request.getIds().size());
+        return ResponseEntity.ok(ApiResponse.ok(expenseService.deleteByIds(request.getIds())));
+    }
+
+    /** Delete one report (header + its lines, expenses, attachments) by id. */
+    @Operation(summary = "Delete a report by id")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<String>> deleteById(@PathVariable("id") String id) {
+        log.info("DELETE /api/v1/reports/{}", id);
+        expenseService.deleteById(id);
+        return ResponseEntity.ok(ApiResponse.ok("Deleted report " + id));
     }
 }

@@ -2,6 +2,7 @@ package com.api.bizplay_conversational.service.requestBodyBuilderService;
 
 import com.api.bizplay_conversational.model.entity.AttachmentDraft;
 import com.api.bizplay_conversational.model.entity.ConversationalAgentSession;
+import com.api.bizplay_conversational.model.entity.PendingTravelerDraft;
 import com.api.bizplay_conversational.model.entity.TravelerDraft;
 import com.api.bizplay_conversational.model.entity.TripInformationDraft;
 import com.api.bizplay_conversational.model.entity.TripPlanDraft;
@@ -9,6 +10,7 @@ import com.api.bizplay_conversational.model.response.DraftEditPlan;
 import com.api.bizplay_conversational.model.response.SpreadsheetAnalysisResult;
 import com.api.bizplay_conversational.model.response.StaffLookupResult;
 import com.api.bizplay_conversational.model.response.TextAnalysisResult;
+import com.api.bizplay_conversational.model.response.TravelerResolution;
 import com.api.bizplay_conversational.service.staffService.StaffService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,7 +19,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -137,6 +142,7 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         }
         TripPlanDraft draft = readDraft(session);
         TripInformationDraft trip = ensureTripInformation(draft, session);
+        int pendingBefore = draft.getPendingTravelers() == null ? 0 : draft.getPendingTravelers().size();
 
         for (DraftEditPlan.Edit e : plan.getEdits()) {
             if (e == null || !isPresent(e.getOp())) {
@@ -153,7 +159,7 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
                     case "set_traveler_field" -> add(applied, setOneTravelerField(trip, name, field, value));
                     case "clear_traveler_field" -> add(applied, setOneTravelerField(trip, name, field, null));
                     case "set_all_travelers_field" -> add(applied, setAllTravelersField(trip, field, value));
-                    case "add_traveler" -> add(applied, addTravelerByName(session, trip, name));
+                    case "add_traveler" -> add(applied, addTravelerByName(session, draft, trip, name));
                     case "remove_traveler" -> add(applied, removeTravelerByName(trip, name));
                     default -> log.info("Update agent: ignoring unknown op '{}'.", op);
                 }
@@ -162,7 +168,10 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
             }
         }
 
-        if (!applied.isEmpty()) {
+        // Persist when an edit was applied OR a duplicate-name traveler was newly held pending
+        // (so the disambiguation survives to the next turn even though nothing was "applied").
+        int pendingAfter = draft.getPendingTravelers() == null ? 0 : draft.getPendingTravelers().size();
+        if (!applied.isEmpty() || pendingAfter != pendingBefore) {
             writeDraft(session, draft);
         }
         return applied;
@@ -274,18 +283,102 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         return true;
     }
 
-    private String addTravelerByName(ConversationalAgentSession session, TripInformationDraft trip, String name) {
+    private String addTravelerByName(ConversationalAgentSession session, TripPlanDraft draft,
+                                     TripInformationDraft trip, String name) {
         if (!isPresent(name)) {
             return null;
         }
-        StaffLookupResult staff = staffService.lookup(session.getCorpNo(), name.trim());
-        if (staff == null || !staff.isMatched()) {
-            log.info("Update agent: cannot add '{}' (not found in staff DB).", name);
+        String inputName = name.trim();
+        // Resolve against ALL staff matches (not just the first): duplicate names must be disambiguated
+        // by the user, the same as the PDF/text-analysis traveler path.
+        List<StaffLookupResult> candidates = staffService.findCandidates(session.getCorpNo(), inputName);
+        if (candidates.isEmpty()) {
+            log.info("Update agent: cannot add '{}' (not found in staff DB).", inputName);
             return null;
         }
+        if (candidates.size() > 1) {
+            // Duplicate names: hold for the user to pick which one; do NOT add a traveler yet.
+            log.info("Update agent: '{}' matched {} staff; holding for disambiguation.", inputName, candidates.size());
+            TextAnalysisResult.TravelerRoute route = new TextAnalysisResult.TravelerRoute();
+            route.setName(inputName);
+            addPendingTraveler(draft, route, inputName, candidates);
+            return null;
+        }
+        StaffLookupResult staff = candidates.get(0);
         TravelerDraft target = findOrCreateTraveler(trip, staff.getStaffName());
         backfillStaffIdentity(target, staff);
         return "added " + staff.getStaffName();
+    }
+
+    @Override
+    public TravelerResolution pendingResolution(ConversationalAgentSession session) {
+        TravelerResolution resolution = new TravelerResolution();
+        TripPlanDraft draft = readDraft(session);
+        if (draft.getPendingTravelers() == null) {
+            return resolution;
+        }
+        for (PendingTravelerDraft p : draft.getPendingTravelers()) {
+            List<PendingTravelerDraft.Candidate> cands = p.getCandidates();
+            if (cands == null || cands.size() <= 1) {
+                continue; // not-found or already-unique pendings are auto-resolved elsewhere
+            }
+            List<StaffLookupResult> staffCandidates = new ArrayList<>();
+            for (PendingTravelerDraft.Candidate c : cands) {
+                staffCandidates.add(StaffLookupResult.builder()
+                        .matched(true)
+                        .staffId(c.getStaffId())
+                        .staffName(c.getName())
+                        .departmentName(c.getDepartment())
+                        .position(c.getPosition())
+                        .build());
+            }
+            resolution.getAmbiguous().add(new TravelerResolution.Ambiguous(p.getName(), staffCandidates));
+        }
+        return resolution;
+    }
+
+    @Override
+    public List<String> pendingTravelerNames(ConversationalAgentSession session) {
+        TripPlanDraft draft = readDraft(session);
+        if (draft.getPendingTravelers() == null) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        for (PendingTravelerDraft p : draft.getPendingTravelers()) {
+            if (isPresent(p.getName())) {
+                names.add(p.getName());
+            }
+        }
+        return names;
+    }
+
+    @Override
+    public String removePendingTraveler(ConversationalAgentSession session, String name) {
+        if (!isPresent(name)) {
+            return null;
+        }
+        TripPlanDraft draft = readDraft(session);
+        String target = name.trim();
+        String removed = null;
+        if (draft.getPendingTravelers() != null) {
+            java.util.Iterator<PendingTravelerDraft> it = draft.getPendingTravelers().iterator();
+            while (it.hasNext()) {
+                PendingTravelerDraft p = it.next();
+                if (target.equalsIgnoreCase(p.getName())) {
+                    removed = p.getName();
+                    it.remove();
+                }
+            }
+        }
+        // Defensive: drop any unresolved placeholder traveler (no staffId) added under this name.
+        TripInformationDraft trip = draft.getTripInformation();
+        if (trip != null && trip.getTravelers() != null) {
+            trip.getTravelers().removeIf(t -> target.equalsIgnoreCase(t.getName()) && t.getStaffId() == null);
+        }
+        if (removed != null) {
+            writeDraft(session, draft);
+        }
+        return removed;
     }
 
     private String removeTravelerByName(TripInformationDraft trip, String name) {
@@ -475,9 +568,10 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
     }
 
     @Override
-    public void mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis, boolean authoritative) {
+    public TravelerResolution mergeTextAnalysis(ConversationalAgentSession session, TextAnalysisResult analysis, boolean authoritative) {
+        TravelerResolution resolution = new TravelerResolution();
         if (analysis == null) {
-            return;
+            return resolution;
         }
         TripPlanDraft draft = readDraft(session);
         TripInformationDraft tripInfo = ensureTripInformation(draft, session);
@@ -510,30 +604,34 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         }
 
         // Per-traveler routes.
-        applyTravelerRoutes(session.getCorpNo(), tripInfo, analysis, authoritative);
+        applyTravelerRoutes(session.getCorpNo(), draft, tripInfo, analysis, authoritative, resolution);
 
         writeDraft(session, draft);
+        return resolution;
     }
 
     @Override
-    public void mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis) {
+    public TravelerResolution mergeTravelersOnly(ConversationalAgentSession session, TextAnalysisResult analysis) {
+        TravelerResolution resolution = new TravelerResolution();
         if (analysis == null || analysis.getTravelers() == null || analysis.getTravelers().isEmpty()) {
-            return;
+            return resolution;
         }
         TripPlanDraft draft = readDraft(session);
         TripInformationDraft tripInfo = ensureTripInformation(draft, session);
         // Travelers only: never authoritative for trip-level fields (those stay from the message).
-        applyTravelerRoutes(session.getCorpNo(), tripInfo, analysis, false);
+        applyTravelerRoutes(session.getCorpNo(), draft, tripInfo, analysis, false, resolution);
         writeDraft(session, draft);
+        return resolution;
     }
 
     /**
      * Merge the traveler routes from an analysis into the trip. Named travelers are resolved against
-     * the staff DB (unmatched names dropped, matched ones backfilled); a nameless route is treated as
-     * trip-wide movement applied to every existing traveler that is still missing those fields.
+     * the staff DB: a UNIQUE match is added (identity backfilled); NO match is reported as not-found;
+     * MULTIPLE matches (duplicate names) are held as pending picks. A nameless route is trip-wide
+     * movement applied to every existing traveler that is still missing those fields.
      */
-    private void applyTravelerRoutes(String corpNo, TripInformationDraft tripInfo,
-                                     TextAnalysisResult analysis, boolean authoritative) {
+    private void applyTravelerRoutes(String corpNo, TripPlanDraft draft, TripInformationDraft tripInfo,
+                                     TextAnalysisResult analysis, boolean authoritative, TravelerResolution resolution) {
         if (analysis.getTravelers() == null) {
             return;
         }
@@ -542,26 +640,166 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
                 continue;
             }
             if (isPresent(route.getName())) {
-                // Named traveler: resolve against the staff DB (same as the spreadsheet path).
-                // Unmatched names are dropped; matched names get their identity backfilled.
-                StaffLookupResult staff = staffService.lookup(corpNo, route.getName().trim());
-                if (staff == null || !staff.isMatched()) {
-                    log.info("Text analysis traveler '{}' not found in staff DB; skipping.", route.getName());
+                String inputName = route.getName().trim();
+                List<StaffLookupResult> candidates = staffService.findCandidates(corpNo, inputName);
+                if (candidates.isEmpty()) {
+                    // Not in the staff DB yet. Report it now, but HOLD it (with its route) so that once
+                    // the staff is registered, a later turn re-resolves and adds it with this route.
+                    log.info("Traveler '{}' not found in staff DB; holding pending.", inputName);
+                    addOnce(resolution.getNotFound(), inputName);
+                    addPendingTraveler(draft, route, inputName, candidates);
                     continue;
                 }
+                if (candidates.size() > 1) {
+                    // Ambiguous: hold for the user to pick; do NOT add a traveler yet.
+                    log.info("Traveler '{}' matched {} staff; holding for disambiguation.", inputName, candidates.size());
+                    resolution.getAmbiguous().add(new TravelerResolution.Ambiguous(inputName, candidates));
+                    addPendingTraveler(draft, route, inputName, candidates);
+                    continue;
+                }
+                StaffLookupResult staff = candidates.get(0);
                 TravelerDraft target = findOrCreateTraveler(tripInfo, staff.getStaffName());
                 backfillStaffIdentity(target, staff);
-                // Overwrite named-route fields only for an authoritative source; otherwise fill blanks.
                 applyRoute(target, route, authoritative);
             } else {
-                // Nameless route = trip-wide movement ("from Seoul to Toronto"): apply it to
-                // every existing traveler that is still missing those fields. Do NOT create a
-                // nameless phantom traveler.
+                // Nameless route = trip-wide movement ("from Seoul to Toronto").
                 for (TravelerDraft t : tripInfo.getTravelers()) {
                     applyRoute(t, route, false);
                 }
             }
         }
+    }
+
+    /** Record an ambiguous traveler (its candidates + route) as pending, deduped by input name. */
+    private void addPendingTraveler(TripPlanDraft draft, TextAnalysisResult.TravelerRoute route,
+                                    String inputName, List<StaffLookupResult> candidates) {
+        if (draft.getPendingTravelers() == null) {
+            draft.setPendingTravelers(new ArrayList<>());
+        }
+        for (PendingTravelerDraft existing : draft.getPendingTravelers()) {
+            if (inputName.equalsIgnoreCase(existing.getName())) {
+                return; // already pending
+            }
+        }
+        PendingTravelerDraft p = new PendingTravelerDraft();
+        p.setName(inputName);
+        p.setOrigin(blankToNull(route.getOrigin()));
+        p.setDestination(blankToNull(route.getDestination()));
+        p.setReturnPoint(blankToNull(route.getReturnPoint()));
+        p.setTransportationMethod(blankToNull(route.getTransportationMethod()));
+        for (StaffLookupResult c : candidates) {
+            PendingTravelerDraft.Candidate cand = new PendingTravelerDraft.Candidate();
+            cand.setStaffId(c.getStaffId());
+            cand.setName(c.getStaffName());
+            cand.setDepartment(c.getDepartmentName());
+            cand.setPosition(c.getPosition());
+            p.getCandidates().add(cand);
+        }
+        draft.getPendingTravelers().add(p);
+    }
+
+    @Override
+    public List<String> resolvePendingTravelers(ConversationalAgentSession session, String message) {
+        TripPlanDraft draft = readDraft(session);
+        if (draft.getPendingTravelers() == null || draft.getPendingTravelers().isEmpty()) {
+            return List.of();
+        }
+        TripInformationDraft tripInfo = ensureTripInformation(draft, session);
+        String corpNo = session.getCorpNo();
+        String msg = message == null ? "" : message.toLowerCase(Locale.ROOT);
+
+        List<String> resolved = new ArrayList<>();
+        boolean changed = false;
+        java.util.Iterator<PendingTravelerDraft> it = draft.getPendingTravelers().iterator();
+        while (it.hasNext()) {
+            PendingTravelerDraft p = it.next();
+            // Re-resolve against the CURRENT staff DB (it may have changed since this was held).
+            List<StaffLookupResult> fresh = staffService.findCandidates(corpNo, p.getName());
+            if (fresh.isEmpty()) {
+                continue; // still not registered -> keep pending
+            }
+            StaffLookupResult chosen = fresh.size() == 1 ? fresh.get(0) : pickFromCandidates(fresh, msg);
+            if (chosen == null) {
+                // Now matches several -> refresh the stored candidates and keep pending for a pick.
+                refreshCandidates(p, fresh);
+                changed = true;
+                continue;
+            }
+            // Add the traveler and apply the route held from the original extraction.
+            TravelerDraft target = findOrCreateTraveler(tripInfo, chosen.getStaffName());
+            if (target.getStaffId() == null) {
+                target.setStaffId(chosen.getStaffId());
+            }
+            if (!isPresent(target.getDepartment())) {
+                target.setDepartment(chosen.getDepartmentName());
+            }
+            if (!isPresent(target.getPosition())) {
+                target.setPosition(chosen.getPosition());
+            }
+            if (!isPresent(target.getOrigin())) {
+                target.setOrigin(p.getOrigin());
+            }
+            if (!isPresent(target.getDestination())) {
+                target.setDestination(p.getDestination());
+            }
+            if (!isPresent(target.getReturnPoint())) {
+                target.setReturnPoint(p.getReturnPoint());
+            }
+            if (!isPresent(target.getTransportationMethod())) {
+                target.setTransportationMethod(p.getTransportationMethod());
+            }
+            resolved.add(chosen.getStaffName());
+            it.remove();
+            changed = true;
+        }
+        if (changed) {
+            writeDraft(session, draft);
+        }
+        return resolved;
+    }
+
+    /**
+     * Choose the candidate the user's message uniquely identifies — by staff id, department, or
+     * position. Returns null when nothing or several candidates match (still ambiguous).
+     */
+    private StaffLookupResult pickFromCandidates(List<StaffLookupResult> candidates, String msgLower) {
+        StaffLookupResult found = null;
+        for (StaffLookupResult c : candidates) {
+            if (c.getStaffId() != null && msgLower.contains(c.getStaffId().toString().toLowerCase(Locale.ROOT))) {
+                return c; // an exact staff id is unambiguous
+            }
+            boolean hit = (isPresent(c.getDepartmentName()) && msgLower.contains(c.getDepartmentName().toLowerCase(Locale.ROOT)))
+                    || (isPresent(c.getPosition()) && msgLower.contains(c.getPosition().toLowerCase(Locale.ROOT)));
+            if (hit) {
+                if (found != null) {
+                    return null; // matched more than one candidate -> still ambiguous
+                }
+                found = c;
+            }
+        }
+        return found;
+    }
+
+    /** Replace a pending traveler's stored candidates with a freshly-resolved set. */
+    private void refreshCandidates(PendingTravelerDraft p, List<StaffLookupResult> fresh) {
+        p.getCandidates().clear();
+        for (StaffLookupResult c : fresh) {
+            PendingTravelerDraft.Candidate cand = new PendingTravelerDraft.Candidate();
+            cand.setStaffId(c.getStaffId());
+            cand.setName(c.getStaffName());
+            cand.setDepartment(c.getDepartmentName());
+            cand.setPosition(c.getPosition());
+            p.getCandidates().add(cand);
+        }
+    }
+
+    private void addOnce(List<String> list, String value) {
+        for (String s : list) {
+            if (s.equalsIgnoreCase(value)) {
+                return;
+            }
+        }
+        list.add(value);
     }
 
     /** Fill traveler identity (staffId/department/position) from a matched staff record, without clobbering. */
@@ -643,6 +881,10 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         } catch (java.time.format.DateTimeParseException e) {
             log.warn("Ignoring unparseable date from text analysis: {}", raw);
         }
+    }
+
+    private String blankToNull(String v) {
+        return (v == null || v.isBlank()) ? null : v.trim();
     }
 
     private boolean isPresent(String value) {

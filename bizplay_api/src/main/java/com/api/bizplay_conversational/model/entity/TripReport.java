@@ -7,9 +7,8 @@ import lombok.Setter;
 import java.util.UUID;
 
 /**
- * A persisted row of conversational_trip_report: one expense line of a report, linking the trip plan
- * to either a cost or transportation expense. Exactly one of costExpenseId / transportationExpenseId
- * is set, matching section_code (enforced by a DB CHECK constraint).
+ * Report HEADER row (conversational_trip_report): one per report. The expense lines live in
+ * conversational_trip_report_detail ({@link TripReportDetail}).
  */
 @Getter
 @Setter
@@ -19,10 +18,7 @@ public class TripReport {
     private UUID agentSessionId;
     private UUID departmentId;
     private UUID tripPlanId;
-    private UUID transportationExpenseId;
-    private UUID costExpenseId;
-    /** "COST", "TRANSPORTATION", or "ETC". */
-    private String sectionCode;
     private String approvalNumber;
     private String approvalStatus;
+    private java.time.LocalDateTime createdDate;
 }

@@ -107,3 +107,43 @@ Content-Type: application/json
     ]
   }
 }
+
+### ----------------------------------------------------------------------------
+### COMPLIANCE — R10 requisition-mismatch audit (v2 rule engine)
+### Audits an APPROVED trip plan against its expense report + uploaded receipts.
+### Prereqs: the plan must be "Approval complete" and have a posted expense report.
+### Replace tripPlanId with a real plan id (e.g. from POST /api/v1/plans).
+### ----------------------------------------------------------------------------
+POST {{host}}/api/v2/rule-engine/r10
+Content-Type: application/json
+
+{
+  "corpNo": "{{corpNo}}",
+  "tripPlanId": "REPLACE_WITH_TRIP_PLAN_ID"
+}
+
+### Get all compliance audits for a corp (newest first)
+GET {{host}}/api/v2/rule-engine/audits?corpNo={{corpNo}}
+
+### Get one compliance audit by its audit id
+GET {{host}}/api/v2/rule-engine/audits/REPLACE_WITH_AUDIT_ID
+
+### Update a compliance audit's verdict (analyst override; null field left unchanged)
+PUT {{host}}/api/v2/rule-engine/audits/REPLACE_WITH_AUDIT_ID
+Content-Type: application/json
+
+{
+  "complianceStatus": "NORMAL",
+  "confidenceLevel": "HIGH"
+}
+
+### Delete multiple compliance audits by id (batch)
+DELETE {{host}}/api/v2/rule-engine/audits/batch
+Content-Type: application/json
+
+{
+  "ids": ["REPLACE_WITH_AUDIT_ID_1", "REPLACE_WITH_AUDIT_ID_2"]
+}
+
+### Delete one compliance audit by id
+DELETE {{host}}/api/v2/rule-engine/audits/REPLACE_WITH_AUDIT_ID
