@@ -127,6 +127,8 @@ body {
 }
 .lang-btn:not(.active):hover { color: var(--primary); }
 .lang-btn.active { background: var(--primary); color: #fff; }
+.role-btn { display: inline-flex; align-items: center; gap: 5px; }
+.role-btn .ico { width: 13px; height: 13px; }
 .corp-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px 5px 10px; white-space: nowrap; }
 .corp-tag label { color: var(--muted); }
 .corp-input {

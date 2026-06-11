@@ -114,6 +114,7 @@ const I18N = {
   "Outside trip period": "출장 기간 외", "Unplanned location": "계획에 없는 장소", "No receipt": "영수증 없음",
   "Receipt": "영수증", "Check": "점검", "✓ ok": "✓ 정상", "Date": "날짜", "Route / Place": "경로 / 장소", "Amount": "금액",
   "Skip": "건너뛰기",
+  "Admin": "관리자",
   "There is still a pending choice — pick one to continue:": "아직 선택이 남아 있습니다 — 계속하려면 하나를 선택하세요:",
   "Analyst override": "분석가 수정", "Save verdict": "판정 저장",
   "Manually correct the compliance / confidence verdict of this audit.": "이 감사의 준수/신뢰도 판정을 수동으로 수정합니다.",
@@ -204,6 +205,39 @@ function initI18n() {
     b.addEventListener("click", () => setLanguage(b.getAttribute("data-lang"))));
   i18nObserver.observe(document.body, { childList: true, subtree: true });
   if (LANG === "ko") setLanguage("ko");
+}
+
+/* ================================================================
+ *  Role (Traveler / Admin) — gates which workflow tabs are visible.
+ *  Traveler: request trip plans + settle expense reports.
+ *  Admin:    approve plans + review compliance audits.
+ * ================================================================ */
+let ROLE = localStorage.getItem("bizplay.role") || "traveler";
+const ROLE_TABS = { traveler: ["plan", "report"], admin: ["approve", "audit"] };
+
+function roleAllows(tab) { return (ROLE_TABS[ROLE] || ROLE_TABS.traveler).includes(tab); }
+
+function applyRole() {
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.classList.toggle("hidden", !roleAllows(t.getAttribute("data-tab"))));
+  document.querySelectorAll(".role-btn").forEach((b) =>
+    b.classList.toggle("active", b.getAttribute("data-role") === ROLE));
+  if (!roleAllows(currentTab)) showTab(ROLE_TABS[ROLE][0]);
+}
+
+function setRole(role) {
+  role = role === "admin" ? "admin" : "traveler";
+  if (role === ROLE) return;
+  ROLE = role;
+  localStorage.setItem("bizplay.role", ROLE);
+  applyRole();
+  toast(ROLE === "admin" ? "Admin view — approve plans & review audits." : "Traveler view — request trips & settle expenses.", "");
+}
+
+function initRole() {
+  document.querySelectorAll(".role-btn").forEach((b) =>
+    b.addEventListener("click", () => setRole(b.getAttribute("data-role"))));
+  applyRole();
 }
 
 /* ---------- Global loading indicator ----------
@@ -1077,10 +1111,6 @@ function init() {
   $("openReportCreateBtn").addEventListener("click", () => openReportCreate());
   $("reportBody").addEventListener("click", (ev) => {
     if (ev.target.closest(".c-check")) return;
-    const openAudit = ev.target.closest("[data-open-audit]");
-    if (openAudit) { openAuditDetail(openAudit.getAttribute("data-open-audit")); return; }
-    const auditBtn = ev.target.closest("[data-audit-plan]");
-    if (auditBtn) { runR10Audit(auditBtn.getAttribute("data-audit-plan"), { switchTab: true, source: "auto" }); return; }
     const viewBtn = ev.target.closest("[data-report-key]");
     if (viewBtn) openReportDetail(viewBtn.getAttribute("data-report-key"));
   });
@@ -1950,6 +1980,7 @@ async function saveDraftEdit() {
  *  TABS
  * ================================================================ */
 function showTab(name) {
+  if (!roleAllows(name)) name = ROLE_TABS[ROLE][0];   // role gate: never open a hidden tab
   currentTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.getAttribute("data-tab") === name));
   ["plan", "approve", "report", "audit"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
@@ -2373,9 +2404,9 @@ function renderReports() {
     const aprLabel = aprStatus === "Approval complete" ? "Approved"
       : aprStatus === "Business trip cancellation" ? "Cancelled" : "Request for approval";
     const a = g.audit;
+    // Read-only status for the traveler — audit review/override lives in the Admin role.
     const auditCell = a
-      ? `<button class="audit-pill pill-btn ${resultClass(a.status)}" data-open-audit="${esc(a.auditId)}"
-           title="${esc(a.summary || "Open the latest R10 audit")}">${esc(a.status === "Pass" ? "Passed" : a.status)}</button>`
+      ? `<span class="audit-pill ${resultClass(a.status)}" title="${esc(a.summary || "")}">${esc(a.status === "Pass" ? "Passed" : a.status)}</span>`
       : `<span class="muted" title="No R10 audit has run for this trip plan yet">Not audited</span>`;
     return `<tr class="row-click" data-report-key="${esc(g.key)}">
       <td class="c-check"><input type="checkbox" class="chk report-chk" data-id="${esc(g.key)}" data-title="${esc(g.title)}" aria-label="Select report" /></td>
@@ -2393,7 +2424,6 @@ function renderReports() {
       <td class="c-period">${esc(g.date || "—")}</td>
       <td><div class="row-actions">
         <button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button>
-        ${g.tripPlanId ? `<button class="btn-xs" data-audit-plan="${esc(g.tripPlanId)}" title="Run R10 compliance audit">${svgIcon("shield")} Audit</button>` : ""}
       </div></td>
     </tr>`;
   }).join("");
@@ -2964,10 +2994,11 @@ async function submitReportCreate() {
     toast(`Expense report created (${(data.costItems||data.lines) ? (data.costItems||data.lines).length + " lines" : "ok"}).`, "ok");
     closeReportCreate();
     loadReports();
-    // After a report is created, automatically run the R10 requisition-mismatch audit
-    // against its trip plan and surface the result on the Audit tab.
+    // After a report is created, automatically run the R10 requisition-mismatch audit.
+    // Only jump to the Audit tab when the active role can see it (admins); travelers
+    // just get the verdict toast and the audit pill on their report row.
     const planId = data.tripPlanId || rc.planId;
-    if (planId) runR10Audit(planId, { switchTab: true, source: "auto" });
+    if (planId) runR10Audit(planId, { switchTab: roleAllows("audit"), source: "auto" });
   } catch (e) {
     $("rcMsg").textContent = "Submit failed: " + friendlyError(e.message);
   } finally {
@@ -3122,7 +3153,7 @@ function renderAudits() {
     body.innerHTML = auditsCache.length
       ? emptyRow(9, { icon: "search", title: "No audits match this filter", sub: "Try a different search or compliance chip." })
       : emptyRow(9, { icon: "shield", title: "No audits yet", sub: "R10 runs automatically each time an expense report is created.",
-          action: `<button class="btn btn-primary btn-sm" onclick="showTab('report')">Go to Expense Report</button>` });
+          action: roleAllows("report") ? `<button class="btn btn-primary btn-sm" onclick="showTab('report')">Go to Expense Report</button>` : "" });
     updateAuditSelBar();
     return;
   }
@@ -3877,4 +3908,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); });
