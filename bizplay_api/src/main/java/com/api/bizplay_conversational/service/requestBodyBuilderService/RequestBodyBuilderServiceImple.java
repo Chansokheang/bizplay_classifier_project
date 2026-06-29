@@ -602,6 +602,12 @@ public class RequestBodyBuilderServiceImple implements RequestBodyBuilderService
         if (authoritative || tripInfo.getBusinessEndDate() == null) {
             setDateIfPresent(analysis.getBusinessEndDate(), tripInfo::setBusinessEndDate);
         }
+        // The PDF often prints BusinessPeriod in a display form ("12 JUN 2026 - 21 JUN 2026"), but the
+        // plan-create endpoint requires "yyyy-MM-dd to yyyy-MM-dd". Rebuild it from the parsed dates so
+        // the draft posts back cleanly.
+        if (tripInfo.getBusinessStartDate() != null && tripInfo.getBusinessEndDate() != null) {
+            tripInfo.setBusinessPeriod(tripInfo.getBusinessStartDate() + " to " + tripInfo.getBusinessEndDate());
+        }
 
         // Per-traveler routes.
         applyTravelerRoutes(session.getCorpNo(), draft, tripInfo, analysis, authoritative, resolution);

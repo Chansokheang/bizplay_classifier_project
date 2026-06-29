@@ -27,6 +27,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.DateTimeParseException;
+import java.util.Locale;
 import java.util.List;
 import java.util.UUID;
 
@@ -470,18 +474,44 @@ public class PlanServiceImple implements PlanService {
         return detail;
     }
 
+    /** Day-Month-Year display form printed on many bookings, e.g. "12 JUN 2026" (case-insensitive). */
+    private static final DateTimeFormatter DAY_MON_YEAR = new DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("d MMM yyyy")
+            .toFormatter(Locale.ENGLISH);
+
     private LocalDate[] parseBusinessPeriod(String businessPeriod) {
-        String[] parts = businessPeriod.split("(?i)\\s+to\\s+");
+        if (businessPeriod == null || businessPeriod.isBlank()) {
+            throw new IllegalArgumentException("BusinessPeriod is required.");
+        }
+        // Accept "to" or a whitespace-padded dash/tilde as the range separator. The whitespace
+        // requirement keeps the hyphens inside an ISO date ("2026-06-12") from being split.
+        String[] parts = businessPeriod.trim().split("(?i)\\s+(?:to|~|–|—|-)\\s+");
         if (parts.length != 2) {
             throw new IllegalArgumentException("BusinessPeriod must use format 'yyyy-MM-dd to yyyy-MM-dd'.");
         }
 
-        LocalDate start = LocalDate.parse(parts[0].trim());
-        LocalDate end = LocalDate.parse(parts[1].trim());
+        LocalDate start = parseFlexibleDate(parts[0].trim());
+        LocalDate end = parseFlexibleDate(parts[1].trim());
         if (end.isBefore(start)) {
             throw new IllegalArgumentException("BusinessPeriod end date must be on or after start date.");
         }
         return new LocalDate[]{start, end};
+    }
+
+    /** Parse an ISO date ("2026-06-12") or a "12 JUN 2026" display date. */
+    private LocalDate parseFlexibleDate(String value) {
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException ignored) {
+            // fall through to the display format
+        }
+        try {
+            return LocalDate.parse(value, DAY_MON_YEAR);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                    "BusinessPeriod dates must be 'yyyy-MM-dd' (could not parse '" + value + "').");
+        }
     }
 
     private PlanResponse toResponse(Plan plan) {
