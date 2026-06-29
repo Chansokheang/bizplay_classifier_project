@@ -129,6 +129,17 @@ body {
 .lang-btn.active { background: var(--primary); color: #fff; }
 .role-btn { display: inline-flex; align-items: center; gap: 5px; }
 .role-btn .ico { width: 13px; height: 13px; }
+
+/* ---------- Demo sample banner ---------- */
+.demo-banner { background: var(--primary-soft); border-bottom: 1px solid var(--line); }
+.demo-banner.hidden { display: none; }
+.demo-banner-inner { display: flex; align-items: center; gap: 12px; padding: 10px 24px; }
+.demo-ico { display: inline-flex; color: var(--primary); flex-shrink: 0; }
+.demo-ico .ico { width: 18px; height: 18px; }
+.demo-text { font-size: 13px; color: var(--soft); flex: 1; min-width: 0; }
+.demo-text strong { color: var(--primary-dk); }
+.demo-banner .btn-sm { white-space: nowrap; flex-shrink: 0; }
+.demo-banner .x-btn { flex-shrink: 0; }
 .corp-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px 5px 10px; white-space: nowrap; }
 .corp-tag label { color: var(--muted); }
 .corp-input {

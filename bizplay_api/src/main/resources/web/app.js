@@ -115,6 +115,10 @@ const I18N = {
   "Receipt": "영수증", "Check": "점검", "✓ ok": "✓ 정상", "Date": "날짜", "Route / Place": "경로 / 장소", "Amount": "금액",
   "Skip": "건너뛰기",
   "Admin": "관리자",
+  "Demo sample": "데모 샘플",
+  "Download a sample travel-reservation PDF, then attach it in the agent or as a receipt to try the flow.":
+    "샘플 출장 예약 PDF를 다운로드한 뒤 에이전트나 영수증으로 첨부해 흐름을 체험해 보세요.",
+  "Download sample PDF": "샘플 PDF 다운로드",
   "There is still a pending choice — pick one to continue:": "아직 선택이 남아 있습니다 — 계속하려면 하나를 선택하세요:",
   "Analyst override": "분석가 수정", "Save verdict": "판정 저장",
   "Manually correct the compliance / confidence verdict of this audit.": "이 감사의 준수/신뢰도 판정을 수동으로 수정합니다.",
@@ -238,6 +242,18 @@ function initRole() {
   document.querySelectorAll(".role-btn").forEach((b) =>
     b.addEventListener("click", () => setRole(b.getAttribute("data-role"))));
   applyRole();
+}
+
+/* Demo-sample download banner — shown until the user dismisses it. */
+function initDemoBanner() {
+  const banner = $("demoBanner");
+  if (!banner) return;
+  if (localStorage.getItem("bizplay.demoBannerDismissed") !== "1") banner.classList.remove("hidden");
+  $("demoBannerClose").addEventListener("click", () => {
+    banner.classList.add("hidden");
+    localStorage.setItem("bizplay.demoBannerDismissed", "1");
+  });
+  $("demoDownloadBtn").addEventListener("click", () => toast("Downloading sample-trip-reservation.pdf…", "ok"));
 }
 
 /* ---------- Global loading indicator ----------
@@ -3908,4 +3924,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); });

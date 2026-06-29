@@ -341,10 +341,12 @@ public class ExpenseServiceImple implements ExpenseService {
         e.setCategory(orDefault(d.getType(), "Expense"));
         e.setUsePurpose(orEmpty(d.getUsePurpose()));
         e.setAccount(orEmpty(d.getAccount()));
-        LocalDate evidence = firstNonNull(d.getProofDate(), d.getUsageDate(), d.getStartDate(), LocalDate.now());
-        LocalDate start = firstNonNull(d.getStartDate(), d.getProofDate(), d.getUsageDate(), LocalDate.now());
+        // Leave dates null when the receipt carried none — do NOT fabricate today's date, which would
+        // make the line look out-of-period in the R10 date-alignment audit (that rule skips null dates).
+        LocalDate evidence = firstNonNull(d.getProofDate(), d.getUsageDate(), d.getStartDate());
+        LocalDate start = firstNonNull(d.getStartDate(), d.getProofDate(), d.getUsageDate());
         LocalDate end = firstNonNull(d.getEndDate(), start);
-        if (end.isBefore(start)) {
+        if (start != null && end != null && end.isBefore(start)) {
             end = start;
         }
         e.setStartDate(start);
@@ -370,7 +372,8 @@ public class ExpenseServiceImple implements ExpenseService {
         e.setGrade(blankToNull(d.getGrade()));
         e.setOriginLocation(orEmpty(d.getOrigin()));
         e.setDestinationLocation(orEmpty(d.getDestination()));
-        e.setUsageDate(firstNonNull(d.getUsageDate(), d.getProofDate(), d.getStartDate(), LocalDate.now()));
+        // Null when the receipt carried no date — never default to today (see insertCost note).
+        e.setUsageDate(firstNonNull(d.getUsageDate(), d.getProofDate(), d.getStartDate()));
         e.setEvidenceDate(firstNonNull(d.getProofDate(), d.getUsageDate()));
         e.setVendor(orEmpty(d.getVendor()));
         e.setSupplyPrice(firstNonNull(d.getSupplyPrice(), orZero(d.getAmountUsed())));
