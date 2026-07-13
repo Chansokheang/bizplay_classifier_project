@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -65,13 +66,16 @@ public class ReceiptExtractionAgentServiceImple implements ReceiptExtractionAgen
             """;
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.conversational.receipt-extraction-agent.model:gemma-4-e4b}")
     private String modelName;
 
-    public ReceiptExtractionAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper) {
+    public ReceiptExtractionAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper,
+                                              LlmSettingsService llmSettingsService) {
         this.chatClientRegistry = chatClientRegistry;
+        this.llmSettingsService = llmSettingsService;
         this.objectMapper = objectMapper;
     }
 
@@ -86,7 +90,7 @@ public class ReceiptExtractionAgentServiceImple implements ReceiptExtractionAgen
             text = text.substring(0, MAX_TEXT_CHARS);
         }
 
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             log.warn("Receipt extraction model is not configured: {}", modelName);
             return emptyResult();

@@ -3,6 +3,7 @@ package com.api.bizplay_conversational.service.clarificationAgentService;
 import com.api.bizplay_conversational.model.entity.TripPlanDraft;
 import com.api.bizplay_conversational.model.response.MissingFieldsResult;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -28,12 +29,15 @@ public class ClarificationAgentServiceImple implements ClarificationAgentService
             "All the required details are captured. Review the draft on the right and click \"Create this plan\" when you're ready.";
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
 
     @Value("${app.conversational.clarification-agent.model:qwen3-14b}")
     private String modelName;
 
-    public ClarificationAgentServiceImple(Map<String, ChatClient> chatClientRegistry) {
+    public ClarificationAgentServiceImple(Map<String, ChatClient> chatClientRegistry,
+                                          LlmSettingsService llmSettingsService) {
         this.chatClientRegistry = chatClientRegistry;
+        this.llmSettingsService = llmSettingsService;
     }
 
     @Override
@@ -46,7 +50,7 @@ public class ClarificationAgentServiceImple implements ClarificationAgentService
             return READY_MESSAGE;
         }
 
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             log.warn("Clarification agent model '{}' not configured; using template follow-up.", modelName);
             return templateFollowUp(fields);

@@ -4,6 +4,7 @@ import com.api.bizplay_conversational.model.response.ExpenseAnalysisResult;
 import com.api.bizplay_conversational.model.response.ReceiptExtractionResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -56,13 +57,16 @@ public class ExpenseAnalysisAgentServiceImple implements ExpenseAnalysisAgentSer
             """;
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.conversational.expense-analysis-agent.model:qwen3-14b}")
     private String modelName;
 
-    public ExpenseAnalysisAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper) {
+    public ExpenseAnalysisAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper,
+                                            LlmSettingsService llmSettingsService) {
         this.chatClientRegistry = chatClientRegistry;
+        this.llmSettingsService = llmSettingsService;
         this.objectMapper = objectMapper;
     }
 
@@ -74,7 +78,7 @@ public class ExpenseAnalysisAgentServiceImple implements ExpenseAnalysisAgentSer
             return new ExpenseAnalysisResult();
         }
 
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             log.warn("Expense analysis model is not configured: {}", modelName);
             return new ExpenseAnalysisResult();

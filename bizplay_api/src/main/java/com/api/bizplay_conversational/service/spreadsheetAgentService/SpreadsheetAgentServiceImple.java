@@ -13,6 +13,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,7 @@ public class SpreadsheetAgentServiceImple implements SpreadsheetAgentService {
     private static final int MAX_DATA_ROWS = 500;
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final StaffService staffService;
     private final ObjectMapper objectMapper;
 
@@ -167,7 +169,7 @@ public class SpreadsheetAgentServiceImple implements SpreadsheetAgentService {
     @SuppressWarnings("unchecked")
     private Map<String, Integer> inferColumnMapping(List<List<String>> rows, List<String> warnings) {
         Map<String, Integer> fallback = headerKeywordMapping(rows);
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             warnings.add("LLM model not configured; used keyword header matching.");
             return fallback;

@@ -4,6 +4,7 @@ import com.api.bizplay_conversational.model.entity.TripPlanDraft;
 import com.api.bizplay_conversational.model.response.DraftEditPlan;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -52,19 +53,22 @@ public class UpdateAgentServiceImple implements UpdateAgentService {
             """;
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.conversational.update-agent.model:qwen3-14b}")
     private String modelName;
 
-    public UpdateAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper) {
+    public UpdateAgentServiceImple(Map<String, ChatClient> chatClientRegistry, ObjectMapper objectMapper,
+                                   LlmSettingsService llmSettingsService) {
         this.chatClientRegistry = chatClientRegistry;
+        this.llmSettingsService = llmSettingsService;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public DraftEditPlan plan(String message, TripPlanDraft currentDraft, List<Message> history) {
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             log.warn("Update agent model is not configured: {}", modelName);
             return new DraftEditPlan();

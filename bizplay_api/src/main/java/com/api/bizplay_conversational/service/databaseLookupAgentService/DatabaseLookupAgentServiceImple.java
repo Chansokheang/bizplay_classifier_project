@@ -1,12 +1,13 @@
 package com.api.bizplay_conversational.service.databaseLookupAgentService;
 
 import com.api.bizplay_conversational.model.response.DatabaseLookupAgentResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -19,7 +20,6 @@ import java.util.Set;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class DatabaseLookupAgentServiceImple implements DatabaseLookupAgentService {
 
     private static final Set<String> ALLOWED_TABLES = Set.of(
@@ -42,10 +42,26 @@ public class DatabaseLookupAgentServiceImple implements DatabaseLookupAgentServi
     );
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
+
+    /**
+     * Read-only, least-privilege JdbcTemplate ({@code bizplay_agent_ro} role). This is
+     * intentionally NOT the app's primary JdbcTemplate: the role cannot insert/update/
+     * delete or call procedures, so no gap in the SQL validator can turn into a write.
+     */
     private final JdbcTemplate jdbcTemplate;
 
     @Value("${app.conversational.database-lookup-agent.model:qwen3-14b}")
     private String modelName;
+
+    public DatabaseLookupAgentServiceImple(
+            Map<String, ChatClient> chatClientRegistry,
+            @Qualifier("agentJdbcTemplate") JdbcTemplate jdbcTemplate,
+            LlmSettingsService llmSettingsService) {
+        this.chatClientRegistry = chatClientRegistry;
+        this.jdbcTemplate = jdbcTemplate;
+        this.llmSettingsService = llmSettingsService;
+    }
 
     /** Total generation attempts: the first try plus self-correction retries. */
     @Value("${app.conversational.database-lookup-agent.max-attempts:3}")
@@ -114,7 +130,7 @@ public class DatabaseLookupAgentServiceImple implements DatabaseLookupAgentServi
 
     private String generateSql(String corpNo, String task, List<Message> history,
                                String previousBadSql, String previousError) {
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             throw new IllegalStateException("Database lookup agent model is not configured: " + modelName);
         }

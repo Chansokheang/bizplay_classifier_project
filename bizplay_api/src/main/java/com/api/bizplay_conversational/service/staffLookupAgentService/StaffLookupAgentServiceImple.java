@@ -6,6 +6,7 @@ import com.api.bizplay_conversational.model.response.StaffLookupResult;
 import com.api.bizplay_conversational.service.staffService.StaffService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ import java.util.Map;
 public class StaffLookupAgentServiceImple implements StaffLookupAgentService {
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final StaffService staffService;
 
     @Value("${app.conversational.staff-lookup-agent.model:qwen3-14b}")
@@ -57,7 +59,7 @@ public class StaffLookupAgentServiceImple implements StaffLookupAgentService {
     }
 
     private String extractStaffName(String message) {
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             throw new IllegalStateException("Staff lookup agent model is not configured: " + modelName);
         }

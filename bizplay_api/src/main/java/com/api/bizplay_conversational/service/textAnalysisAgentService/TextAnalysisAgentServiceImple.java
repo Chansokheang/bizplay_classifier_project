@@ -4,6 +4,7 @@ import com.api.bizplay_conversational.model.response.TextAnalysisResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -20,6 +21,7 @@ import java.util.List;
 public class TextAnalysisAgentServiceImple implements TextAnalysisAgentService {
 
     private final java.util.Map<String, ChatClient> chatClientRegistry;
+    private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.conversational.text-analysis-agent.model:qwen3-14b}")
@@ -69,7 +71,7 @@ public class TextAnalysisAgentServiceImple implements TextAnalysisAgentService {
 
     @Override
     public TextAnalysisResult analyze(String message, List<Message> history) {
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             log.warn("Text analysis agent model is not configured: {}", modelName);
             return emptyResult();

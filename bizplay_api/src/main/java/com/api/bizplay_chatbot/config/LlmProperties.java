@@ -44,8 +44,16 @@ public class LlmProperties {
          * How to send the API key to the server.
          * - "bearer"    → standard OpenAI-compatible: Authorization: Bearer <apiKey>
          * - "x-api-key" → legacy local-vLLM style:    x-api-key: <apiKey>
+         * - any other value → treated as a literal custom header name (e.g. "apikey" for
+         *   LUXIA's bridge API), sent as "<headerName>: <apiKey>" with no Authorization header.
          */
         private String apiKeyHeader = "bearer";
+        /**
+         * Path appended to baseUrl for the chat-completions call. Defaults to the OpenAI-standard
+         * "/chat/completions"; override for gateways that use a different path (e.g. LUXIA's
+         * "/luxia/v1/chat").
+         */
+        private String completionsPath = "/chat/completions";
         /** Model name as registered in vLLM */
         private String model;
         /** Sampling temperature */

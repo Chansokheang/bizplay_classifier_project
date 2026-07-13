@@ -161,6 +161,35 @@ CREATE TABLE conversational_agent_session (
                                                   )
 );
 
+-- Single-row runtime setting: which LLM the conversational sub-agents use. NULL active_model means
+-- each agent falls back to its own configured default (app.conversational.<agent>.model). Switched at
+-- runtime via PUT /api/v1/agent-conversations/llm-settings.
+CREATE TABLE conversational_llm_setting (
+                                            id SMALLINT PRIMARY KEY DEFAULT 1,
+                                            active_model VARCHAR(100),
+                                            updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                            CONSTRAINT ck_conversational_llm_setting_singleton CHECK (id = 1)
+);
+
+-- Runtime-managed LLM model definitions (add/update/delete via the /llm-models endpoints). These are
+-- loaded into the ChatClient registry at startup and on each change, alongside the static
+-- app.llm.models[*] entries from config. The name is the registry key used by app.conversational.*.
+CREATE TABLE conversational_llm_model (
+                                          name VARCHAR(100) PRIMARY KEY,
+                                          label VARCHAR(255),
+                                          base_url VARCHAR(500) NOT NULL,
+                                          api_key TEXT,
+                                          auth_scheme VARCHAR(50) NOT NULL DEFAULT 'bearer',
+                                          api_key_header VARCHAR(50) NOT NULL DEFAULT 'bearer',
+                                          completions_path VARCHAR(255) NOT NULL DEFAULT '/chat/completions',
+                                          model VARCHAR(255) NOT NULL,
+                                          temperature DOUBLE PRECISION NOT NULL DEFAULT 0,
+                                          max_tokens INTEGER NOT NULL DEFAULT 2048,
+                                          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                          created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          updated_date TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE conversational_trip_plan (
                                           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                           corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -192,9 +221,11 @@ CREATE TABLE conversational_trip_plan (
 CREATE TABLE conversational_traveler (
                                          trip_id UUID NOT NULL REFERENCES conversational_trip_plan(id) ON UPDATE CASCADE ON DELETE CASCADE,
                                          staff_id UUID NOT NULL REFERENCES conversational_staff(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-                                         origin_location VARCHAR(255) NOT NULL,
-                                         destination_location VARCHAR(255) NOT NULL,
-                                         return_point VARCHAR(255) NOT NULL,
+                                         -- Route fields are optional: a traveler may be added with only a partial route
+                                         -- (e.g. origin+destination but no return point), so these are nullable.
+                                         origin_location VARCHAR(255),
+                                         destination_location VARCHAR(255),
+                                         return_point VARCHAR(255),
                                          created_date TIMESTAMP NOT NULL DEFAULT NOW(),
                                          PRIMARY KEY (trip_id, staff_id)
 );
@@ -471,3 +502,51 @@ CREATE TABLE vector_store (
 );
 CREATE INDEX vector_store_embedding_idx ON vector_store USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX vector_store_bot_id_idx ON vector_store ((metadata->>'bot_id'));
+
+-- ============================================================================
+-- Least-privilege role for the conversational DATABASE-LOOKUP sub-agent.
+--
+-- The database-lookup agent runs raw, LLM-generated SQL. To guarantee it can
+-- NEVER insert/update/delete or call procedures -- regardless of any gap in the
+-- Java-side SQL validator -- its JDBC connection logs in as this role instead of
+-- the app's read-write `postgres` user. Only the agent's second DataSource uses
+-- this role (see AgentDataSourceConfig); every normal REST/JPA/MyBatis path keeps
+-- using the primary read-write datasource, so ordinary CRUD is unaffected.
+--
+-- Enforcement is at the database, not just the app:
+--   * default_transaction_read_only = on  -> writes are rejected by Postgres.
+--   * statement_timeout = 3s              -> caps runaway queries / pg_sleep DoS.
+--   * SELECT granted only on the allow-listed lookup tables; nothing else.
+-- ============================================================================
+DO
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bizplay_agent_ro') THEN
+        -- Password is overridden per-environment via the .env / APP_CONVERSATIONAL_AGENT_DATASOURCE_PASSWORD.
+        CREATE ROLE bizplay_agent_ro LOGIN PASSWORD 'agent_ro_change_me';
+    END IF;
+END
+$$;
+
+ALTER ROLE bizplay_agent_ro SET default_transaction_read_only = on;
+ALTER ROLE bizplay_agent_ro SET statement_timeout = '3s';
+ALTER ROLE bizplay_agent_ro SET idle_in_transaction_session_timeout = '10s';
+
+-- Baseline: no schema-wide privileges. Grant only USAGE on the schema and
+-- SELECT on the exact tables the agent is allowed to read.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM bizplay_agent_ro;
+GRANT USAGE ON SCHEMA public TO bizplay_agent_ro;
+
+GRANT SELECT ON
+    conversational_department,
+    conversational_staff,
+    conversational_traveler,
+    conversational_trip_plan,
+    conversational_trip_report,
+    conversational_cost_expense,
+    conversational_transportation_expense,
+    conversational_attachment,
+    conversational_agent_session,
+    corp,
+    corp_group
+TO bizplay_agent_ro;

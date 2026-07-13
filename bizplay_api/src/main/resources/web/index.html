@@ -32,6 +32,7 @@
     <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></symbol>
     <symbol id="i-import" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
     <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2"/><path d="M15 2v2"/><path d="M9 20v2"/><path d="M15 20v2"/><path d="M20 9h2"/><path d="M20 14h2"/><path d="M2 9h2"/><path d="M2 14h2"/></symbol>
   </svg>
 
   <!-- Global top loading bar (shown while fetching) -->
@@ -53,6 +54,7 @@
         </div>
       </div>
       <div class="top-right">
+        <button id="openLlmBtn" class="btn btn-quiet btn-sm admin-only hidden" title="Manage the LLM models your agents use"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> LLM Models</button>
         <div class="lang-toggle role-toggle" role="group" aria-label="Role">
           <button class="lang-btn role-btn active" data-role="traveler" type="button"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Traveler</button>
           <button class="lang-btn role-btn" data-role="admin" type="button"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg> Admin</button>
@@ -463,6 +465,14 @@
                 <button class="btn btn-primary" id="agentSendBtn">Send</button>
               </div>
             </div>
+            <div class="composer-foot">
+              <label class="composer-model" for="agentModelSelect" title="The model all conversational agents use (global)">
+                <svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg>
+                <span>Model</span>
+                <div class="select-wrap"><select id="agentModelSelect"><option value="">Auto</option></select></div>
+              </label>
+              <span class="composer-model-hint">applies to all agents</span>
+            </div>
           </div>
         </div>
 
@@ -709,6 +719,116 @@
         <div class="foot-actions">
           <button class="btn btn-quiet" id="masterRefreshBtn"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
           <button class="btn btn-quiet" id="masterCloseBtn2">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= LLM MODELS (admin) ======================= -->
+  <div id="llmOverlay" class="overlay hidden">
+    <div class="sheet sheet-wide" id="llmSheet">
+      <div class="sheet-head">
+        <div>
+          <h2>LLM Models</h2>
+          <p class="sub">Manage the language models your conversational agents can use. DB models are hot-registered live; config models are read-only.</p>
+        </div>
+        <button class="x-btn" id="llmCloseBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <div class="llm-active-bar">
+          <div class="lab-main">
+            <span class="lab-title"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Active model for agents</span>
+            <span class="lab-sub">All conversational sub-agents use this model. “Auto” lets each agent fall back to its own configured default.</span>
+          </div>
+          <div class="select-wrap lab-select">
+            <select id="llmActiveSelect">
+              <option value="">Auto — each agent’s default</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="llm-grid">
+          <!-- List -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg></span> Models <span class="count-badge"><span id="llmCount">0</span></span></h3>
+            <div class="md-add">
+              <button class="btn btn-primary btn-sm" id="llmNewBtn">+ New model</button>
+            </div>
+            <div id="llmList" class="md-list"><div class="muted-pad"><span class="spin"></span>Loading…</div></div>
+            <p class="card-note">Click a model to view or edit. <span class="badge-src badge-db">DB</span> models are editable; <span class="badge-src badge-config">CONFIG</span> come from app config and are read-only.</p>
+          </section>
+
+          <!-- Form -->
+          <section class="block">
+            <h3 class="block-title" id="llmFormTitle"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg></span> New model</h3>
+            <p id="llmReadonlyNote" class="card-note hidden">This model comes from app config and can’t be edited here.</p>
+            <div class="grid-2 form-rows">
+              <div class="field">
+                <label>Name / key <span class="req">*</span></label>
+                <input type="text" id="llmName" maxlength="100" placeholder="e.g. luxia3-llm-32b" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label>Label</label>
+                <input type="text" id="llmLabel" maxlength="100" placeholder="Display name" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label>Model id <span class="req">*</span></label>
+                <input type="text" id="llmModel" maxlength="150" placeholder="Upstream model id sent to the API" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label>Base URL <span class="req">*</span></label>
+                <input type="text" id="llmBaseUrl" maxlength="255" placeholder="https://gateway.example.com" autocomplete="off" />
+              </div>
+              <div class="field span-2">
+                <label>API key <span class="req" id="llmKeyReq">*</span></label>
+                <input type="password" id="llmApiKey" maxlength="400" placeholder="Paste the API key" autocomplete="new-password" />
+                <span class="hint" id="llmKeyHint"></span>
+              </div>
+              <div class="field">
+                <label>Auth scheme</label>
+                <div class="select-wrap"><select id="llmAuthScheme">
+                  <option value="bearer">bearer (Authorization: Bearer)</option>
+                  <option value="x-api-key">x-api-key</option>
+                  <option value="custom">custom header…</option>
+                </select></div>
+              </div>
+              <div class="field">
+                <label>API key header <span class="hint-inline">(custom)</span></label>
+                <input type="text" id="llmApiKeyHeader" maxlength="80" placeholder="e.g. apikey" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label>Completions path</label>
+                <input type="text" id="llmCompletionsPath" maxlength="120" placeholder="/chat/completions" autocomplete="off" />
+              </div>
+              <div class="field"></div>
+              <div class="field">
+                <label>Temperature</label>
+                <input type="number" id="llmTemperature" step="0.1" min="0" max="2" placeholder="0.7" />
+              </div>
+              <div class="field">
+                <label>Max tokens</label>
+                <input type="number" id="llmMaxTokens" step="1" min="1" placeholder="2048" />
+              </div>
+              <div class="field span-2">
+                <label class="chk-inline"><input type="checkbox" id="llmEnabled" class="chk" checked /> Enabled (registered &amp; usable by agents)</label>
+              </div>
+            </div>
+            <div class="llm-form-actions">
+              <button class="btn btn-danger btn-sm hidden" id="llmDeleteBtn"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button>
+              <span class="spacer"></span>
+              <button class="btn btn-quiet btn-sm" id="llmCancelBtn">Reset</button>
+              <button class="btn btn-primary btn-sm" id="llmSaveBtn">Save model</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="sheet-foot">
+        <span id="llmMsg" class="val-summary"></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="llmRefreshBtn"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
+          <button class="btn btn-quiet" id="llmCloseBtn2">Close</button>
         </div>
       </div>
     </div>

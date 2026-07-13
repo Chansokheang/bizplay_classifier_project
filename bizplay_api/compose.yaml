@@ -49,6 +49,7 @@ services:
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: 123
       APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      CONV_MINIO_ENDPOINT: http://minio:9000
       APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
       APP_STORAGE_MINIO_SECRET_KEY: minioadmin
       APP_STORAGE_MINIO_BUCKET: bizplay-files

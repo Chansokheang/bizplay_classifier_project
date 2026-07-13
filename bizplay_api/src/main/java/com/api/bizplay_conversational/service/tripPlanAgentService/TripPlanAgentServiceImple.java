@@ -58,6 +58,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
     private static final int MAX_HISTORY_TURNS = 20;
 
     private final Map<String, ChatClient> chatClientRegistry;
+    private final com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService llmSettingsService;
     private final DatabaseLookupAgentService databaseLookupAgentService;
     private final StaffLookupAgentService staffLookupAgentService;
     private final TextAnalysisAgentService textAnalysisAgentService;
@@ -77,6 +78,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
 
     public TripPlanAgentServiceImple(
             Map<String, ChatClient> chatClientRegistry,
+            com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService llmSettingsService,
             DatabaseLookupAgentService databaseLookupAgentService,
             StaffLookupAgentService staffLookupAgentService,
             TextAnalysisAgentService textAnalysisAgentService,
@@ -91,6 +93,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             ObjectMapper objectMapper,
             @Qualifier("agentTaskExecutor") Executor agentTaskExecutor) {
         this.chatClientRegistry = chatClientRegistry;
+        this.llmSettingsService = llmSettingsService;
         this.databaseLookupAgentService = databaseLookupAgentService;
         this.staffLookupAgentService = staffLookupAgentService;
         this.textAnalysisAgentService = textAnalysisAgentService;
@@ -819,7 +822,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
     }
 
     private String classifyIntent(String message, List<Message> history) {
-        ChatClient client = chatClientRegistry.get(modelName);
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
             return classifyIntentFallback(message);
         }
@@ -836,7 +839,8 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                             OTHER - anything else.
                             Distinguish intent: editing/removing existing plan data -> UPDATE; providing/adding NEW trip details -> TEXT_ANALYSIS; asking to find/list existing data -> STAFF_LOOKUP or DATABASE_LOOKUP.
                             When unsure between STAFF_LOOKUP and DATABASE_LOOKUP, choose DATABASE_LOOKUP.
-                            Do not explain.
+                            Do not explain. Output only the single label.
+                            /no_think
                             """;
 
             List<Message> prompt = new ArrayList<>();
@@ -850,18 +854,17 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                     .messages(prompt)
                     .call()
                     .content();
-            String normalized = content == null ? "" : content.trim().toUpperCase(Locale.ROOT);
-            if (normalized.contains("UPDATE")) {
-                return "UPDATE";
-            }
-            if (normalized.contains("TEXT_ANALYSIS")) {
-                return "TEXT_ANALYSIS";
-            }
-            if (normalized.contains("STAFF_LOOKUP")) {
-                return "STAFF_LOOKUP";
-            }
-            if (normalized.contains("DATABASE_LOOKUP")) {
-                return "DATABASE_LOOKUP";
+            // Thinking models (e.g. Qwen3) wrap reasoning in <think>...</think> that enumerates
+            // every label. Strip it first; otherwise a plain contains() check below matches a label
+            // mentioned in the reasoning (historically always "UPDATE") instead of the real answer.
+            String normalized = stripThink(content).toUpperCase(Locale.ROOT);
+            // Match each label as a standalone word so "UPDATE" can't match inside "UPDATED" etc.
+            // OTHER is intentionally excluded so an unrecognized/OTHER answer falls through to the
+            // keyword fallback for a second chance, matching the previous behaviour.
+            for (String label : List.of("UPDATE", "TEXT_ANALYSIS", "STAFF_LOOKUP", "DATABASE_LOOKUP")) {
+                if (containsWord(normalized, label)) {
+                    return label;
+                }
             }
             return classifyIntentFallback(message);
         } catch (RuntimeException e) {
@@ -889,7 +892,9 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
                 || normalized.contains(" from ")
                 || normalized.contains("origin")
                 || normalized.contains("destination")
-                || normalized.contains("depart")
+                // Whole-word "depart" family (depart/departs/departing/departure) only -- must NOT
+                // match "department", which is a DATABASE_LOOKUP keyword handled further below.
+                || containsWord(normalized, "depart(?:s|ing|ed|ure)?")
                 || normalized.contains("return")
                 || normalized.contains("travel")
                 || normalized.contains("transport")
@@ -909,5 +914,20 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             return "DATABASE_LOOKUP";
         }
         return "OTHER";
+    }
+
+    /** Remove reasoning blocks emitted by thinking models (e.g. Qwen3 &lt;think&gt;...&lt;/think&gt;). */
+    private String stripThink(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.replaceAll("(?is)<think>.*?</think>", "");
+        cleaned = cleaned.replaceAll("(?is)</?think>", "");
+        return cleaned.trim();
+    }
+
+    /** True if {@code wordRegex} occurs in {@code text} as a standalone word (matched at \b boundaries). */
+    private boolean containsWord(String text, String wordRegex) {
+        return text != null && text.matches("(?s).*\\b(?:" + wordRegex + ")\\b.*");
     }
 }

@@ -79,6 +79,7 @@ const I18N = {
   "Describe the trip in plain language, or attach a staff spreadsheet / itinerary PDF. The agent fills the draft for you.":
     "출장을 자유롭게 설명하거나 직원 명단(.xlsx)·일정표(.pdf)를 첨부하세요. 에이전트가 초안을 작성합니다.",
   "Draft preview": "초안 미리보기", "No draft": "초안 없음", "Send": "전송",
+  "Model": "모델", "applies to all agents": "모든 에이전트에 적용", "Auto": "자동",
   "Create this plan": "이 계획 생성", "Submit report": "보고서 제출",
   // Detail / resume
   "Business Trip Plan": "출장 계획서", "Plan detail": "계획 상세", "Delete plan": "계획 삭제", "Close": "닫기",
@@ -115,6 +116,20 @@ const I18N = {
   "Receipt": "영수증", "Check": "점검", "✓ ok": "✓ 정상", "Date": "날짜", "Route / Place": "경로 / 장소", "Amount": "금액",
   "Skip": "건너뛰기",
   "Admin": "관리자",
+  "LLM Models": "LLM 모델",
+  "Manage the language models your conversational agents can use. DB models are hot-registered live; config models are read-only.":
+    "대화형 에이전트가 사용할 언어 모델을 관리합니다. DB 모델은 실시간 등록되며 config 모델은 읽기 전용입니다.",
+  "Active model for agents": "에이전트 활성 모델",
+  "All conversational sub-agents use this model. “Auto” lets each agent fall back to its own configured default.":
+    "모든 대화형 서브 에이전트가 이 모델을 사용합니다. “자동”은 각 에이전트가 자체 기본값을 사용하도록 합니다.",
+  "Auto — each agent’s default": "자동 — 각 에이전트 기본값",
+  "Models": "모델", "+ New model": "+ 새 모델", "New model": "새 모델",
+  "Name / key": "이름 / 키", "Model id": "모델 ID", "Base URL": "기본 URL",
+  "API key": "API 키", "Auth scheme": "인증 방식", "API key header": "API 키 헤더",
+  "Completions path": "완성 경로", "Temperature": "온도", "Max tokens": "최대 토큰",
+  "Enabled (registered & usable by agents)": "활성화 (등록되어 에이전트가 사용 가능)",
+  "Save model": "모델 저장", "Update model": "모델 수정", "Reset": "초기화",
+  "This model comes from app config and can’t be edited here.": "이 모델은 앱 config에서 온 것으로 여기서 수정할 수 없습니다.",
   "Demo sample": "데모 샘플",
   "Download a sample travel-reservation PDF, then attach it in the agent or as a receipt to try the flow.":
     "샘플 출장 예약 PDF를 다운로드한 뒤 에이전트나 영수증으로 첨부해 흐름을 체험해 보세요.",
@@ -226,6 +241,8 @@ function applyRole() {
     t.classList.toggle("hidden", !roleAllows(t.getAttribute("data-tab"))));
   document.querySelectorAll(".role-btn").forEach((b) =>
     b.classList.toggle("active", b.getAttribute("data-role") === ROLE));
+  // Admin-only controls (e.g. the LLM Models button) show only in the admin view.
+  document.querySelectorAll(".admin-only").forEach((el) => el.classList.toggle("hidden", ROLE !== "admin"));
   if (!roleAllows(currentTab)) showTab(ROLE_TABS[ROLE][0]);
 }
 
@@ -242,6 +259,271 @@ function initRole() {
   document.querySelectorAll(".role-btn").forEach((b) =>
     b.addEventListener("click", () => setRole(b.getAttribute("data-role"))));
   applyRole();
+}
+
+/* ================================================================
+ *  LLM MODELS — admin CRUD over the ChatClient registry.
+ *    GET/POST  /api/v1/agent-conversations/llm-models
+ *    GET/PUT/DELETE  .../llm-models/{name}
+ *  DB models are editable & hot-registered; CONFIG models are read-only.
+ * ================================================================ */
+// Built lazily (arrow evaluated at call time) because API_ORIGIN is declared
+// further down the file — a top-level const referencing it here would hit the TDZ.
+const llmUrl = (sub = "") => API_ORIGIN + "/api/v1/agent-conversations/llm-models" + sub;
+const llmSettingsUrl = () => API_ORIGIN + "/api/v1/agent-conversations/llm-settings";
+let llmModels = [];
+let llmEditing = null;    // the model name currently loaded in the form, or null (= create)
+let llmActiveModel = null;        // the active override ("" / null = Auto, each agent's default)
+let llmAvailableModels = [];      // registered model names selectable as active
+
+/* ---- Active-model selection (GET/PUT /llm-settings) ----
+ * The same setting is surfaced in two places: the LLM Models modal (#llmActiveSelect)
+ * and the agent composer (#agentModelSelect). Both are kept in sync. */
+function renderModelSelectors() {
+  const fill = (sel, autoLabel) => {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${esc(autoLabel)}</option>` +
+      llmAvailableModels.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+    sel.value = llmActiveModel || "";
+  };
+  fill($("llmActiveSelect"), "Auto — each agent’s default");
+  fill($("agentModelSelect"), "Auto");
+}
+
+async function fetchLlmSettings() {
+  const res = await fetch(llmSettingsUrl());
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw apiError(json, res);
+  const s = (json && (json.data || json.payload)) || {};
+  llmActiveModel = s.activeModel || "";
+  llmAvailableModels = s.availableModels || [];
+}
+
+/* Load current settings and refresh both selectors (LLM modal open/refresh, agent open). */
+async function loadLlmSettings() {
+  try { await fetchLlmSettings(); renderModelSelectors(); }
+  catch (e) { const el = $("llmMsg"); if (el) el.textContent = friendlyError(e.message); }
+}
+
+async function setActiveLlm(model) {
+  beginLoad();
+  [$("llmActiveSelect"), $("agentModelSelect")].forEach((s) => { if (s) s.disabled = true; });
+  try {
+    const res = await fetch(llmSettingsUrl(), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: model || null }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const s = (json && (json.data || json.payload)) || {};
+    llmActiveModel = s.activeModel || "";
+    if (s.availableModels) llmAvailableModels = s.availableModels;
+    toast(llmActiveModel ? `Agents now use “${llmActiveModel}”.` : "Cleared — agents use their own defaults.", "ok");
+    renderModelSelectors();
+    renderLlmList();
+  } catch (e) {
+    toast("Couldn’t set active model: " + friendlyError(e.message), "err");
+    renderModelSelectors();   // revert both selects to the last-known value
+  } finally {
+    [$("llmActiveSelect"), $("agentModelSelect")].forEach((s) => { if (s) s.disabled = false; });
+    endLoad();
+  }
+}
+
+async function loadLlmModels() {
+  const box = $("llmList");
+  box.innerHTML = `<div class="muted-pad"><span class="spin"></span>Loading…</div>`;
+  beginLoad();
+  try {
+    const res = await fetch(llmUrl());
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    llmModels = (json && (json.data || json.payload)) || [];
+    $("llmMsg").textContent = "";
+  } catch (e) {
+    llmModels = [];
+    $("llmMsg").textContent = friendlyError(e.message);
+  } finally {
+    endLoad();
+    renderLlmList();
+  }
+}
+
+function renderLlmList() {
+  $("llmCount").textContent = llmModels.length;
+  const box = $("llmList");
+  if (!llmModels.length) {
+    box.innerHTML = `<div class="muted-pad">No models yet — add one with “New model”.</div>`;
+    return;
+  }
+  box.innerHTML = llmModels.map((m) => {
+    const src = (m.source || "DB").toUpperCase();
+    const host = (m.baseUrl || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    return `<div class="llm-row ${m.name === llmEditing ? "md-active" : ""}" data-llm="${esc(m.name)}">
+      <div class="llm-row-main">
+        <span class="llm-name"><span class="reg-dot ${m.registered ? "on" : ""}" title="${m.registered ? "Registered" : "Not registered"}"></span>${esc(m.label || m.name)}</span>
+        <span class="llm-sub" title="${esc(m.model || "")} · ${esc(host)}">${esc(m.model || m.name)}${host ? " · " + esc(host) : ""}</span>
+      </div>
+      <div class="llm-row-badges">
+        ${m.name === llmActiveModel ? `<span class="badge-active">ACTIVE</span>` : ""}
+        <span class="badge-src badge-${src === "CONFIG" ? "config" : "db"}">${esc(src)}</span>
+        ${m.enabled ? "" : `<span class="badge-off">disabled</span>`}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* Reset the form to create-mode (blank). */
+function llmFormReset() {
+  llmEditing = null;
+  $("llmSheet").classList.remove("llm-readonly");
+  $("llmFormTitle").innerHTML = `<span class="b-ico">${svgIcon("sparkles")}</span> New model`;
+  $("llmReadonlyNote").classList.add("hidden");
+  $("llmName").disabled = false;
+  ["llmName", "llmLabel", "llmModel", "llmBaseUrl", "llmApiKey", "llmApiKeyHeader", "llmCompletionsPath", "llmTemperature", "llmMaxTokens"].forEach((id) => { $(id).value = ""; });
+  $("llmAuthScheme").value = "bearer";
+  $("llmCompletionsPath").value = "/chat/completions";
+  $("llmEnabled").checked = true;
+  $("llmApiKey").placeholder = "Paste the API key";
+  $("llmKeyHint").textContent = "";
+  $("llmKeyReq").classList.remove("hidden");
+  $("llmDeleteBtn").classList.add("hidden");
+  $("llmSaveBtn").textContent = "Save model";
+  $("llmMsg").textContent = "";
+  renderLlmList();
+}
+
+/* Load a model into the form. CONFIG models are shown read-only. */
+function llmFormLoad(name) {
+  const m = llmModels.find((x) => x.name === name);
+  if (!m) return;
+  const readonly = (m.source || "").toUpperCase() === "CONFIG";
+  llmEditing = name;
+  $("llmSheet").classList.toggle("llm-readonly", readonly);
+  $("llmFormTitle").innerHTML = `<span class="b-ico">${svgIcon("cpu")}</span> ${esc(m.label || m.name)}`;
+  $("llmReadonlyNote").classList.toggle("hidden", !readonly);
+  $("llmName").value = m.name || "";
+  $("llmName").disabled = true;                     // name is the immutable key
+  $("llmLabel").value = m.label || "";
+  $("llmModel").value = m.model || "";
+  $("llmBaseUrl").value = m.baseUrl || "";
+  $("llmAuthScheme").value = ["bearer", "x-api-key"].includes(m.authScheme) ? m.authScheme : (m.authScheme ? "custom" : "bearer");
+  $("llmApiKeyHeader").value = m.apiKeyHeader || "";
+  $("llmCompletionsPath").value = m.completionsPath || "/chat/completions";
+  $("llmTemperature").value = m.temperature ?? "";
+  $("llmMaxTokens").value = m.maxTokens ?? "";
+  $("llmEnabled").checked = !!m.enabled;
+  // On edit the key is write-only: blank means "keep existing".
+  $("llmApiKey").value = "";
+  $("llmApiKey").placeholder = "•••• leave blank to keep existing key";
+  $("llmKeyHint").textContent = m.apiKeyMasked ? `Stored key: ${m.apiKeyMasked}` : "No key stored.";
+  $("llmKeyReq").classList.add("hidden");
+  $("llmDeleteBtn").classList.toggle("hidden", readonly);
+  $("llmSaveBtn").textContent = "Update model";
+  $("llmMsg").textContent = "";
+  renderLlmList();
+}
+
+/* Assemble the request body from the form. authScheme "custom" defers to apiKeyHeader. */
+function llmReadForm() {
+  const scheme = $("llmAuthScheme").value;
+  const body = {
+    label: $("llmLabel").value.trim() || null,
+    model: $("llmModel").value.trim(),
+    baseUrl: $("llmBaseUrl").value.trim(),
+    authScheme: scheme === "custom" ? ($("llmApiKeyHeader").value.trim() || "bearer") : scheme,
+    apiKeyHeader: $("llmApiKeyHeader").value.trim() || null,
+    completionsPath: $("llmCompletionsPath").value.trim() || null,
+    temperature: $("llmTemperature").value === "" ? null : Number($("llmTemperature").value),
+    maxTokens: $("llmMaxTokens").value === "" ? null : parseInt($("llmMaxTokens").value, 10),
+    enabled: $("llmEnabled").checked,
+  };
+  const key = $("llmApiKey").value;   // never trimmed — keys can contain spaces? keep raw
+  if (key) body.apiKey = key;         // omit when blank so the server keeps the stored key
+  return body;
+}
+
+async function llmSave() {
+  const name = $("llmName").value.trim();
+  const body = llmReadForm();
+  // Required-field checks mirror the server (name/baseUrl/model on create).
+  if (!name) { $("llmMsg").textContent = "Name is required."; return; }
+  if (!body.baseUrl) { $("llmMsg").textContent = "Base URL is required."; return; }
+  if (!body.model) { $("llmMsg").textContent = "Model id is required."; return; }
+  if (!llmEditing && !body.apiKey) { $("llmMsg").textContent = "An API key is required to add a model."; return; }
+
+  const btn = $("llmSaveBtn");
+  btn.disabled = true; btn.textContent = llmEditing ? "Updating…" : "Saving…";
+  beginLoad();
+  try {
+    let res;
+    if (llmEditing) {
+      res = await fetch(llmUrl("/" + encodeURIComponent(llmEditing)), {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+    } else {
+      res = await fetch(llmUrl(), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, name }),
+      });
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast(`Model “${name}” ${llmEditing ? "updated" : "added"}.`, "ok");
+    await loadLlmModels();
+    await loadLlmSettings();
+    llmFormLoad(name);
+  } catch (e) {
+    $("llmMsg").textContent = (llmEditing ? "Update failed: " : "Create failed: ") + friendlyError(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = llmEditing ? "Update model" : "Save model";
+    endLoad();
+  }
+}
+
+async function llmDelete() {
+  if (!llmEditing) return;
+  const name = llmEditing;
+  const ok = await confirmDialog({
+    title: "Delete LLM model",
+    message: `Delete “${name}”? It will be unregistered from the live registry and agents can no longer use it. This cannot be undone.`,
+    confirmText: "Delete",
+  });
+  if (!ok) return;
+  beginLoad();
+  try {
+    const res = await fetch(llmUrl("/" + encodeURIComponent(name)), { method: "DELETE" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast(`Model “${name}” deleted.`, "ok");
+    await loadLlmModels();
+    await loadLlmSettings();
+    llmFormReset();
+  } catch (e) {
+    $("llmMsg").textContent = "Delete failed: " + friendlyError(e.message);
+  } finally {
+    endLoad();
+  }
+}
+
+function openLlm() { llmFormReset(); $("llmOverlay").classList.remove("hidden"); loadLlmSettings(); loadLlmModels(); }
+function closeLlm() { $("llmOverlay").classList.add("hidden"); }
+function refreshLlm() { loadLlmSettings(); loadLlmModels(); }
+
+function initLlm() {
+  $("openLlmBtn").addEventListener("click", openLlm);
+  $("llmCloseBtn").addEventListener("click", closeLlm);
+  $("llmCloseBtn2").addEventListener("click", closeLlm);
+  $("llmOverlay").addEventListener("mousedown", (ev) => { if (ev.target === $("llmOverlay")) closeLlm(); });
+  $("llmRefreshBtn").addEventListener("click", refreshLlm);
+  $("llmActiveSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
+  $("llmNewBtn").addEventListener("click", llmFormReset);
+  $("llmCancelBtn").addEventListener("click", () => { llmEditing ? llmFormLoad(llmEditing) : llmFormReset(); });
+  $("llmSaveBtn").addEventListener("click", llmSave);
+  $("llmDeleteBtn").addEventListener("click", llmDelete);
+  $("llmList").addEventListener("click", (ev) => {
+    const row = ev.target.closest("[data-llm]");
+    if (row) llmFormLoad(row.getAttribute("data-llm"));
+  });
 }
 
 /* Demo-sample download banner — shown until the user dismisses it. */
@@ -1057,6 +1339,7 @@ function init() {
   $("openAgentBtn").addEventListener("click", openAgent);
   $("agentCloseBtn").addEventListener("click", closeAgent);
   $("agentSendBtn").addEventListener("click", sendAgent);
+  $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
   $("agentCreateBtn").addEventListener("click", createFromAgent);
   $("agentFileInput").addEventListener("change", onAgentFiles);
   $("agentFiles").addEventListener("click", (ev) => {
@@ -1317,6 +1600,7 @@ function openAgent() {
     <div class="msg msg-assistant"><div class="bubble">Hi! Tell me about the business trip — who travels, where, when, and why. You can also attach a staff list (.xlsx) or a booking/itinerary (.pdf).</div></div>`;
   renderDraft();
   $("agentOverlay").classList.remove("hidden");
+  loadLlmSettings();   // populate the composer model switcher
   setTimeout(() => $("agentInput").focus(), 50);
 }
 
@@ -1330,6 +1614,7 @@ function openReport(planId, title) {
     <div class="msg msg-assistant"><div class="bubble">Let's build the expense report for <b>${esc(title || "this trip")}</b>. Tell me the expenses (e.g. “Hotel 300,000 KRW on 2026-07-01”, “Taxi 20,000”) or attach PDF receipts.</div></div>`;
   renderDraft();
   $("agentOverlay").classList.remove("hidden");
+  loadLlmSettings();   // populate the composer model switcher
   setTimeout(() => $("agentInput").focus(), 50);
 }
 
@@ -1356,6 +1641,7 @@ function openAgentResumed(d, mode = "plan") {
   }
   renderDraft();
   $("agentOverlay").classList.remove("hidden");
+  loadLlmSettings();   // populate the composer model switcher
 }
 function closeAgent() { $("agentOverlay").classList.add("hidden"); }
 
@@ -3924,4 +4210,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); });
