@@ -56,6 +56,10 @@ const I18N = {
   "HIGH": "높음", "MEDIUM": "중간", "LOW": "낮음",
   // Create-plan modal
   "Create Business Trip Plan": "출장 계획 작성",
+  "Create Business Trip Plan with Agent": "에이전트로 출장 계획 작성",
+  "Describe the trip or attach a staff list / itinerary — the agent fills the form, and you can edit any field.":
+    "출장을 설명하거나 직원 명단·일정표를 첨부하세요 — 에이전트가 양식을 채우며, 모든 항목을 직접 수정할 수 있습니다.",
+  "Agent": "에이전트",
   "A travel-expense limit is granted upon completion.": "작성 완료 시 출장비 한도가 부여됩니다.",
   "Trip Information": "출장 정보", "Travel Purpose": "출장 유형", "Trip Period": "출장 기간",
   "Destination": "목적지", "Content": "내용", "Classification": "구분",
@@ -877,6 +881,10 @@ function openCreate() {
   $("validationSummary").textContent = "";
   clearInvalid();
   addTraveler();           // start with one traveler, like the screenshots
+  // Chat pane starts hidden ("Create manually"); openAgent() turns it on.
+  $("agentThread").innerHTML = "";
+  resetAgent();
+  setChatPane(false);
   $("createOverlay").classList.remove("hidden");
 }
 function closeCreate() { $("createOverlay").classList.add("hidden"); }
@@ -1324,23 +1332,11 @@ function init() {
     if (it) loadSession(it.getAttribute("data-sid"));
   });
 
-  // --- Draft edit (PUT /sessions/{id}/draft) ---
-  $("draftEditBtn").addEventListener("click", () => { agent.editing ? cancelEdit() : enterEdit(); });
-  $("draftSaveBtn").addEventListener("click", saveDraftEdit);
-  $("draftBody").addEventListener("click", (ev) => {
-    const rm = ev.target.closest("[data-edrm]");
-    if (!rm) return;
-    syncEditTravelersFromInputs();
-    agent.editTravelers.splice(Number(rm.getAttribute("data-edrm")), 1);
-    renderDraft();
-  });
-
-  // --- Agent ---
+  // --- Agent chat (lives inside the Create Trip Plan modal) ---
   $("openAgentBtn").addEventListener("click", openAgent);
-  $("agentCloseBtn").addEventListener("click", closeAgent);
+  $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
-  $("agentCreateBtn").addEventListener("click", createFromAgent);
   $("agentFileInput").addEventListener("change", onAgentFiles);
   $("agentFiles").addEventListener("click", (ev) => {
     const rm = ev.target.closest("[data-fchip]");
@@ -1468,7 +1464,6 @@ function init() {
   [
     ["createOverlay", closeCreate],
     ["routeOverlay", () => closeRoute(false)],
-    ["agentOverlay", closeAgent],
     ["detailOverlay", closeDetail],
     ["resumeOverlay", closeResume],
     ["reportCreateOverlay", closeReportCreate],
@@ -1569,68 +1564,60 @@ const agent = {
   planId: null,   // for report mode: the trip plan being reported on
 };
 
-/* Apply mode-specific labels to the shared agent modal. */
-function applyAgentMode() {
-  const report = agent.mode === "report";
-  $("agentTitle").textContent = report ? "Expense Report — Agent" : "Create Plan with Agent";
-  $("agentSub").textContent = report
-    ? "Describe expenses or attach PDF receipts. The agent builds the report from your finished trip."
-    : "Describe the trip in plain language, or attach a staff spreadsheet / itinerary PDF. The agent fills the draft for you.";
-  $("agentCreateBtn").textContent = report ? "Submit report" : "Create this plan";
-}
-
 function resetAgent() {
   agent.sessionId = null;
   agent.status = null;
   agent.draft = null;
   agent.pending = [];
   agent.busy = false;
-  agent.editing = false;
+  agent.mode = "plan";
+  agent.planId = null;
   $("agentInput").value = "";
   $("agentFileInput").value = "";
   renderAgentFiles();
 }
 
+/* Show/hide the chat pane of the unified Create Trip Plan modal. */
+function setChatPane(on) {
+  $("createBody").classList.toggle("with-chat", !!on);
+  $("chatToggleBtn").classList.toggle("on", !!on);
+  $("createTitle").textContent = on ? "Create Business Trip Plan with Agent" : "Create Business Trip Plan";
+  $("createSub").textContent = on
+    ? "Describe the trip or attach a staff list / itinerary — the agent fills the form, and you can edit any field."
+    : "A travel-expense limit is granted upon completion.";
+  if (on) {
+    loadLlmSettings();   // populate the composer model switcher
+    setTimeout(() => $("agentInput").focus(), 50);
+  }
+}
+function toggleChatPane() {
+  const on = !$("createBody").classList.contains("with-chat");
+  if (on && !$("agentThread").childElementCount) seedAgentGreeting();
+  setChatPane(on);
+}
+function seedAgentGreeting() {
+  $("agentThread").innerHTML =
+    `<div class="msg msg-assistant"><div class="bubble">Hi! Tell me about the business trip — who travels, where, when, and why. You can also attach a staff list (.xlsx) or a booking/itinerary (.pdf).</div></div>`;
+}
+
+/* "Create with Agent" — the same modal, opened with the chat pane showing. */
 function openAgent() {
+  openCreate();
   resetAgent();
-  agent.mode = "plan";
-  agent.planId = null;
-  applyAgentMode();
-  $("agentThread").innerHTML = `
-    <div class="msg msg-assistant"><div class="bubble">Hi! Tell me about the business trip — who travels, where, when, and why. You can also attach a staff list (.xlsx) or a booking/itinerary (.pdf).</div></div>`;
-  renderDraft();
-  $("agentOverlay").classList.remove("hidden");
-  loadLlmSettings();   // populate the composer model switcher
-  setTimeout(() => $("agentInput").focus(), 50);
+  seedAgentGreeting();
+  setChatPane(true);
 }
 
-/* Start an expense-report conversation for a finished plan. */
-function openReport(planId, title) {
+/* Open the create modal pre-loaded with a saved agent session (Resume draft). */
+function openAgentResumed(d) {
+  openCreate();
   resetAgent();
-  agent.mode = "report";
-  agent.planId = planId;
-  applyAgentMode();
-  $("agentThread").innerHTML = `
-    <div class="msg msg-assistant"><div class="bubble">Let's build the expense report for <b>${esc(title || "this trip")}</b>. Tell me the expenses (e.g. “Hotel 300,000 KRW on 2026-07-01”, “Taxi 20,000”) or attach PDF receipts.</div></div>`;
-  renderDraft();
-  $("agentOverlay").classList.remove("hidden");
-  loadLlmSettings();   // populate the composer model switcher
-  setTimeout(() => $("agentInput").focus(), 50);
-}
-
-/* Open the agent modal pre-loaded with a saved session (resume), plan or report. */
-function openAgentResumed(d, mode = "plan") {
-  resetAgent();
-  agent.mode = mode;
-  agent.planId = (d.draftJson && d.draftJson.TripPlanId) || null;
-  applyAgentMode();
   agent.sessionId = d.sessionId;
   agent.status = d.status || null;
   agent.draft = d.draftJson || null;
   // Rebuild the conversation from saved history.
-  const label = mode === "report" ? "report" : "session";
   $("agentThread").innerHTML =
-    `<div class="msg msg-assistant"><div class="bubble">${svgIcon("refresh")} Resumed ${label} <code>${esc(String(d.sessionId).slice(0, 8))}</code> — continue chatting${mode === "report" ? "." : " or edit the draft."}</div></div>`;
+    `<div class="msg msg-assistant"><div class="bubble">${svgIcon("refresh")} Resumed session <code>${esc(String(d.sessionId).slice(0, 8))}</code> — continue chatting, or edit the form directly.</div></div>`;
   (d.chatEventJson || []).forEach((t) => {
     if (!t || !t.content) return;
     appendMsg(t.role === "assistant" ? "assistant" : "user", t.content, {});
@@ -1639,11 +1626,9 @@ function openAgentResumed(d, mode = "plan") {
   if (d.pendingChoices && d.pendingChoices.length) {
     appendMsg("assistant", "There is still a pending choice — pick one to continue:", { choiceGroups: d.pendingChoices });
   }
-  renderDraft();
-  $("agentOverlay").classList.remove("hidden");
-  loadLlmSettings();   // populate the composer model switcher
+  if (agent.draft) applyDraftToForm(agent.draft);
+  setChatPane(true);
 }
-function closeAgent() { $("agentOverlay").classList.add("hidden"); }
 
 /* ---- File upload ---- */
 async function onAgentFiles(ev) {
@@ -1708,7 +1693,7 @@ async function sendAgent() {
       intent: data.intent, subAgents: data.subAgents,
       choiceGroups: data.pendingChoices,
     });
-    renderDraft();
+    applyDraftToForm(agent.draft);   // the agent fills the real form
   } catch (e) {
     typing.remove();
     appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
@@ -1802,191 +1787,64 @@ function initials(name) {
   return (a + b).toUpperCase() || "?";
 }
 
-/* ---- Draft preview / verify ---- */
-function renderDraft() {
-  const body = $("draftBody");
-  const pill = $("draftStatus");
-  const btn = $("agentCreateBtn");
-  const hint = $("agentCreateHint");
-
-  const d = agent.draft;
-  const ti = (d && d.TripInformation) || null;
-  const status = agent.status || (d ? "COLLECTING" : null);
-
-  // status pill
-  pill.className = "status-pill " + (status === "READY_FOR_REVIEW" ? "status-ready" : status ? "status-collecting" : "status-none");
-  pill.textContent = status ? status.replace(/_/g, " ") : "No draft";
-
-  // Report mode renders a different body (expense sections) and has no draft edit.
-  if (agent.mode === "report") {
-    $("draftEditBtn").classList.add("hidden");
-    $("draftSaveBtn").classList.add("hidden");
-    btn.classList.remove("hidden");
-    renderReportBody(d, hint, btn);
-    return;
-  }
-
-  // Edit / Save controls: only available once a session + draft exist.
-  const editBtn = $("draftEditBtn");
-  const saveBtn = $("draftSaveBtn");
-  const hasDraft = !!(d && ti && agent.sessionId);
-  editBtn.classList.toggle("hidden", !hasDraft);
-
-  if (!d || !ti) {
-    agent.editing = false;
-    body.innerHTML = `<div class="draft-empty-wrap">${svgIcon("file-text", "ico-lg")}<p>No draft yet — send a message and the plan will build here.</p></div>`;
-    btn.disabled = true; btn.classList.remove("hidden"); saveBtn.classList.add("hidden"); hint.textContent = "";
-    return;
-  }
-
-  // Edit mode: render the form, swap the footer to Save.
-  if (agent.editing) {
-    editBtn.textContent = "✕ Cancel";
-    saveBtn.classList.remove("hidden");
-    btn.classList.add("hidden");
-    hint.textContent = "Editing — adjust fields, then save a checkpoint.";
-    renderDraftEdit(d, ti);
-    return;
-  }
-  editBtn.textContent = "✎ Edit";
-  saveBtn.classList.add("hidden");
-  btn.classList.remove("hidden");
-
-  const missing = d.missingFields || [];
-  const travelers = ti.Travelers || [];
-  const period = ti.BusinessPeriod
-    || (ti.BusinessStartDate && ti.BusinessEndDate ? `${ti.BusinessStartDate} → ${ti.BusinessEndDate}` : "");
-  const classification = ti["Business Trip Classifcation"] || ti.BusinessTripClassification;
-
-  // Hero summary
-  let html = `<div class="dp-hero">
-      <div class="h-title">${ti.Title ? esc(ti.Title) : '<span class="ph">Untitled trip</span>'}</div>
-      <div class="h-route">
-        <span class="pin">${svgIcon("pin")}</span>
-        <span>${ti.Destination ? esc(ti.Destination) : '<span class="ph">—</span>'}</span>
-      </div>
-      <div class="h-meta">
-        ${ti.Purpose ? `<span class="tagpill accent">${esc(ti.Purpose)}</span>` : ""}
-        ${period ? `<span class="tagpill">${svgIcon("calendar")} ${esc(period)}</span>` : ""}
-        ${classification ? `<span class="tagpill">${esc(classification)}</span>` : ""}
-      </div>
-    </div>`;
-
-  // Details
-  const row = (k, v) => `<div class="dl-row"><dt>${k}</dt><dd>${v ? esc(v) : '<span class="empty">Not set</span>'}</dd></div>`;
-  html += `<div class="dp-block">
-      <div class="dp-block-h">Trip details</div>
-      <dl class="dl">
-        ${row("Purpose", ti.Purpose)}
-        ${row("Destination", ti.Destination)}
-        ${row("Period", period)}
-        ${ti.Content ? row("Content", ti.Content) : ""}
-      </dl>
-    </div>`;
-
-  // Travellers
-  html += `<div class="dp-block">
-      <div class="dp-block-h">Travellers <span class="sec-count">${travelers.length}</span></div>`;
-  if (!travelers.length) {
-    html += `<p class="draft-empty sm" style="color:#9098a6;font-size:12.5px;margin:0">No travellers captured yet.</p>`;
-  } else {
-    html += travelers.map((t) => {
-      const dep = [t.Department, t.Position].filter(Boolean).map(esc).join(" · ");
-      return `<div class="trav-mini">
-        <div class="tm-avatar">${esc(initials(t.Name))}</div>
-        <div class="tm-info">
-          <div class="tm-name">${esc(t.Name || "Unnamed")}</div>
-          ${dep ? `<div class="tm-dept">${dep}</div>` : ""}
-          <div class="tm-route">${esc(t.Origin || "?")} <i>→</i> ${esc(t.Destination || ti.Destination || "?")}${t.ReturnPoint ? ` <i>→</i> ${esc(t.ReturnPoint)}` : ""}${t.TransportationMethod ? `<span class="tm-method">${esc(t.TransportationMethod)}</span>` : ""}</div>
-        </div>
-      </div>`;
-    }).join("");
-  }
-  html += `</div>`;
-
-  // Attachments
-  const atts = d.Attachemnt || d.Attachment || [];
-  if (atts.length) {
-    html += `<div class="dp-block"><div class="dp-block-h">Attachments <span class="sec-count">${atts.length}</span></div>
-      ${atts.map((a) => {
-        if (a.FileID) return `<div class="att-mini">${svgIcon("paperclip")} ${receiptLink(a.FileID, a.Filename || a.FileID)}</div>`;
-        if (a.URL) return `<div class="att-mini">${svgIcon("link")} <a href="${esc(a.URL)}" target="_blank" rel="noopener">${esc(a.URL)}</a></div>`;
-        return `<div class="att-mini">${svgIcon("paperclip")} ${esc(a.Type || "file")}</div>`;
-      }).join("")}</div>`;
-  }
-
-  // Missing fields
-  if (missing.length) {
-    html += `<div class="draft-missing"><strong>${svgIcon("alert")} Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
-  }
-  body.innerHTML = html;
-
-  const ready = status === "READY_FOR_REVIEW" && missing.length === 0 && travelers.length > 0;
-  btn.disabled = !ready;
-  hint.textContent = ready ? "Ready — review above, then create." : (missing.length ? "Keep chatting to fill the missing fields." : "");
+/* ---- Agent draft -> the real form ----
+ * Every agent turn repopulates the form. A field the user is actively editing is
+ * left alone (so a turn landing mid-typing cannot clobber input); fields the agent
+ * actually changed flash briefly. */
+function setFormField(id, value) {
+  const el = $(id);
+  if (!el || value == null || value === "") return;
+  if (document.activeElement === el) return;         // never overwrite what is being typed
+  if (String(el.value) === String(value)) return;    // unchanged - no flash
+  el.value = value;
+  el.classList.remove("field-changed");
+  void el.offsetWidth;                               // restart the flash animation
+  el.classList.add("field-changed");
 }
 
-/* ---- Commit: map agent draft -> /api/v1/plans ---- */
-/* Finalize button dispatcher: plan -> POST /plans, report -> POST /reports. */
-function createFromAgent() {
-  if (agent.mode === "report") return submitReport();
-  return createPlanFromDraft();
-}
+function applyDraftToForm(draft) {
+  if (!draft) return;
+  const ti = draft.TripInformation || {};
+  setFormField("tripPurpose", ti.Purpose);
+  setFormField("tripDestination", ti.Destination);
+  setFormField("tripTitle", ti.Title);
+  setFormField("tripContent", ti.Content);
 
-async function createPlanFromDraft() {
-  const d = agent.draft;
-  if (!d || !d.TripInformation) return;
-  const ti = d.TripInformation;
-  let period = ti.BusinessPeriod;
-  if (!period && ti.BusinessStartDate && ti.BusinessEndDate) period = `${ti.BusinessStartDate} to ${ti.BusinessEndDate}`;
+  // Dates: prefer explicit start/end, else split a "A to B" period string.
+  let s = ti.BusinessStartDate, e = ti.BusinessEndDate;
+  if ((!s || !e) && ti.BusinessPeriod) {
+    const p = String(ti.BusinessPeriod).split(/\s+to\s+/i);
+    if (p.length === 2) { s = s || p[0].trim(); e = e || p[1].trim(); }
+  }
+  setFormField("startDate", s);
+  setFormField("endDate", e);
+  const sv = $("startDate").value, ev = $("endDate").value;
+  $("periodHint").textContent = sv && ev ? "(Trip Period: " + dayCount(sv, ev) + " day(s))" : "";
 
-  const payload = {
-    CorpNo: d.CorpNo || CORP_NO,
-    PlanType: d.PlanType || PLAN_TYPE,
-    AgentSessionId: agent.sessionId,
-    TripInformation: {
-      Purpose: ti.Purpose,
-      BusinessPeriod: period,
-      Destination: ti.Destination,
-      Title: ti.Title,
-      Content: ti.Content,
-      BusinessTripClassification: ti["Business Trip Classifcation"] || ti.BusinessTripClassification,
-      Travelers: (ti.Travelers || []).map((t) => ({
-        Name: t.Name, Department: t.Department, Position: t.Position,
-        Origin: t.Origin, Destination: t.Destination || ti.Destination, ReturnPoint: t.ReturnPoint,
-      })),
-    },
-    Attachemnt: (d.Attachemnt || d.Attachment || [])
-      .filter((a) => a && (a.FileID || a.URL))
-      .map((a) => ({ Type: a.Type || (a.URL ? "URL" : "File"), FileID: a.FileID, URL: a.URL })),
-  };
-
-  const btn = $("agentCreateBtn");
-  btn.disabled = true; btn.textContent = "Creating…";
-  try {
-    const res = await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+  if (ti.BusinessTripClassification) {
+    document.querySelectorAll('input[name="classification"]').forEach((r) => {
+      if (r.value === ti.BusinessTripClassification) r.checked = true;
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw apiError(json, res);
-    toast("Plan created from the agent draft.", "ok");
-    closeAgent();
-    loadPlans();
-  } catch (e) {
-    toast("Create failed: " + friendlyError(e.message), "err");
-    btn.disabled = false;
-  } finally {
-    btn.textContent = "Create this plan";
   }
+
+  // Travelers: the agent owns the roster, so replace it wholesale.
+  const list = ti.Travelers || [];
+  if (list.length) {
+    travelers = list.map((t) => ({
+      id: ++travelerSeq,
+      name: t.Name || "", department: t.Department || "", position: t.Position || "",
+      origin: t.Origin || "", destination: t.Destination || ti.Destination || "",
+      returnPoint: t.ReturnPoint || "",
+    }));
+    renderTravelers();
+  }
+
+  // Attachments (URLs the user registered + files the agent extracted from).
+  const atts = draft.Attachemnt || draft.Attachment || [];
+  const mapped = atts.filter((a) => a && (a.URL || a.FileID))
+    .map((a) => ({ Type: a.Type || (a.URL ? "URL" : "File"), URL: a.URL, FileID: a.FileID }));
+  if (mapped.length) { attachments = mapped; renderAttachments(); }
 }
-
-/* ================================================================
- *  DETAIL — view one plan via GET /api/v1/plans/{id}
- * ================================================================ */
-let currentDetailId = null;
-
 async function openDetail(id) {
   if (!id) return;
   currentDetailId = id;
@@ -2159,128 +2017,6 @@ async function loadSession(id) {
 /* ================================================================
  *  DRAFT EDIT — PUT /sessions/{id}/draft (manual checkpoint)
  * ================================================================ */
-function enterEdit() {
-  if (!agent.draft || !agent.sessionId) { toast("Send a message to start a draft first.", "err"); return; }
-  agent.editing = true;
-  agent.editTravelers = JSON.parse(JSON.stringify(((agent.draft.TripInformation) || {}).Travelers || []));
-  renderDraft();
-}
-function cancelEdit() { agent.editing = false; renderDraft(); }
-
-function renderDraftEdit(d, ti) {
-  const start = ti.BusinessStartDate || "";
-  const end = ti.BusinessEndDate || "";
-  const cls = ti["Business Trip Classifcation"] || ti.BusinessTripClassification || "";
-  const purposes = ["General business trip", "Educational business trip", "Overseas business trip"];
-  const purposeOpts = `<option value="">—</option>` +
-    purposes.map((p) => `<option value="${esc(p)}" ${p === ti.Purpose ? "selected" : ""}>${esc(p)}</option>`).join("");
-  const travelers = agent.editTravelers;
-
-  let html = `<div class="dp-block">
-      <div class="dp-block-h">Edit trip</div>
-      <div class="ed-field"><label>Title</label><input id="ed-title" type="text" value="${esc(ti.Title || "")}" /></div>
-      <div class="ed-field"><label>Destination</label><input id="ed-dest" type="text" value="${esc(ti.Destination || "")}" /></div>
-      <div class="ed-field"><label>Purpose</label><div class="select-wrap"><select id="ed-purpose">${purposeOpts}</select></div></div>
-      <div class="ed-row">
-        <div class="ed-field"><label>Start</label><input id="ed-start" type="date" value="${esc(start)}" /></div>
-        <div class="ed-field"><label>End</label><input id="ed-end" type="date" value="${esc(end)}" /></div>
-      </div>
-      <div class="ed-field"><label>Classification</label><input id="ed-class" type="text" value="${esc(cls)}" placeholder="e.g. CS" /></div>
-      <div class="ed-field"><label>Content</label><textarea id="ed-content" rows="2">${esc(ti.Content || "")}</textarea></div>
-    </div>`;
-
-  html += `<div class="dp-block"><div class="dp-block-h">Travellers <span class="sec-count">${travelers.length}</span></div>`;
-  if (!travelers.length) {
-    html += `<p style="color:#9098a6;font-size:12.5px;margin:0">No travellers. Add one via chat, e.g. “add John Doe”.</p>`;
-  } else {
-    html += travelers.map((t, i) => `
-      <div class="ed-trav">
-        <div class="ed-trav-head"><b>${esc(t.Name || "Unnamed")}</b>${t.Department ? `<span class="tm-dept">${esc(t.Department)}</span>` : ""}<button class="ed-rm" data-edrm="${i}" title="Remove">✕</button></div>
-        <div class="ed-row">
-          <div class="ed-field"><label>Origin</label><input data-ed="Origin" data-i="${i}" type="text" placeholder="Origin" value="${esc(t.Origin || "")}" /></div>
-          <div class="ed-field"><label>Destination</label><input data-ed="Destination" data-i="${i}" type="text" placeholder="Destination" value="${esc(t.Destination || "")}" /></div>
-        </div>
-        <div class="ed-row">
-          <div class="ed-field"><label>Return point</label><input data-ed="ReturnPoint" data-i="${i}" type="text" placeholder="Return" value="${esc(t.ReturnPoint || "")}" /></div>
-          <div class="ed-field"><label>Transport</label><input data-ed="TransportationMethod" data-i="${i}" type="text" placeholder="e.g. KTX" value="${esc(t.TransportationMethod || "")}" /></div>
-        </div>
-      </div>`).join("");
-  }
-  html += `</div>`;
-  $("draftBody").innerHTML = html;
-}
-
-/* Pull current input values back into the working traveller copy (so a re-render keeps edits). */
-function syncEditTravelersFromInputs() {
-  agent.editTravelers.forEach((t, i) => {
-    ["Origin", "Destination", "ReturnPoint", "TransportationMethod"].forEach((f) => {
-      const el = document.querySelector(`[data-ed="${f}"][data-i="${i}"]`);
-      if (el) t[f] = el.value;
-    });
-  });
-}
-
-function emptyNull(v) { v = (v == null ? "" : String(v)).trim(); return v || null; }
-
-function collectEditedDraft() {
-  const d = agent.draft || {};
-  const ti = d.TripInformation || {};
-  syncEditTravelersFromInputs();
-  const start = $("ed-start").value, end = $("ed-end").value;
-  const period = (start && end) ? `${start} to ${end}` : (ti.BusinessPeriod || null);
-  const travelers = agent.editTravelers.map((t) => ({
-    Name: t.Name, Department: t.Department, Position: t.Position,
-    Origin: emptyNull(t.Origin), Destination: emptyNull(t.Destination),
-    ReturnPoint: emptyNull(t.ReturnPoint), TransportationMethod: emptyNull(t.TransportationMethod),
-  }));
-  return {
-    CorpNo: d.CorpNo || CORP_NO,
-    PlanType: d.PlanType || PLAN_TYPE,
-    Attachemnt: d.Attachemnt || d.Attachment || [],
-    missingFields: [],
-    TripInformation: {
-      Title: emptyNull($("ed-title").value),
-      Destination: emptyNull($("ed-dest").value),
-      Purpose: $("ed-purpose").value || null,
-      "Business Trip Classifcation": emptyNull($("ed-class").value),
-      Content: emptyNull($("ed-content").value),
-      BusinessStartDate: start || null,
-      BusinessEndDate: end || null,
-      BusinessPeriod: period,
-      Travelers: travelers,
-    },
-  };
-}
-
-async function saveDraftEdit() {
-  if (!agent.sessionId) { toast("No session yet — send a message first.", "err"); return; }
-  const draft = collectEditedDraft();
-  const btn = $("draftSaveBtn");
-  btn.disabled = true; btn.textContent = "Saving…";
-  try {
-    const res = await fetch(`${AGENT_API}/sessions/${encodeURIComponent(agent.sessionId)}/draft`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(draft),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw apiError(json, res);
-    const data = (json && (json.data || json.payload)) || {};
-    agent.draft = data.draftJson || draft;
-    agent.status = data.status || agent.status;
-    agent.editing = false;
-    renderDraft();
-    toast("Draft checkpoint saved.", "ok");
-  } catch (e) {
-    toast("Save failed: " + friendlyError(e.message), "err");
-  } finally {
-    btn.disabled = false; btn.textContent = "Save draft";
-  }
-}
-
-/* ================================================================
- *  TABS
- * ================================================================ */
 function showTab(name) {
   if (!roleAllows(name)) name = ROLE_TABS[ROLE][0];   // role gate: never open a hidden tab
   currentTab = name;
@@ -2404,69 +2140,6 @@ async function setApproval(id, status) {
 /* ================================================================
  *  TAB 3 — EXPENSE REPORT
  * ================================================================ */
-function loadReportTab() { loadReportPlanList(); loadReportSessions(); }
-
-async function loadReportPlanList() {
-  const box = $("reportPlanList");
-  box.innerHTML = `<div class="muted-pad">Loading…</div>`;
-  try {
-    const res = await fetch(`${API}?corpNo=${encodeURIComponent(CORP_NO)}`);
-    const json = await res.json();
-    let plans = (json && (json.data || json.payload)) || [];
-    plans.sort((a, b) =>
-      ((b.approvalStatus === "Approval complete") - (a.approvalStatus === "Approval complete")) ||
-      String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-    if (!plans.length) { box.innerHTML = `<div class="muted-pad">No plans yet.</div>`; return; }
-    box.innerHTML = plans.map((p) => {
-      const approved = p.approvalStatus === "Approval complete";
-      return `<button class="mini-item" data-reportplan="${esc(p.id)}" data-title="${esc(p.title || "")}">
-          <div class="mi-main">
-            <div class="mi-title">${esc(p.title || "Untitled")}</div>
-            <div class="mi-sub">${esc(p.destination || "—")} · ${esc(formatPeriod(p))}${approved ? ' · <span style="color:#157a47">approved</span>' : ""}</div>
-          </div>
-          <span class="mi-go">${svgIcon("file-text")} Report →</span>
-        </button>`;
-    }).join("");
-  } catch (e) {
-    box.innerHTML = `<div class="muted-pad">Failed: ${esc(friendlyError(e.message))}</div>`;
-  }
-}
-async function loadReportSessions() {
-  const box = $("reportSessionList");
-  box.innerHTML = `<div class="muted-pad">Loading…</div>`;
-  try {
-    const res = await fetch(`${AGENT_API}/agents/expense-report/sessions?corpNo=${encodeURIComponent(CORP_NO)}`);
-    const json = await res.json();
-    const sessions = (json && (json.data || json.payload)) || [];
-    if (!sessions.length) { box.innerHTML = `<div class="muted-pad">No reports in progress.</div>`; return; }
-    box.innerHTML = sessions.map((s) => {
-      const st = s.status || "COLLECTING";
-      const upd = s.updatedDate ? String(s.updatedDate).replace("T", " ").slice(0, 16) : "—";
-      return `<button class="mini-item" data-reportsession="${esc(s.sessionId)}">
-          <div class="mi-main">
-            <div class="mi-title"><code>${esc(String(s.sessionId).slice(0, 8))}</code></div>
-            <div class="mi-sub">${esc(st.replace(/_/g, " "))} · updated ${esc(upd)}</div>
-          </div>
-          <span class="mi-go">Resume →</span>
-        </button>`;
-    }).join("");
-  } catch (e) {
-    box.innerHTML = `<div class="muted-pad">Failed: ${esc(friendlyError(e.message))}</div>`;
-  }
-}
-async function loadReportSession(id) {
-  try {
-    const res = await fetch(`${AGENT_API}/agents/expense-report/sessions/${encodeURIComponent(id)}`);
-    const json = await res.json();
-    const d = json && (json.data || json.payload);
-    if (!res.ok || !d) throw apiError(json, res, "Report not found.");
-    openAgentResumed(d, "report");
-  } catch (e) {
-    toast("Could not load report: " + friendlyError(e.message), "err");
-  }
-}
-
-/* ---- Report draft preview (expense sections) ---- */
 function num(v) { const n = Number(String(v ?? "").replace(/[^\d.-]/g, "")); return isFinite(n) ? n : 0; }
 /* Gross amount actually used (Supply price + Tax). */
 function lineAmount(it) {
@@ -2489,99 +2162,6 @@ function fmtMoney(n) { return "₩" + Math.round(n).toLocaleString(); }
 /* Money cell that shows "—" when the field is truly absent (0 is a real value). */
 function moneyCell(v) { return (v === null || v === undefined || v === "") ? "—" : fmtMoney(num(v)); }
 function txtCell(v) { return (v === null || v === undefined || v === "") ? "—" : esc(String(v)); }
-
-function renderReportBody(d, hint, btn) {
-  const body = $("draftBody");
-  if (!d) {
-    body.innerHTML = `<div class="draft-empty-wrap">${svgIcon("receipt", "ico-lg")}<p>No report yet — describe an expense or attach a receipt.</p></div>`;
-    btn.disabled = true; hint.textContent = "";
-    return;
-  }
-  const ti = d.TripInformation || {};
-  const sections = [["Cost", d.CostInformation], ["Transportation", d.TransportationInformation], ["Etc", d.Etc]];
-
-  let head = `<div class="dp-hero">
-      <div class="h-title">${ti.Title ? esc(ti.Title) : '<span class="ph">Trip report</span>'}</div>
-      <div class="h-route"><span class="pin">${svgIcon("pin")}</span><span>${ti.Destination ? esc(ti.Destination) : "—"}</span></div>
-      <div class="h-meta">${ti.BusinessPeriod ? `<span class="tagpill">${svgIcon("calendar")} ${esc(ti.BusinessPeriod)}</span>` : ""}<span class="tagpill accent">Expense report</span></div>
-    </div>`;
-
-  let grand = 0, count = 0, secHtml = "";
-  sections.forEach(([name, sec]) => {
-    const items = (sec && sec.Detail) || [];
-    if (!items.length) return;
-    count += items.length;
-    let subtotal = 0;
-    const rows = items.map((it) => {
-      const amt = lineAmount(it); subtotal += amt;
-      return `<div class="er-line"><span class="er-desc">${esc(lineDesc(it))}</span><span class="er-meta">${esc(lineDate(it))}</span><span class="er-amt">${fmtMoney(amt)}</span></div>`;
-    }).join("");
-    grand += subtotal;
-    secHtml += `<div class="dp-block"><div class="dp-block-h">${name} <span class="sec-count">${items.length}</span></div>${rows}<div class="er-total">Subtotal <b>${fmtMoney(subtotal)}</b></div></div>`;
-  });
-
-  let html = head;
-  if (count) html += `<div class="er-grand"><span>Total</span><span>${fmtMoney(grand)}</span></div>`;
-  html += secHtml || `<p class="muted-pad">No expense lines yet. Describe one in the chat.</p>`;
-
-  const missing = d.missingFields || [];
-  if (missing.length) html += `<div class="draft-missing"><strong>${svgIcon("alert")} Still needed</strong>${missing.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`;
-
-  body.innerHTML = html;
-  btn.disabled = count === 0;
-  hint.textContent = count === 0 ? "Add at least one expense line." : "Review the lines, then submit.";
-}
-
-/* ---- Submit report: POST /api/v1/reports (draft already matches the request shape) ---- */
-async function submitReport() {
-  const d = agent.draft;
-  if (!d) return;
-  const payload = JSON.parse(JSON.stringify(d));
-  payload.CorpNo = d.CorpNo || CORP_NO;
-  payload.PlanType = d.PlanType || PLAN_TYPE;
-  payload.AgentSessionId = agent.sessionId;
-  payload.TripPlanId = d.TripPlanId || agent.planId;
-
-  const btn = $("agentCreateBtn");
-  btn.disabled = true; btn.textContent = "Submitting…";
-  try {
-    const res = await fetch(`${API_ORIGIN}/api/v1/reports`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw apiError(json, res);
-    const data = (json && (json.data || json.payload)) || {};
-    toast(`Expense report submitted (${(data.costItems||data.lines) ? (data.costItems||data.lines).length + " lines" : "ok"}).`, "ok");
-    closeAgent();
-    loadReportTab();
-  } catch (e) {
-    toast("Submit failed: " + friendlyError(e.message), "err");
-    btn.disabled = false;
-  } finally {
-    btn.textContent = "Submit report";
-  }
-}
-
-/* ================================================================
- *  EXPENSE REPORTS (structured) — list table + Create Report modal
- *  list:   GET  /agent-conversations/agents/expense-report/sessions
- *  parse:  POST /agent-conversations/agents/expense-report (planId + fileIds)
- *  submit: POST /api/v1/reports
- * ================================================================ */
-const REPORTS_API = AGENT_API + "/agents/expense-report";   // agent draft/session flow (create + resume)
-const EXPENSE_API = API_ORIGIN + "/api/v1/reports";          // persisted/posted report lines
-const SECTIONS = [
-  { key: "CostInformation", label: "Cost", ko: "비용" },
-  { key: "TransportationInformation", label: "Transportation", ko: "교통비" },
-  { key: "Etc", label: "Etc", ko: "기타" },
-];
-const rc = { planId: null, plan: null, sessionId: null, draft: null, uploading: false };
-
-/* ---- Reports table: GET /api/v1/reports returns one report per row
-        (header + its lines[]). Each row is keyed by the report id. ---- */
-let reportsCache = [];   // [{ key (=report id), tripPlanId, sessionId, department, approvalStatus, lineCount, total, date, lines, plan, title }]
 
 function reportLineAmount(line) {
   const e = line.costExpense || line.transportationExpense || {};

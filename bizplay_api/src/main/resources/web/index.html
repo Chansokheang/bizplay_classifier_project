@@ -98,9 +98,11 @@
     <div class="list-head">
       <span class="list-meta"><strong id="rowCount">0 entries</strong> · sorted by most recent</span>
       <div class="head-actions">
-        <button id="openAgentBtn" class="btn btn-primary"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Create with Agent</button>
+        <!-- "Create with Agent" moved inside the create modal (the ✦ Agent toggle);
+             kept hidden so openAgent() and its wiring stay intact. -->
+        <button id="openAgentBtn" class="btn btn-primary hidden" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Create with Agent</button>
         <button id="openResumeBtn" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Resume draft</button>
-        <button id="openCreateBtn" class="btn btn-quiet">Create manually</button>
+        <button id="openCreateBtn" class="btn btn-primary">+ Create Plan</button>
         <button id="openMasterBtn" class="btn btn-quiet" title="Manage the departments and staff used in trip plans"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Staff &amp; Departments</button>
       </div>
     </div>
@@ -320,14 +322,43 @@
 
   <!-- ======================= CREATE MODAL ======================= -->
   <div id="createOverlay" class="overlay hidden">
-    <div class="sheet">
+    <div class="sheet sheet-create" id="createSheet">
       <div class="sheet-head">
         <div>
-          <h2>Create Business Trip Plan</h2>
-          <p class="sub">A travel-expense limit is granted upon completion.</p>
+          <h2 id="createTitle">Create Business Trip Plan</h2>
+          <p class="sub" id="createSub">A travel-expense limit is granted upon completion.</p>
         </div>
-        <button class="x-btn" id="closeSheetBtn" aria-label="Close">✕</button>
+        <div class="head-tools">
+          <button class="mini-btn" id="chatToggleBtn" title="Fill the form by chatting with the agent"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> <span id="chatToggleLabel">Agent</span></button>
+          <button class="x-btn" id="closeSheetBtn" aria-label="Close">✕</button>
+        </div>
       </div>
+
+      <div class="create-body" id="createBody">
+      <!-- Agent chat pane (left) — toggled by the Agent button -->
+      <aside class="create-chat" id="createChat">
+        <div id="agentThread" class="thread"></div>
+        <div class="composer">
+          <div id="agentFiles" class="file-chips"></div>
+          <div class="composer-row">
+            <textarea id="agentInput" rows="2" placeholder="e.g. John Doe travels Seoul → Busan by KTX, 2026-07-01 to 2026-07-03, client meetings."></textarea>
+            <div class="composer-actions">
+              <label class="attach-btn" title="Attach PDF or spreadsheet"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg>
+                <input type="file" id="agentFileInput" accept=".pdf,.xlsx,.xls,application/pdf" multiple hidden />
+              </label>
+              <button class="btn btn-primary" id="agentSendBtn">Send</button>
+            </div>
+          </div>
+          <div class="composer-foot">
+            <label class="composer-model" for="agentModelSelect" title="The model all conversational agents use (global)">
+              <svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg>
+              <span>Model</span>
+              <div class="select-wrap"><select id="agentModelSelect"><option value="">Auto</option></select></div>
+            </label>
+            <span class="composer-model-hint">applies to all agents</span>
+          </div>
+        </div>
+      </aside>
 
       <div class="sheet-body">
         <!-- Trip Information -->
@@ -390,6 +421,7 @@
           <div id="attachmentList"></div>
         </section>
       </div>
+      </div><!-- /create-body -->
 
       <div class="sheet-foot">
         <span id="validationSummary" class="val-summary"></span>
@@ -431,69 +463,6 @@
           <button class="btn btn-quiet" id="routeCancelBtn">Cancel</button>
           <button class="btn btn-primary" id="routeCheckBtn">Confirm route</button>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ======================= AGENT MODAL ======================= -->
-  <div id="agentOverlay" class="overlay hidden">
-    <div class="sheet sheet-lg">
-      <div class="sheet-head">
-        <div>
-          <h2 id="agentTitle">Create Plan with Agent</h2>
-          <p class="sub" id="agentSub">Describe the trip in plain language, or attach a staff spreadsheet / itinerary PDF. The agent fills the draft for you.</p>
-        </div>
-        <button class="x-btn" id="agentCloseBtn" aria-label="Close">✕</button>
-      </div>
-
-      <div class="agent-body">
-        <!-- Conversation -->
-        <div class="agent-chat">
-          <div id="agentThread" class="thread">
-            <div class="msg msg-assistant">
-              <div class="bubble">Hi! Tell me about the business trip — who travels, where, when, and why. You can also attach a staff list (.xlsx) or a booking/itinerary (.pdf).</div>
-            </div>
-          </div>
-          <div class="composer">
-            <div id="agentFiles" class="file-chips"></div>
-            <div class="composer-row">
-              <textarea id="agentInput" rows="2" placeholder="e.g. John Doe travels Seoul → Busan by KTX, 2026-07-01 to 2026-07-03, client meetings."></textarea>
-              <div class="composer-actions">
-                <label class="attach-btn" title="Attach PDF or spreadsheet"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg>
-                  <input type="file" id="agentFileInput" accept=".pdf,.xlsx,.xls,application/pdf" multiple hidden />
-                </label>
-                <button class="btn btn-primary" id="agentSendBtn">Send</button>
-              </div>
-            </div>
-            <div class="composer-foot">
-              <label class="composer-model" for="agentModelSelect" title="The model all conversational agents use (global)">
-                <svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg>
-                <span>Model</span>
-                <div class="select-wrap"><select id="agentModelSelect"><option value="">Auto</option></select></div>
-              </label>
-              <span class="composer-model-hint">applies to all agents</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Draft preview / verify -->
-        <aside class="agent-draft">
-          <div class="draft-head">
-            <span>Draft preview</span>
-            <div class="dh-right">
-              <button class="mini-btn hidden" id="draftEditBtn" title="Edit the draft">✎ Edit</button>
-              <span id="draftStatus" class="status-pill status-none">No draft</span>
-            </div>
-          </div>
-          <div id="draftBody" class="draft-body">
-            <p class="draft-empty">No draft yet — send a message to begin building the plan.</p>
-          </div>
-          <div class="draft-foot">
-            <span id="agentCreateHint" class="hint"></span>
-            <button class="btn btn-primary hidden" id="draftSaveBtn">Save draft</button>
-            <button class="btn btn-primary" id="agentCreateBtn" disabled>Create this plan</button>
-          </div>
-        </aside>
       </div>
     </div>
   </div>
