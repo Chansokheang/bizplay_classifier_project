@@ -30,14 +30,34 @@ The deploy step waits up to 90 s for `GET /actuator/health` to return `"status":
 
 ## 1a. Required secrets
 
-Settings → Secrets and variables → Actions → New repository secret:
+Settings → Secrets and variables → Actions → New repository secret.
+
+> **IMPORTANT — these names must match `.github/workflows/deploy.yml` exactly.** A missing
+> secret resolves to an EMPTY string, and the scp/ssh steps then fail with
+> `ssh: handshake failed: ... attempted methods [none]` (the action had no credentials at all).
+> When the repo is moved/recreated (e.g. into a new monorepo), every secret must be re-created
+> in the new repo — secrets do not travel with the git history.
+
+Connection secrets (used by the `appleboy/scp-action` and `appleboy/ssh-action` steps):
 
 | Name | Value | Notes |
 |---|---|---|
-| `DEPLOY_HOST` | e.g. `1.2.3.4` or `bizplay-chatbot.aiconvergencelab.com` | Server SSH endpoint reachable from GitHub-hosted runners (i.e. publicly routable). |
-| `DEPLOY_USER` | e.g. `deploy` | Linux user that owns `/opt/bizplay-chatbot` and is in the `docker` group. |
-| `DEPLOY_PORT` | `22` (or your custom SSH port) | |
-| `DEPLOY_SSH_KEY` | The private SSH key (full PEM contents) for `DEPLOY_USER` | Generate a dedicated key for this — don't reuse a personal one. See §3 below. |
+| `SERVER_HOST` | Server SSH endpoint | Must be reachable from GitHub-hosted runners (publicly routable). |
+| `SERVER_USER` | e.g. `sokheang` | Linux user that owns `REMOTE_APP_DIR` and is in the `docker` group. |
+| `SERVER_PORT` | `22` (or custom) | |
+| `SERVER_SSH_KEY` | Private SSH key (full PEM contents) | **Preferred.** Generate a dedicated deploy key; add its public half to the server's `~/.ssh/authorized_keys`. |
+| `SERVER_PASSWORD` | SSH password | Fallback when no `SERVER_SSH_KEY` is set. Either one is enough. |
+
+Registry secrets (the server logs in to GHCR to pull the private image):
+
+| Name | Value |
+|---|---|
+| `GHCR_USERNAME` | GitHub username owning the package |
+| `GHCR_PAT` | PAT with `read:packages` scope |
+
+App-config secrets (`POSTGRES_*`, `SPRING_*`, `APP_*`, `MINIO_*` — see the workflow's `.env`
+heredoc for the full list) are only used to CREATE `/…/.env` on the server the first time;
+when `.env` already exists it is preserved, so these are optional for an established server.
 
 `GITHUB_TOKEN` is provided automatically and used to push to GHCR; no setup needed for that.
 

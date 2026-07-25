@@ -28,8 +28,12 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Make Maven wrapper executable
+        working-directory: bizplay_api
+        run: chmod +x mvnw
+
       - name: Build application
-        working-directory: bizplay_classifier_api
+        working-directory: bizplay_api
         run: ./mvnw -q -DskipTests package
 
       - name: Set up Docker Buildx
@@ -54,20 +58,23 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./bizplay_classifier_api
-          file: ./bizplay_classifier_api/Dockerfile
+          context: ./bizplay_api
+          file: ./bizplay_api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # Auth: SERVER_SSH_KEY (private key) is preferred; SERVER_PASSWORD is the fallback.
+      # Either secret alone is enough — appleboy uses the key when it is non-empty.
       - name: Copy deployment files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
-          source: "bizplay_classifier_api/compose.prod.yaml,bizplay_classifier_api/src/main/resources/schemaV2.sql"
+          source: "bizplay_api/compose.prod.yaml,bizplay_api/src/main/resources/schemaV2.sql"
           target: ${{ env.REMOTE_APP_DIR }}
 
       - name: Deploy on server
@@ -75,17 +82,18 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
             set -e
             mkdir -p ${{ env.REMOTE_APP_DIR }}
             cd ${{ env.REMOTE_APP_DIR }}
-            if [ -f bizplay_classifier_api/compose.prod.yaml ]; then
-              cp bizplay_classifier_api/compose.prod.yaml compose.prod.yaml
+            if [ -f bizplay_api/compose.prod.yaml ]; then
+              cp bizplay_api/compose.prod.yaml compose.prod.yaml
             fi
-            if [ -f bizplay_classifier_api/src/main/resources/schemaV2.sql ]; then
-              cp bizplay_classifier_api/src/main/resources/schemaV2.sql schemaV2.sql
+            if [ -f bizplay_api/src/main/resources/schemaV2.sql ]; then
+              cp bizplay_api/src/main/resources/schemaV2.sql schemaV2.sql
             fi
             if [ -f main/resources/schemaV2.sql ]; then
               cp main/resources/schemaV2.sql schemaV2.sql
@@ -135,10 +143,30 @@ jobs:
             else
               echo ".env already exists; preserving server-managed .env"
             fi
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+            for attempt in 1 2 3; do
+              if echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "GHCR login failed after 3 attempts."
+                exit 1
+              fi
+              echo "GHCR login failed. Retrying in 10 seconds... (attempt $attempt/3)"
+              sleep 10
+            done
             ls -la
             mkdir -p uploads
             docker run --rm -v "$PWD/uploads:/data" alpine:3.20 sh -c "chown -R 1001:1001 /data"
-            docker compose -f compose.prod.yaml pull app
+            for attempt in 1 2 3; do
+              if docker compose -f compose.prod.yaml pull app; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "Docker image pull failed after 3 attempts."
+                exit 1
+              fi
+              echo "Docker image pull failed. Retrying in 15 seconds... (attempt $attempt/3)"
+              sleep 15
+            done
             docker compose -f compose.prod.yaml up -d
             docker image prune -f
