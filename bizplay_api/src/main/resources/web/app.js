@@ -61,9 +61,13 @@ const I18N = {
     "출장을 설명하거나 직원 명단·일정표를 첨부하세요 — 에이전트가 양식을 채우며, 모든 항목을 직접 수정할 수 있습니다.",
   "Agent": "에이전트",
   "A travel-expense limit is granted upon completion.": "작성 완료 시 출장비 한도가 부여됩니다.",
-  "Trip Information": "출장 정보", "Travel Purpose": "출장 유형", "Trip Period": "출장 기간",
-  "Destination": "목적지", "Content": "내용", "Classification": "구분",
-  "Select a purpose…": "유형 선택…", "e.g. Busan": "예: 부산", "Give the trip a name": "출장 이름을 입력하세요",
+  "Trip Information": "출장 정보", "Travel Purpose": "출장 목적", "Trip Period": "출장 기간",
+  "Travel Classification": "출장 구분", "Destination": "출장지", "Content": "내용", "Classification": "구분",
+  "Region / City": "지역", "Country": "국가", "Institution / Venue": "교육기관",
+  "Additional Information": "추가 정보", "Cost center": "코스트센터", "Enter the content": "내용을 입력하세요",
+  "Project code": "과제코드", "Education type": "교육유형", "Remarks": "비고", "Duration": "기간 구분", "One-way / Round": "편도/왕복",
+  "Select a purpose…": "출장 목적 선택…", "Select a purpose first…": "출장 목적을 먼저 선택하세요…", "Select…": "선택…",
+  "e.g. Busan": "예: 부산", "Give the trip a name": "출장 이름을 입력하세요",
   "Notes, agenda, context…": "메모, 일정, 배경…",
   "Travellers": "출장자 명단", "Traveller": "출장자", "+ Add another traveller": "+ 출장자 추가",
   "Budget Department": "예산 부서", "Travel Route": "이동 경로",
@@ -577,10 +581,11 @@ function emptyRow(cols, { icon = "inbox", title = "Nothing here yet", sub = "", 
  * server adds a dev CORS header for /api/v1/plans so that still works.
  * Note: opening via file:// cannot reach the API (browsers block it) — use the URL. */
 const IS_LOCAL_DEV_HOST = ["localhost", "127.0.0.1"].includes(location.hostname);
-const API_ORIGIN =
-  location.protocol === "file:" || (IS_LOCAL_DEV_HOST && location.port && location.port !== "8080")
+// localStorage "bizplay.apiOrigin" overrides (e.g. "http://localhost:8081", or "" for same-origin).
+const API_ORIGIN = localStorage.getItem("bizplay.apiOrigin") ??
+  (location.protocol === "file:" || (IS_LOCAL_DEV_HOST && location.port && location.port !== "8080")
     ? "http://localhost:8080"
-    : "";
+    : "");
 const API = API_ORIGIN + "/api/v1/plans";
 
 /* Seed staff/departments (mirror src/test/data/seed_staff_department.sql for corp 1234567890).
@@ -605,6 +610,335 @@ const LOCATIONS = [
   "Seoul", "Busan", "Incheon", "Gumi", "Daegu", "Daejeon", "Gwangju",
   "Incheon Airport", "Gimpo Airport", "Tokyo", "Taipei", "Osaka",
 ];
+
+/* ---------------------------------------------------------------- *
+ *  Dynamic trip type — mirrors Bizplay's 출장 목적 → 출장 구분 cascade.
+ *  Picking a purpose repopulates the Classification select and re-labels
+ *  the Destination field (Region / Country / Institution), like the real form.
+ * ---------------------------------------------------------------- */
+const TRIP_REGIONS = ["Seoul", "Busan", "Incheon", "Daegu", "Daejeon", "Gwangju", "Gumi", "Ulsan", "Sejong", "Jeju"];
+const TRIP_COUNTRIES = ["Japan", "China", "Vietnam", "Cambodia", "Singapore", "USA", "Germany", "United Kingdom", "India", "Thailand", "Indonesia", "UAE"];
+/* One entry per 출장 목적, mirroring the real Bizplay templates: each has its own
+ * classification cascade, destination labelling, and template-specific extra fields.
+ * Extra-field types: text | search | select | radio | textarea | richtext. */
+const TRIP_TYPES = {
+  "해외출장": {
+    ko: "해외출장",
+    classifications: [["장기", "장기 · Long-term"]],
+    destLabel: "Country", destKo: "국가", destPlaceholder: "e.g. Japan, Cambodia", options: TRIP_COUNTRIES,
+    hint: "Overseas trip — pick the destination country.",
+    extra: [],
+  },
+  "국내출장": {
+    ko: "국내출장",
+    classifications: [["일반", "일반 · General"], ["시내출장", "시내출장 · In-city"]],
+    destLabel: "Region / City", destKo: "지역", destPlaceholder: "e.g. Seoul, Busan", options: TRIP_REGIONS,
+    hint: "Domestic trip — pick a region/city.",
+    extra: [],
+  },
+  "테스트(유성린)": {
+    ko: "테스트(유성린)",
+    classifications: [["성린4", "성린4"]],
+    destLabel: "Destination", destKo: "출장지", destPlaceholder: "Where to", options: [],
+    hint: "Custom template — cost center + rich note.",
+    extra: [
+      { id: "costCenter", type: "search", label: "Cost center", ko: "코스트센터", placeholder: "Search cost center…" },
+      { id: "html111", type: "richtext", label: "HTML111", ko: "", placeholder: "내용을 입력하세요." },
+    ],
+  },
+  "lg입력항목": {
+    ko: "lg입력항목",
+    classifications: [["테스트", "테스트"], ["귀향교통비", "귀향교통비 · Return fare"]],
+    destLabel: "Destination", destKo: "출장지", destPlaceholder: "Where to", options: [],
+    hint: "Custom template — education & travel options.",
+    extra: [
+      { id: "eduType", type: "radio", label: "Education type", ko: "교육유형", options: ["사내교육 · In-house", "사외교육 · External"] },
+      { id: "tripWay", type: "radio", label: "One-way / Round", ko: "편도/왕복", options: ["편도 · One-way", "왕복 · Round-trip"] },
+      { id: "over90", type: "radio", label: "Duration", ko: "90일 기준", options: ["90일이하 · ≤ 90d", "90일초과 · > 90d"] },
+      { id: "remarks", type: "textarea", label: "Remarks", ko: "비고", placeholder: "Additional notes…" },
+    ],
+  },
+  "테스트": {
+    ko: "테스트",
+    classifications: [["테스트1", "테스트1"]],
+    destLabel: "Destination", destKo: "출장지", destPlaceholder: "Where to", options: [],
+    hint: "Custom template — minimal.",
+    extra: [],
+  },
+  "해양조선 목적테스트(CWB)": {
+    ko: "해양조선",
+    classifications: [["일반", "일반 · General"]],
+    destLabel: "Destination", destKo: "출장지", destPlaceholder: "Where to", options: [],
+    hint: "Custom template — project code + cost center.",
+    extra: [
+      { id: "projectCode", type: "text", label: "Project code", ko: "과제코드", placeholder: "e.g. CWB-2026-001" },
+      { id: "costCenter", type: "search", label: "Cost center", ko: "코스트센터", placeholder: "Search cost center…" },
+    ],
+  },
+};
+
+/* ================================================================
+ * Live BizPlay catalog — Travel Purpose, Trip Type (segment) and the dynamic
+ * form are RETRIEVED from the private BizPlay API (proxied by our backend)
+ * instead of the hardcoded TRIP_TYPES mirror. TRIP_TYPES stays as the offline
+ * fallback so the modal still works when the private API is unreachable.
+ * ================================================================ */
+const BZ_API_BASE = () => API_ORIGIN + "/api/v1/agent-conversations/bizplay";
+let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId") || "30447";
+let bzCatalog = null;        // { purposeName: { purposeId, segments: [{segmentId, segmentName, label}] } }
+const bzFormCache = {};      // "purposeId:segmentId" -> form response (paperId, paperName, fields)
+let bzActiveCfg = null;      // extra-field cfg generated from the live form (extraFieldsSummary uses it)
+let bzActiveFormMeta = null; // { paperId, paperName } of the currently rendered live form
+
+async function loadBizplayCatalog() {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/purposes?corpUserId=${encodeURIComponent(BZ_CORP_USER_ID)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const options = (json && (json.data || json.payload)) || [];
+    if (!options.length) throw new Error("Empty purpose catalog.");
+    const cat = {};
+    options.forEach((o) => {
+      const name = o.purposeName || "";
+      if (!cat[name]) cat[name] = { purposeId: o.purposeId, segments: [] };
+      if (o.segmentId != null) {
+        cat[name].segments.push({ segmentId: o.segmentId, segmentName: o.segmentName || "", label: o.segmentName || o.label || "" });
+      }
+    });
+    bzCatalog = cat;
+    // Rebuild the Travel Purpose select from the live catalog (same markup/design).
+    const sel = $("tripPurpose");
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">Select a purpose…</option>` +
+      Object.keys(cat).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    if (prev && cat[prev]) sel.value = prev;
+    console.info("[bizplay] live catalog loaded:", Object.keys(cat).length, "purposes");
+    // Preload the staff roster so live traveler pickers list real corp users immediately.
+    bzLoadRoster().then(() => { if (bzActiveFormMeta) renderTravelers(); })
+      .catch((e) => console.warn("[bizplay] roster preload failed:", e.message));
+  } catch (e) {
+    console.warn("[bizplay] live catalog unavailable — using built-in fallback:", e.message);
+    bzCatalog = null;
+  }
+}
+
+/* Item types BizPlay renders as a per-traveler "신청" (apply) toggle. */
+const BZ_APPLY_TYPES = ["EXPENSE_BEYOND_BSTR_PERIOD", "DAILY_COST", "FUEL_COST", "REQUEST_STAFF_LODGE"];
+
+/* Map a live form's field spec onto the designed renderers, split the way the
+ * REAL BizPlay UI places them (paperItemOrderDto.travelerItemUsed):
+ *   travelerItem=false -> once at form level (the GROUP_TITLE section)
+ *   travelerItem=true  -> inside EACH traveler card
+ * Basics and the trip period already have dedicated widgets, so they're skipped. */
+function bzFieldsToCfg(form) {
+  const skip = (f) => String(f.key || "").startsWith("basic:") || f.type === "BSTR_PERIOD";
+  const mk = (f) => {
+    let type = "text";
+    if (BZ_APPLY_TYPES.includes(f.type)) type = "apply";
+    else if (f.type === "HTML") type = "richtext";
+    else if (f.type === "COST_CENTER") type = "search";
+    else if (f.options && f.options.length) type = f.options.length <= 3 ? "radio" : "select";
+    return {
+      id: f.key, type,
+      label: (f.label || f.key) + (f.required ? " *" : ""),
+      rawLabel: f.label || f.key, required: !!f.required,
+      ko: "", options: f.options || [], placeholder: "",
+    };
+  };
+  const custom = (form.fields || []).filter((f) => !skip(f));
+  return {
+    ko: form.sectionTitle || form.paperName || "",
+    extra: custom.filter((f) => !f.travelerItem).map(mk),
+    travelerExtra: custom.filter((f) => f.travelerItem).map(mk),
+  };
+}
+
+/* Per-traveler custom items (travelerItemUsed=true), rendered inside each card
+ * like the real BizPlay form: "apply" items as a 신청 toggle, the rest compact. */
+function bzTravelerFieldsHtml(t) {
+  const list = (bzActiveCfg && bzActiveCfg.travelerExtra) || [];
+  if (!list.length) return "";
+  return `<div class="field span-2"><div class="trav-extras">` + list.map((f) => {
+    if (f.type === "apply") {
+      return `<label class="trav-extra trav-extra-apply"><input type="checkbox" data-bztf="${esc(f.id)}" data-id="${t.id}" /><span>${esc(f.label)} · 신청</span></label>`;
+    }
+    if (f.options && f.options.length) {
+      return `<div class="trav-extra"><span class="trav-extra-label">${esc(f.label)}</span><div class="select-wrap"><select data-bztf="${esc(f.id)}" data-id="${t.id}"><option value="">Select…</option>${f.options.map((o) => `<option>${esc(o)}</option>`).join("")}</select></div></div>`;
+    }
+    const isSearch = f.type === "search";
+    return `<div class="trav-extra"><span class="trav-extra-label">${esc(f.label)}</span><div class="${isSearch ? "search-field" : ""}"><input type="text" data-bztf="${esc(f.id)}" data-id="${t.id}" placeholder="${esc(f.label)}" />${isSearch ? `<span class="search-field-ico">${svgIcon("search")}</span>` : ""}</div></div>`;
+  }).join("") + `</div></div>`;
+}
+
+/* Classification chosen → fetch the live form for (purpose, segment) and render
+ * its custom items with the EXISTING extra-field renderer (design unchanged). */
+async function bzOnClassificationChange() {
+  const purposeName = $("tripPurpose").value;
+  const live = bzCatalog && bzCatalog[purposeName];
+  if (!live) return;   // fallback mode — TRIP_TYPES already rendered everything
+  const clsSel = $("tripClassification");
+  if (!clsSel.value) { bzActiveCfg = null; bzActiveFormMeta = null; renderExtraFields(null, false); return; }
+  const opt = clsSel.selectedOptions && clsSel.selectedOptions[0];
+  const sid = opt ? (opt.getAttribute("data-sid") || "") : "";
+  const key = `${live.purposeId}:${sid}`;
+  try {
+    let form = bzFormCache[key];
+    if (!form) {
+      $("tripTypeHint").textContent = "Loading form from BizPlay…";
+      const url = `${BZ_API_BASE()}/form?purposeId=${encodeURIComponent(live.purposeId)}${sid ? `&segmentId=${encodeURIComponent(sid)}` : ""}`;
+      const res = await fetch(url);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw apiError(json, res);
+      form = (json && (json.data || json.payload)) || null;
+      if (!form) throw new Error("Empty form response.");
+      bzFormCache[key] = form;
+    }
+    bzActiveFormMeta = { paperId: form.paperId, paperName: form.paperName };
+    bzActiveCfg = bzFieldsToCfg(form);
+    $("tripTypeHint").textContent = `Form "${form.paperName}" loaded live from BizPlay (paper ${form.paperId}).`;
+    renderExtraFields(bzActiveCfg, false);
+    renderTravelers();   // per-traveler items (travelerItemUsed=true) render inside the cards
+    updateTripDetailVisibility();
+  } catch (e) {
+    $("tripTypeHint").textContent = "Could not load the BizPlay form: " + friendlyError(e.message);
+  }
+}
+
+/* Best-effort map an agent-extracted purpose (English or Korean) onto a template key. */
+function normalizePurpose(p) {
+  if (!p) return "";
+  if (TRIP_TYPES[p]) return p;
+  const s = String(p).toLowerCase();
+  if (/해외|overseas|international|abroad/.test(s)) return "해외출장";
+  if (/국내|domestic|in-country/.test(s)) return "국내출장";
+  return "";
+}
+
+/* Repopulate Classification + relabel Destination when the purpose changes.
+ * keepClass preserves the current classification if it's still valid (used on
+ * re-render / draft load); otherwise it resets. */
+function applyTripType(keepClass) {
+  const purposeName = $("tripPurpose").value;
+  const live = bzCatalog && bzCatalog[purposeName];
+  const cfg = TRIP_TYPES[purposeName];
+  const clsSel = $("tripClassification");
+  const prev = keepClass ? clsSel.value : "";
+  bzActiveCfg = null;
+  bzActiveFormMeta = null;
+  if (live) {
+    // LIVE mode: classifications come from the BizPlay segments; the extra fields
+    // render after the classification is picked (the form is per purpose+segment).
+    clsSel.disabled = false;
+    const segs = live.segments.length ? live.segments
+      : [{ segmentId: "", segmentName: "-", label: "(no classification)" }];
+    clsSel.innerHTML = `<option value="">Select…</option>` +
+      segs.map((s) => `<option value="${esc(s.segmentName || "-")}" data-sid="${esc(String(s.segmentId ?? ""))}">${esc(s.label || s.segmentName || "-")}</option>`).join("");
+    if (prev && [...clsSel.options].some((o) => o.value === prev)) clsSel.value = prev;
+    $("tripTypeHint").textContent = "Loaded live from BizPlay — pick a classification to load its form.";
+    // Destination labelling: reuse the designed labels when the static mirror has
+    // this purpose; otherwise sensible defaults.
+    const d = cfg || {};
+    $("tripDestLabel").innerHTML = `${esc(d.destLabel || "Destination")} <span class="req">*</span> <span class="ko-label">${esc(d.destKo || "출장지")}</span>`;
+    $("tripDestination").placeholder = d.destPlaceholder || "Where to";
+    $("destOptions").innerHTML = (d.options || []).map((o) => `<option value="${esc(o)}">`).join("");
+    renderExtraFields(null, false);
+    renderTravelers();   // clear per-traveler extras until the new form loads
+    if (clsSel.value) bzOnClassificationChange();
+    updateTripDetailVisibility();
+    return;
+  }
+  if (!cfg) {
+    clsSel.innerHTML = `<option value="">Select a purpose first…</option>`;
+    clsSel.disabled = true;
+    $("tripTypeHint").textContent = "";
+    $("tripDestLabel").innerHTML = `Destination <span class="req">*</span> <span class="ko-label" id="tripDestKo">출장지</span>`;
+    $("tripDestination").placeholder = "e.g. Busan";
+    $("destOptions").innerHTML = "";
+    renderExtraFields(null, false);
+    updateTripDetailVisibility();
+    return;
+  }
+  clsSel.disabled = false;
+  clsSel.innerHTML = `<option value="">Select…</option>` +
+    cfg.classifications.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join("");
+  if (prev && cfg.classifications.some(([v]) => v === prev)) clsSel.value = prev;
+  $("tripTypeHint").textContent = cfg.hint;
+  $("tripDestLabel").innerHTML = `${esc(cfg.destLabel)} <span class="req">*</span> <span class="ko-label">${esc(cfg.destKo)}</span>`;
+  $("tripDestination").placeholder = cfg.destPlaceholder;
+  $("destOptions").innerHTML = cfg.options.map((o) => `<option value="${esc(o)}">`).join("");
+  renderExtraFields(cfg, keepClass);
+  updateTripDetailVisibility();
+}
+
+/* Render the template-specific fields for a purpose. keepValues=true preserves any
+ * values already entered (used when only the classification changed). */
+function renderExtraFields(cfg, keepValues) {
+  const wrap = $("tripExtraFields");
+  const prev = keepValues ? readExtraFields() : {};
+  const fields = (cfg && cfg.extra) || [];
+  $("tripExtraSection").classList.toggle("hidden", fields.length === 0);
+  if (!fields.length) { wrap.innerHTML = ""; return; }
+  $("tripExtraTitle").textContent = "Additional Information";
+  $("tripExtraKo").textContent = cfg.ko || "";
+  wrap.innerHTML = fields.map((f) => {
+    const v = prev[f.id] != null ? prev[f.id] : "";
+    const lab = `<label>${esc(f.label)}${f.ko ? ` <span class="ko-label">${esc(f.ko)}</span>` : ""}</label>`;
+    let control = "";
+    if (f.type === "search") {
+      control = `<div class="search-field"><input type="text" data-xf="${esc(f.id)}" value="${esc(v)}" placeholder="${esc(f.placeholder || "")}" />
+        <span class="search-field-ico">${svgIcon("search")}</span></div>`;
+    } else if (f.type === "select") {
+      control = `<div class="select-wrap"><select data-xf="${esc(f.id)}"><option value="">Select…</option>${
+        f.options.map((o) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
+    } else if (f.type === "radio") {
+      control = `<div class="seg">${f.options.map((o) =>
+        `<label class="seg-opt"><input type="radio" name="xf-${esc(f.id)}" data-xf="${esc(f.id)}" value="${esc(o)}" ${o === v ? "checked" : ""} /><span>${esc(o)}</span></label>`).join("")}</div>`;
+    } else if (f.type === "textarea") {
+      control = `<textarea data-xf="${esc(f.id)}" maxlength="500" placeholder="${esc(f.placeholder || "")}">${esc(v)}</textarea>`;
+    } else if (f.type === "richtext") {
+      control = `<div class="rte"><div class="rte-toolbar" data-xf-tb="${esc(f.id)}">
+        <button type="button" class="rte-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+        <button type="button" class="rte-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+        <button type="button" class="rte-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+        <button type="button" class="rte-btn" data-cmd="insertUnorderedList" title="List">• List</button>
+      </div><div class="rte-body" contenteditable="true" data-xf="${esc(f.id)}" data-placeholder="${esc(f.placeholder || "")}">${v}</div></div>`;
+    } else {
+      control = `<input type="text" data-xf="${esc(f.id)}" value="${esc(v)}" maxlength="200" placeholder="${esc(f.placeholder || "")}" />`;
+    }
+    return `<div class="field span-2">${lab}${control}</div>`;
+  }).join("");
+}
+
+/* Collect extra-field values into { id: value }. */
+function readExtraFields() {
+  const out = {};
+  $("tripExtraFields").querySelectorAll("[data-xf]").forEach((el) => {
+    const id = el.getAttribute("data-xf");
+    if (el.type === "radio") { if (el.checked) out[id] = el.value; }
+    else if (el.isContentEditable) out[id] = rteText(el);
+    else out[id] = (el.value || "").trim();
+  });
+  return out;
+}
+
+/* Human-readable summary of the extra fields, appended to Content on submit so the
+ * template-specific values are captured (our backend has no columns for them). */
+function extraFieldsSummary() {
+  const cfg = bzActiveCfg || TRIP_TYPES[$("tripPurpose").value];
+  if (!cfg || !cfg.extra || !cfg.extra.length) return "";
+  const vals = readExtraFields();
+  const lines = cfg.extra.map((f) => (vals[f.id] ? `${f.ko || f.label}: ${vals[f.id]}` : null)).filter(Boolean);
+  return lines.length ? `\n\n[${cfg.ko}]\n${lines.join("\n")}` : "";
+}
+
+/* Bizplay flow: the rest of the form is revealed only after BOTH the purpose and
+ * the classification are chosen. Changing the purpose clears the classification,
+ * so the detail collapses back to the placeholder until it's re-picked. */
+function updateTripDetailVisibility() {
+  const ready = !!$("tripPurpose").value && !!$("tripClassification").value;
+  $("tripDetail").classList.toggle("hidden", !ready);
+  $("tripDetailPlaceholder").classList.toggle("hidden", ready);
+}
 
 /* In-memory traveler models for the open form. */
 let travelers = [];
@@ -875,7 +1209,8 @@ function openCreate() {
   $("tripDestination").value = "";
   $("tripTitle").value = "";
   $("tripContent").value = "";
-  document.querySelectorAll('input[name="classification"]').forEach((r) => (r.checked = false));
+  updateCharCounts();
+  applyTripType(false);   // reset the dependent Classification select + Destination labels
   $("attachmentList").innerHTML = attachPlaceholder();
   attachments = [];
   $("validationSummary").textContent = "";
@@ -905,14 +1240,48 @@ function removeTraveler(id) {
 }
 function renderTravelers() {
   $("travelerCount").textContent = travelers.length;
-  const staffOpts = (sel) =>
-    `<option value="">Select Traveler…</option>` +
-    liveStaffList().map((s) => `<option value="${esc(s.name)}" ${s.name === sel ? "selected" : ""}>${esc(s.name)} (${esc(s.department)} · ${esc(s.position)})</option>`).join("");
+  const staffOpts = (sel) => {
+    const list = liveStaffList();
+    // Agent-resolved BizPlay names may not exist in the local demo staff list —
+    // add such a name as its own option so the selection stays visible.
+    const extra = sel && !list.some((s) => s.name === sel)
+      ? `<option value="${esc(sel)}" selected>${esc(sel)}</option>` : "";
+    return `<option value="">Select Traveler…</option>` + extra +
+      list.map((s) => `<option value="${esc(s.name)}" ${s.name === sel ? "selected" : ""}>${esc(s.name)} (${esc(s.department)} · ${esc(s.position)})</option>`).join("");
+  };
   const deptOpts = (sel) =>
     `<option value="">Select Budget Department…</option>` +
     liveDeptNames().map((d) => `<option value="${esc(d)}" ${d === sel ? "selected" : ""}>${esc(d)}</option>`).join("");
 
-  $("travelerList").innerHTML = travelers.map((t, idx) => `
+  // LIVE BizPlay form active: the real traveler card holds ONLY the traveler picker
+  // plus the form's own travelerItem fields — no Budget Department / Travel Route
+  // (those exist nowhere in the retrieved paper). The picker lists the REAL BizPlay
+  // roster (corporationUserId values) so manual saves fan out one document per traveler.
+  const bzStaffOpts = (t) => {
+    const roster = bzApproval.roster;
+    const isSel = (u) => (t.bzId != null && String(t.bzId) === String(u.id)) || (!t.bzId && t.name === u.name);
+    const known = roster.some(isSel);
+    return `<option value="">Select Traveler…</option>` +
+      (t.name && !known ? `<option value="" selected>${esc(t.name)}</option>` : "") +
+      roster.map((u) => `<option value="${esc(String(u.id))}" ${isSel(u) ? "selected" : ""}>${esc(u.name)} (${esc(u.dept || "-")} · ${esc(u.position || "-")})</option>`).join("");
+  };
+  const liveCard = (t, idx) => `
+    <div class="trav-card" data-id="${t.id}">
+      <div class="trav-head">
+        <span class="trav-num">${idx + 1}</span>
+        <span class="trav-label">Traveller ${idx + 1}</span>
+        <button class="trav-x" data-act="remove" data-id="${t.id}" title="Remove">✕</button>
+      </div>
+      <div class="trav-body">
+        <div class="field span-2">
+          <label>Traveller <span class="req">✦</span> <span class="ko-label">출장자</span></label>
+          <div class="select-wrap"><select data-field="name" data-id="${t.id}">${bzStaffOpts(t)}</select></div>
+        </div>
+        ${bzTravelerFieldsHtml(t)}
+      </div>
+    </div>`;
+
+  const designedCard = (t, idx) => `
     <div class="trav-card" data-id="${t.id}">
       <div class="trav-head">
         <span class="trav-num">${idx + 1}</span>
@@ -937,8 +1306,12 @@ function renderTravelers() {
             <span class="route-set">✎ ${t.origin ? "Edit" : "Set"} route</span>
           </div>
         </div>
+        ${bzTravelerFieldsHtml(t)}
       </div>
-    </div>`).join("");
+    </div>`;
+
+  const card = bzActiveFormMeta ? liveCard : designedCard;
+  $("travelerList").innerHTML = travelers.map((t, idx) => card(t, idx)).join("");
 }
 
 /* ---- Attachments (URL only, to stay simple) ---- */
@@ -1011,19 +1384,30 @@ function readTripFields() {
     destination: $("tripDestination").value.trim(),
     title: $("tripTitle").value.trim(),
     content: $("tripContent").value.trim(),
-    classification: (document.querySelector('input[name="classification"]:checked') || {}).value || "",
+    classification: $("tripClassification").value.trim(),
   };
+}
+
+/* Plain text of a contenteditable field (used by template rich-text extras like HTML111). */
+function rteText(el) { return (el.innerText || "").replace(/ /g, " ").trim(); }
+
+/* "(n/50)"-style live counters on Title and Content, matching the real form. */
+function updateCharCounts() {
+  $("tripTitleCount").textContent = `(${$("tripTitle").value.length}/50)`;
+  $("tripContentCount").textContent = `(${$("tripContent").value.length}/500)`;
 }
 
 /* Validate trip-level fields. Returns a list of missing-field messages. */
 function validateTrip(trip) {
   const missing = [];
   clearInvalid();
-  if (!trip.purpose) { missing.push("business-trip type (purpose)"); mark("tripPurpose"); }
+  if (!trip.purpose) { missing.push("travel purpose"); mark("tripPurpose"); }
+  if (!trip.classification) { missing.push("travel classification"); mark("tripClassification"); }
   if (!trip.start || !trip.end) { missing.push("travel dates"); if (!trip.start) mark("startDate"); if (!trip.end) mark("endDate"); }
   else if (trip.end < trip.start) { missing.push("end date must be on/after start date"); mark("endDate"); }
   if (!trip.destination) { missing.push("trip destination"); mark("tripDestination"); }
   if (!trip.title) { missing.push("title"); mark("tripTitle"); }
+  if (!trip.content) { missing.push("content"); mark("tripContent"); }
   if (!travelers.length) missing.push("at least one traveler");
   travelers.forEach((t) => {
     if (!t.name) missing.push(`traveler #${travelers.indexOf(t) + 1} name`);
@@ -1046,14 +1430,67 @@ async function ensureAllRoutes() {
   return true;
 }
 
+/* LIVE BizPlay mode: validate only what the RETRIEVED form actually requires —
+ * the designed extras (Budget Department, Travel Route) don't exist in it. */
+function validateLiveTrip(trip) {
+  const missing = [];
+  clearInvalid();
+  if (!trip.purpose) { missing.push("Travel Purpose (출장 목적)"); mark("tripPurpose"); }
+  if (!trip.classification) { missing.push("Travel Classification (출장 구분)"); mark("tripClassification"); }
+  if (!trip.start || !trip.end) {
+    missing.push("Trip period (출장기간)");
+    if (!trip.start) mark("startDate");
+    if (!trip.end) mark("endDate");
+  } else if (trip.end < trip.start) {
+    missing.push("end date must be on/after start date");
+    mark("endDate");
+  }
+  if (!trip.destination) { missing.push("Destination (출장지)"); mark("tripDestination"); }
+  if (!trip.title) { missing.push("Title (제목)"); mark("tripTitle"); }
+  if (!trip.content) { missing.push("Content (내용)"); mark("tripContent"); }
+  if (!travelers.length || travelers.some((t) => !t.name)) missing.push("Traveler (출장자)");
+  // Required custom items of the live form: form-level (data-xf) + per traveler card (data-bztf).
+  const cfg = bzActiveCfg || { extra: [], travelerExtra: [] };
+  const xf = readExtraFields();
+  cfg.extra.filter((f) => f.required).forEach((f) => {
+    if (!(xf[f.id] || "").trim()) missing.push(f.rawLabel);
+  });
+  cfg.travelerExtra.filter((f) => f.required).forEach((f) => {
+    const empty = [...document.querySelectorAll(".trav-card")].some((card) => {
+      const el = card.querySelector(`[data-bztf="${f.id}"]`);
+      if (!el) return true;
+      return el.type === "checkbox" ? false : !(el.value || "").trim();
+    });
+    if (empty) missing.push(f.rawLabel);
+  });
+  return missing;
+}
+
 async function completeCreate() {
   const trip = readTripFields();
+
+  // LIVE BizPlay form: validate against the retrieved form, then continue into the
+  // real save flow (Set approval order -> 출장계획확인 -> POST ③) instead of the demo save.
+  if (bzActiveFormMeta) {
+    const liveMissing = validateLiveTrip(trip);
+    if (liveMissing.length) {
+      $("validationSummary").textContent = "Missing required: " + liveMissing.join(", ");
+      toast("Missing required: " + liveMissing.join(", "), "err");
+      return;
+    }
+    $("validationSummary").textContent = "";
+    // Saving FROM THE FORM always saves what is on screen (agent-filled values live in
+    // the DOM too, plus any manual edits) — the manual path rebuilds the ③ draft from
+    // the retrieved form server-side. The chat chip remains the session-driven save.
+    bzOpenApprovalFlow(true);
+    return;
+  }
 
   // 1) trip-level + traveler identity must be valid first
   let missing = validateTrip(trip);
   if (missing.length) {
     $("validationSummary").textContent = "Missing required: " + missing.join(", ");
-    toast("Please complete the highlighted required fields.", "err");
+    toast("Missing required: " + missing.join(", "), "err");
     return;
   }
 
@@ -1081,7 +1518,7 @@ async function completeCreate() {
       BusinessPeriod: `${trip.start} to ${trip.end}`,
       Destination: trip.destination,
       Title: trip.title,
-      Content: trip.content,
+      Content: (trip.content + extraFieldsSummary()).slice(0, 500),
       BusinessTripClassification: trip.classification,
       Travelers: travelers.map((t) => ({
         Name: t.name,
@@ -1246,6 +1683,54 @@ function init() {
   $("routeCancelBtn").addEventListener("click", () => closeRoute(false));
   $("routeCloseBtn").addEventListener("click", () => closeRoute(false));
 
+  // BizPlay save flow: Set approval order -> 출장계획확인 preview -> POST ③.
+  $("bzStaffSearchIco").innerHTML = svgIcon("search");
+  $("bzStaffSearch").addEventListener("input", bzRenderStaffRows);
+  $("bzDeptFilter").addEventListener("change", bzRenderStaffRows);
+  $("bzStaffRows").addEventListener("click", (ev) => {
+    const tr = ev.target.closest("tr[data-uid]");
+    if (tr) bzToggleLine(isNaN(Number(tr.dataset.uid)) ? tr.dataset.uid : Number(tr.dataset.uid));
+  });
+  $("bzLineList").addEventListener("click", (ev) => {
+    const x = ev.target.closest("[data-x]");
+    if (x) bzToggleLine(isNaN(Number(x.dataset.x)) ? x.dataset.x : Number(x.dataset.x));
+  });
+  $("bzLineList").addEventListener("change", (ev) => {
+    const sel = ev.target.closest("select[data-kind]");
+    if (!sel) return;
+    const line = bzApproval.lines.find((l) => String(l.id) === String(sel.dataset.kind));
+    if (line) line.kind = sel.value;
+  });
+  $("bzApprovalCloseBtn").addEventListener("click", () => $("bzApprovalOverlay").classList.add("hidden"));
+  $("bzApprovalCancelBtn").addEventListener("click", () => $("bzApprovalOverlay").classList.add("hidden"));
+  $("bzApprovalCheckBtn").addEventListener("click", bzShowPreview);
+  $("bzPreviewCloseBtn").addEventListener("click", () => $("bzPreviewOverlay").classList.add("hidden"));
+  $("bzPreviewCancelBtn").addEventListener("click", () => $("bzPreviewOverlay").classList.add("hidden"));
+  $("bzPreviewEditLineBtn").addEventListener("click", () => {
+    $("bzPreviewOverlay").classList.add("hidden");
+    $("bzApprovalOverlay").classList.remove("hidden");
+  });
+  $("bzPreviewSaveBtn").addEventListener("click", bzSubmitCreate);
+
+  // Dynamic trip type: purpose drives the Classification options + Destination labels;
+  // the rest of the form appears only once both are chosen.
+  $("tripPurpose").addEventListener("change", () => applyTripType(false));
+  $("tripClassification").addEventListener("change", () => { updateTripDetailVisibility(); bzOnClassificationChange(); });
+  // Replace the hardcoded purpose/type catalog with the live one from the private BizPlay API.
+  loadBizplayCatalog();
+
+  // Live "(n/50)" character counters on Title and Content, like the real form.
+  ["tripTitle", "tripContent"].forEach((id) => $(id).addEventListener("input", updateCharCounts));
+  // Delegated toolbar for dynamically-rendered extra rich-text fields (e.g. HTML111).
+  $("tripExtraFields").addEventListener("mousedown", (ev) => {
+    const btn = ev.target.closest(".rte-toolbar .rte-btn");
+    if (!btn) return;
+    ev.preventDefault();
+    const body = btn.closest(".rte").querySelector(".rte-body");
+    if (body) body.focus();
+    document.execCommand(btn.getAttribute("data-cmd"), false, null);
+  });
+
   // Date hint
   const upd = () => {
     const s = $("startDate").value, e = $("endDate").value;
@@ -1269,6 +1754,14 @@ function init() {
     const field = sel.getAttribute("data-field");
     const t = travelers.find((x) => x.id === id);
     if (!t) return;
+    // LIVE mode traveler picker: option value is the BizPlay corporationUserId.
+    if (field === "name" && bzActiveFormMeta) {
+      const u = bzApproval.roster.find((r) => String(r.id) === sel.value);
+      t.bzId = u ? u.id : null;
+      t.name = u ? u.name : "";
+      renderTravelers();
+      return;
+    }
     t[field] = sel.value;
     if (field === "name") {
       const staff = liveStaffList().find((s) => s.name === sel.value);
@@ -1346,7 +1839,22 @@ function init() {
   });
   // Enter to send (Shift+Enter = newline)
   $("agentInput").addEventListener("keydown", (ev) => {
+    // Ctrl+Space: predefined prompt-flow templates.
+    if (ev.code === "Space" && ev.ctrlKey) { ev.preventDefault(); togglePromptMenu(); return; }
+    if (!$("promptMenu").classList.contains("hidden")) {
+      if (ev.key === "ArrowDown") { ev.preventDefault(); movePromptSel(1); return; }
+      if (ev.key === "ArrowUp") { ev.preventDefault(); movePromptSel(-1); return; }
+      if (ev.key === "Enter") { ev.preventDefault(); pickPrompt(promptSel); return; }
+      if (ev.key === "Escape") { ev.preventDefault(); closePromptMenu(); return; }
+    }
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendAgent(); }
+  });
+  $("promptMenu").addEventListener("mousedown", (ev) => {
+    const item = ev.target.closest(".prompt-item");
+    if (item) { ev.preventDefault(); pickPrompt(Number(item.dataset.idx)); }
+  });
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest(".composer")) closePromptMenu();
   });
 
   // --- Tabs ---
@@ -1562,6 +2070,7 @@ const agent = {
   editTravelers: [],
   mode: "plan",   // "plan" | "report"
   planId: null,   // for report mode: the trip plan being reported on
+  live: false,    // true = session runs on the BizPlay form-driven agent (/bizplay/agents/plan)
 };
 
 function resetAgent() {
@@ -1572,6 +2081,7 @@ function resetAgent() {
   agent.busy = false;
   agent.mode = "plan";
   agent.planId = null;
+  agent.live = false;
   $("agentInput").value = "";
   $("agentFileInput").value = "";
   renderAgentFiles();
@@ -1672,12 +2182,33 @@ async function sendAgent() {
   setAgentBusy(true);
   const typing = appendTyping();
   try {
-    const body = { corpNo: CORP_NO, message: message || null, fileIds };
-    if (agent.sessionId) body.sessionId = agent.sessionId;
-    // A new report session must reference the plan it reports on.
-    if (agent.mode === "report" && !agent.sessionId && agent.planId) body.planId = agent.planId;
-    const endpoint = agent.mode === "report" ? "/agents/expense-report" : "/agents/trip-plan";
-    const res = await fetch(`${AGENT_API}${endpoint}`, {
+    // A NEW plan session goes to the BizPlay form-driven agent when the live
+    // catalog is up (files still ride the PoC agent — no upload path yet in ③).
+    if (!agent.sessionId && agent.mode === "plan") {
+      agent.live = !!bzCatalog && !fileIds.length;
+    }
+    if (agent.live && fileIds.length) {
+      typing.remove();
+      toast("Attachments aren't supported in the live BizPlay flow yet — remove the file or start a new chat.", "err");
+      agent.pending = sentFiles;
+      renderAgentFiles();
+      setAgentBusy(false);
+      return;
+    }
+    let url, body;
+    if (agent.live) {
+      url = `${BZ_API_BASE()}/agents/plan`;
+      body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+      if (agent.sessionId) body.sessionId = agent.sessionId;
+    } else {
+      body = { corpNo: CORP_NO, message: message || null, fileIds };
+      if (agent.sessionId) body.sessionId = agent.sessionId;
+      // A new report session must reference the plan it reports on.
+      if (agent.mode === "report" && !agent.sessionId && agent.planId) body.planId = agent.planId;
+      const endpoint = agent.mode === "report" ? "/agents/expense-report" : "/agents/trip-plan";
+      url = `${AGENT_API}${endpoint}`;
+    }
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1689,11 +2220,17 @@ async function sendAgent() {
     agent.sessionId = data.sessionId || agent.sessionId;
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
+    agent.lastData = data;   // full last turn (missingFields etc.) for panels/tests
     appendMsg("assistant", data.reply || "(no reply)", {
       intent: data.intent, subAgents: data.subAgents,
       choiceGroups: data.pendingChoices,
     });
-    applyDraftToForm(agent.draft);   // the agent fills the real form
+    if (agent.live) {
+      await applyBizplayTurnToForm(data);          // ③-shaped draft -> the designed form
+      if (data.status === "READY_FOR_REVIEW") offerBizplayCreate();
+    } else {
+      applyDraftToForm(agent.draft);               // PoC draft -> the designed form
+    }
   } catch (e) {
     typing.remove();
     appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
@@ -1710,6 +2247,121 @@ function setAgentBusy(b, label) {
   const send = $("agentSendBtn");
   send.disabled = b;
   send.textContent = b ? (label || "Sending…") : "Send";
+}
+
+/* ================================================================
+ * Predefined prompt flows — Ctrl+Space in the agent composer opens a
+ * picker with three ready-made conversation starters. Selecting one
+ * only fills the textarea (the user can edit before sending).
+ * ================================================================ */
+function bzNextWeekday(dow) {   // next occurrence of weekday dow (1=Mon), never today
+  const d = new Date();
+  d.setDate(d.getDate() + (((dow - d.getDay() + 7) % 7) || 7));
+  return d;
+}
+function bzIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+/* Canned demo answer for one missing-field label (used by the follow-up templates). */
+function bzDemoAnswerFor(label) {
+  const mon = bzNextWeekday(1);
+  const wed = new Date(mon); wed.setDate(mon.getDate() + 2);
+  if (/출장자/.test(label)) return "출장자는 김충북";
+  if (/제목/.test(label)) return `제목은 ${$("tripPurpose").value || "출장"} 데모 계획`;
+  if (/내용/.test(label)) return "내용은 업무 협의 및 현장 방문";
+  if (/기간/.test(label)) return `출장기간은 ${bzIso(mon)}부터 ${bzIso(wed)}까지`;
+  if (/출장지|지역/.test(label)) return "출장지는 서울";
+  // custom item of the live form: prefer its first configured option, else a demo value
+  const cfg = bzActiveCfg || { extra: [], travelerExtra: [] };
+  const f = cfg.extra.concat(cfg.travelerExtra).find((x) => x.rawLabel === label);
+  return `${label}: ${f && f.options && f.options.length ? f.options[0] : "테스트"}`;
+}
+
+/* While the agent is asking follow-up questions, Ctrl+Space offers ANSWER templates
+ * for exactly the fields still missing — the whole demo can run on Ctrl+Space alone. */
+function followUpTemplates(missing) {
+  const t = [{
+    title: "Answer all missing fields",
+    desc: `Fills everything the agent asked for: ${missing.join(", ")}.`,
+    text: missing.map(bzDemoAnswerFor).join(", ") + ".",
+  }];
+  if (missing.length > 1) {
+    t.push({
+      title: `Answer one · ${missing[0]}`,
+      desc: "Answer just the first field — the agent keeps asking for the rest.",
+      text: bzDemoAnswerFor(missing[0]) + ".",
+    });
+  }
+  if (missing.some((m) => /출장자/.test(m))) {
+    t.push({
+      title: "Two travelers instead",
+      desc: "Answer the traveler question with 김도하 + 김충북 (one document each on save).",
+      text: "출장자는 김도하랑 김충북 두 명이야.",
+    });
+  }
+  return t;
+}
+
+function promptTemplates() {
+  // Follow-up mode: an active chat is mid-collection -> offer answers, not starters.
+  const missing = (agent.live && agent.sessionId && agent.status === "COLLECTING"
+    && agent.lastData && agent.lastData.missingFields) || [];
+  if (missing.length) return followUpTemplates(missing);
+  const mon = bzNextWeekday(1);
+  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  const wed = new Date(mon); wed.setDate(mon.getDate() + 2);
+  return [
+    {
+      title: "One-shot · complete plan",
+      desc: "Everything in one message — purpose, dates, destination, traveler, title, content.",
+      text: `해외출장 장기로 출장 계획 만들어줘. ${bzIso(mon)}부터 ${bzIso(fri)}까지 오사카로 가고, 출장자는 김충북이야. 제목은 오사카 공급사 실사, 내용은 현지 공급사 품질 실사 및 단가 협상.`,
+    },
+    {
+      title: "Step-by-step · guided",
+      desc: "Start with just the trip type — the agent asks follow-up questions for the rest.",
+      text: "국내출장 일반으로 계획서 하나 작성해줘",
+    },
+    {
+      title: "Team trip · multi-traveler",
+      desc: "Two travelers on one plan — becomes one document per traveler on save.",
+      text: `국내출장 일반으로 ${bzIso(mon)}부터 ${bzIso(wed)}까지 부산 출장. 출장자는 김도하랑 김충북 두 명이야. 제목은 부산 고객사 방문, 내용은 고객사 정기 미팅 및 현장 점검.`,
+    },
+    {
+      title: "Rich-text form · 성린4 template",
+      desc: "Different form template: the 테스트(유성린) paper with a 코스트센터 + HTML text-editor section.",
+      text: `테스트(유성린) 성린4로 출장 계획 만들어줘. ${bzIso(mon)}부터 ${bzIso(wed)}까지 서울로 가고, 출장자는 김충북이야. 제목은 성린4 양식 데모, 내용은 리치텍스트 폼 시나리오 데모. 코스트센터: CC-2001. HTML111: 1일차 킥오프 회의, 2일차 결과 정리 및 공유.`,
+    },
+  ];
+}
+let promptSel = 0;
+function togglePromptMenu() {
+  const menu = $("promptMenu");
+  if (!menu.classList.contains("hidden")) { closePromptMenu(); return; }
+  promptSel = 0;
+  menu.innerHTML = promptTemplates().map((t, i) => `
+    <div class="prompt-item ${i === 0 ? "sel" : ""}" data-idx="${i}" role="option">
+      <div class="pi-title">${esc(t.title)}</div>
+      <div class="pi-desc">${esc(t.desc)}</div>
+      <div class="pi-preview">${esc(t.text.length > 90 ? t.text.slice(0, 90) + "…" : t.text)}</div>
+    </div>`).join("");
+  menu.classList.remove("hidden");
+}
+function closePromptMenu() { $("promptMenu").classList.add("hidden"); }
+function movePromptSel(delta) {
+  const items = [...document.querySelectorAll("#promptMenu .prompt-item")];
+  if (!items.length) return;
+  promptSel = (promptSel + delta + items.length) % items.length;
+  items.forEach((el, i) => el.classList.toggle("sel", i === promptSel));
+  items[promptSel].scrollIntoView({ block: "nearest" });
+}
+function pickPrompt(idx) {
+  const t = promptTemplates()[idx];
+  if (!t) return;
+  const input = $("agentInput");
+  input.value = t.text;
+  closePromptMenu();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 /* ---- Thread rendering ---- */
@@ -1805,10 +2457,22 @@ function setFormField(id, value) {
 function applyDraftToForm(draft) {
   if (!draft) return;
   const ti = draft.TripInformation || {};
-  setFormField("tripPurpose", ti.Purpose);
+  setFormField("tripPurpose", normalizePurpose(ti.Purpose));
+  // Purpose drives the Classification options — rebuild them, then apply the value.
+  applyTripType(true);
+  if (ti.BusinessTripClassification &&
+      $("tripPurpose").value && document.activeElement !== $("tripClassification")) {
+    const cls = $("tripClassification");
+    if ([...cls.options].some((o) => o.value === ti.BusinessTripClassification)) {
+      setFormField("tripClassification", ti.BusinessTripClassification);
+      updateTripDetailVisibility();   // reveal the rest once the agent fills both selects
+      bzOnClassificationChange();     // live mode: fetch this purpose+type's form from BizPlay
+    }
+  }
   setFormField("tripDestination", ti.Destination);
   setFormField("tripTitle", ti.Title);
   setFormField("tripContent", ti.Content);
+  updateCharCounts();
 
   // Dates: prefer explicit start/end, else split a "A to B" period string.
   let s = ti.BusinessStartDate, e = ti.BusinessEndDate;
@@ -1820,12 +2484,6 @@ function applyDraftToForm(draft) {
   setFormField("endDate", e);
   const sv = $("startDate").value, ev = $("endDate").value;
   $("periodHint").textContent = sv && ev ? "(Trip Period: " + dayCount(sv, ev) + " day(s))" : "";
-
-  if (ti.BusinessTripClassification) {
-    document.querySelectorAll('input[name="classification"]').forEach((r) => {
-      if (r.value === ti.BusinessTripClassification) r.checked = true;
-    });
-  }
 
   // Travelers: the agent owns the roster, so replace it wholesale.
   const list = ti.Travelers || [];
@@ -1844,6 +2502,367 @@ function applyDraftToForm(draft) {
   const mapped = atts.filter((a) => a && (a.URL || a.FileID))
     .map((a) => ({ Type: a.Type || (a.URL ? "URL" : "File"), URL: a.URL, FileID: a.FileID }));
   if (mapped.length) { attachments = mapped; renderAttachments(); }
+}
+
+/* ---- BizPlay agent turn -> the real form (live mode) ----
+ * draftJson is EXACTLY the ③ save-body array; doc[0] carries purpose/segment ids,
+ * dates, title/content, and the issuedItems values. Purpose/segment ids map back
+ * to names through the live catalog, which drives the two selects + form load. */
+async function applyBizplayTurnToForm(data) {
+  const docs = Array.isArray(data.draftJson) ? data.draftJson : [];
+  const doc = docs[0] || null;
+
+  if (doc && bzCatalog) {
+    const pname = Object.keys(bzCatalog).find((n) => bzCatalog[n].purposeId === doc.bstrPurposeId);
+    if (pname) {
+      setFormField("tripPurpose", pname);
+      applyTripType(true);   // rebuild the Classification options for this purpose
+      const cls = $("tripClassification");
+      const sid = doc.bstrSegmentId == null ? "" : String(doc.bstrSegmentId);
+      const opt = [...cls.options].find((o) => o.getAttribute("data-sid") === sid);
+      if (opt && document.activeElement !== cls) {
+        setFormField("tripClassification", opt.value);
+        updateTripDetailVisibility();
+        await bzOnClassificationChange();   // load this purpose+type's form fields
+      }
+    }
+  }
+
+  if (doc) {
+    setFormField("tripTitle", doc.title);
+    setFormField("tripContent", doc.content);
+    setFormField("startDate", String(doc.bstrStartDate || "").slice(0, 10));
+    setFormField("endDate", String(doc.bstrEndDate || "").slice(0, 10));
+    const sv = $("startDate").value, ev = $("endDate").value;
+    $("periodHint").textContent = sv && ev ? "(Trip Period: " + dayCount(sv, ev) + " day(s))" : "";
+  }
+  setFormField("tripDestination", data.destination);
+  updateCharCounts();
+
+  // Travelers: the agent owns the roster (resolved BizPlay names) — attach the
+  // corporationUserId so a manual save can fan out documents. Prefer a roster match
+  // by name; fall back to the response's resolved travelerIds (covers any case where
+  // the display name still differs from the roster's userName).
+  const names = data.travelers || [];
+  const tids = data.travelerIds || [];
+  if (names.length) {
+    try { await bzLoadRoster(); } catch (e) { /* selects fall back to name-only */ }
+    travelers = names.map((n, i) => {
+      let u = bzApproval.roster.find((r) => r.name === n);
+      if (!u && tids[i] != null) u = bzApproval.roster.find((r) => String(r.id) === String(tids[i]));
+      return {
+        id: ++travelerSeq, name: u ? u.name : n,
+        bzId: u ? u.id : (tids[i] != null ? tids[i] : null),
+        department: "", position: "",
+        origin: "", destination: data.destination || "", returnPoint: "",
+      };
+    });
+    renderTravelers();
+  }
+
+  // Custom item values -> the dynamic inputs (form-level data-xf + traveler data-bztf).
+  ((doc && doc.issuedItems) || []).forEach((it) => {
+    if (!it.item || it.item.itemType === "BSTR_PERIOD") return;
+    const key = "item:" + it.item.id;
+    let v = it.value;
+    if ((v == null || v === "") && it.selections && it.selections.length) {
+      v = it.selections[0].selectionName;
+    }
+    if (v == null || v === "") return;
+    document.querySelectorAll(`[data-xf="${key}"], [data-bztf="${key}"]`).forEach((el) => {
+      if (document.activeElement === el) return;
+      if (el.type === "checkbox") { el.checked = true; return; }
+      if (el.type === "radio") { el.checked = String(el.value) === String(v); return; }
+      if (el.isContentEditable) { el.innerText = v; return; }   // rich-text (HTML) editor body
+      el.value = v;
+    });
+  });
+}
+
+/* READY_FOR_REVIEW: offer the real BizPlay save flow (approval order -> preview -> save). */
+function offerBizplayCreate() {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  const row = document.createElement("div");
+  row.className = "choice-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "choice-chip";
+  btn.textContent = "✓ Save to BizPlay (set approval order)";
+  btn.addEventListener("click", () => {
+    if (agent.busy) return;
+    bzOpenApprovalFlow();
+  });
+  row.appendChild(btn);
+  wrap.appendChild(row);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* ================================================================
+ * The REAL BizPlay save flow, replicated:
+ *   save -> "Set approval order" dialog -> 출장계획확인 preview -> POST ③.
+ * ================================================================ */
+const bzApproval = { roster: [], lines: [] };   // lines: [{id, name, dept, empNo, position, kind}]
+let bzManualSave = false;   // true = flow was entered from the manual form (no agent session)
+const BZ_LINE_KINDS = [
+  ["APPROVAL", "결재"], ["AGREEMENT", "합의"],
+  ["RECEIPT", "수신"], ["REFERENCE", "참조"],
+];
+
+/* Load the corporation's staff once (shared by traveler selects + the approval picker). */
+async function bzLoadRoster() {
+  if (bzApproval.roster.length) return bzApproval.roster;
+  const res = await fetch(`${BZ_API_BASE()}/corporation-users`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw apiError(json, res);
+  const data = (json && (json.data || json.payload)) || {};
+  const users = data.users || data.list || (Array.isArray(data) ? data : []);
+  bzApproval.roster = users.map((u) => {
+    const depts = u.departments || [];
+    const main = depts.find((d) => d.mainDepartment) || depts[0] || {};
+    return {
+      id: u.corporationUserId ?? u.id,
+      name: u.userName || u.name || "",
+      dept: u.departmentName || main.departmentName || "",
+      empNo: u.employeeNumber || "",
+      position: u.positionName || u.position || "",
+    };
+  }).filter((u) => u.id != null && u.name);
+  return bzApproval.roster;
+}
+
+async function bzOpenApprovalFlow(manual) {
+  bzManualSave = !!manual || !(agent.live && agent.sessionId);
+  bzApproval.lines = [];
+  $("bzApprovalOverlay").classList.remove("hidden");
+  $("bzStaffSearch").value = "";
+  $("bzDeptFilter").value = "";
+  bzRenderLineList();
+  if (!bzApproval.roster.length) {
+    $("bzStaffRows").innerHTML = `<tr><td colspan="5" class="bz-empty">Loading staff…</td></tr>`;
+    try {
+      await bzLoadRoster();
+    } catch (e) {
+      $("bzStaffRows").innerHTML = `<tr><td colspan="5" class="bz-empty">Could not load staff: ${esc(friendlyError(e.message))}</td></tr>`;
+      return;
+    }
+  }
+  bzRenderDeptFilter();
+  bzRenderStaffRows();
+}
+
+/* Departments come from the same private-API roster (departments[] per user). */
+function bzRenderDeptFilter() {
+  const sel = $("bzDeptFilter");
+  const prev = sel.value;
+  const depts = [...new Set(bzApproval.roster.map((u) => u.dept).filter(Boolean))].sort();
+  sel.innerHTML = `<option value="">All departments</option>` +
+    depts.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
+  if (prev && depts.includes(prev)) sel.value = prev;
+}
+
+function bzRenderStaffRows() {
+  const q = $("bzStaffSearch").value.trim().toLowerCase();
+  const dept = $("bzDeptFilter").value;
+  const rows = bzApproval.roster.filter((u) =>
+    (!dept || u.dept === dept)
+    && (!q || u.name.toLowerCase().includes(q) || u.dept.toLowerCase().includes(q)
+      || String(u.empNo).toLowerCase().includes(q)));
+  $("bzStaffRows").innerHTML = rows.length ? rows.map((u) => {
+    const picked = bzApproval.lines.some((l) => l.id === u.id);
+    return `<tr data-uid="${esc(String(u.id))}">
+      <td><input type="checkbox" ${picked ? "checked" : ""} /></td>
+      <td>${esc(u.name)}</td><td>${esc(u.dept)}</td><td>${esc(String(u.empNo))}</td><td>${esc(u.position)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="5" class="bz-empty">No staff match.</td></tr>`;
+}
+
+function bzRenderLineList() {
+  const box = $("bzLineList");
+  box.innerHTML = bzApproval.lines.length ? bzApproval.lines.map((l, i) => `
+    <div class="bz-line-item" data-uid="${esc(String(l.id))}">
+      <span class="bz-line-order">${i + 1}</span>
+      <span class="bz-line-who"><span class="nm">${esc(l.name)}</span>
+        <div class="sub2">${esc([l.dept, l.position].filter(Boolean).join(" · "))}</div></span>
+      <select data-kind="${esc(String(l.id))}">${BZ_LINE_KINDS.map(([v, label]) =>
+        `<option value="${v}" ${l.kind === v ? "selected" : ""}>${label}</option>`).join("")}</select>
+      <button class="bz-line-x" data-x="${esc(String(l.id))}" title="Remove">✕</button>
+    </div>`).join("") : `<div class="bz-empty">Add approvers</div>`;
+}
+
+function bzToggleLine(uid) {
+  const i = bzApproval.lines.findIndex((l) => l.id === uid);
+  if (i >= 0) {
+    bzApproval.lines.splice(i, 1);
+  } else {
+    const u = bzApproval.roster.find((r) => r.id === uid);
+    if (u) bzApproval.lines.push({ ...u, kind: "APPROVAL" });
+  }
+  bzRenderStaffRows();
+  bzRenderLineList();
+}
+
+/* Step 2: 출장계획확인-style preview built from the live form + agent state. */
+function bzShowPreview() {
+  $("bzApprovalOverlay").classList.add("hidden");
+  const me = bzApproval.roster.find((u) => String(u.id) === String(BZ_CORP_USER_ID));
+  const kindKo = { APPROVAL: "결재", AGREEMENT: "합의", RECEIPT: "수신", REFERENCE: "참조" };
+  const col = (hd, u) => `<div class="bz-appr-col"><div class="hd">${esc(hd)}</div>
+    <div class="bd">${u ? `${esc(u.name)}<div class="sub2">${esc(String(u.empNo || ""))}</div>
+      <div class="sub2">${esc(u.dept || "")}</div><div class="sub2">${esc(u.position || "")}</div>` : ""}</div></div>`;
+  const approvalCols = [col("기안", me || { name: "(me)", empNo: BZ_CORP_USER_ID, dept: "", position: "" })]
+    .concat(bzApproval.lines.map((l) => col(kindKo[l.kind] || l.kind, l))).join("");
+
+  const period = [$("startDate").value, $("endDate").value].filter(Boolean).join(" ~ ");
+  const dest = $("tripDestination").value;
+  const costCenters = [...document.querySelectorAll(".trav-card")].map((c) => {
+    const inp = [...c.querySelectorAll("input[data-bztf]")].find((el) => el.type === "text" && el.value.trim());
+    return inp ? inp.value.trim() : "";
+  });
+  const travLine = travelers.map((t, i) =>
+    t.name ? `${t.name}${costCenters[i] ? " / " + costCenters[i] : ""}` : "").filter(Boolean).join(", ");
+
+  const row = (k, v) => `<div class="bz-prow"><span class="k">${esc(k)}</span><span class="v">${v ? esc(v) : "—"}</span></div>`;
+  // Segment-less purposes carry the "-" placeholder classification — show it as empty like BizPlay.
+  const cls = $("tripClassification").value === "-" ? "" : $("tripClassification").value;
+  $("bzPreviewBody").innerHTML =
+    `<div class="bz-preview-approvals">${approvalCols}</div>
+     <div class="bz-preview-rows">
+       ${row("출장 목적", $("tripPurpose").value)}
+       ${row("출장 구분", cls)}
+       ${row("출장기간/국가", [period, dest].filter(Boolean).join(", "))}
+       ${row("제목", $("tripTitle").value)}
+       ${row("내용", $("tripContent").value)}
+       ${row("출장자", travLine)}
+       ${row("첨부파일", String(attachments.length))}
+     </div>`;
+  $("bzPreviewOverlay").classList.remove("hidden");
+}
+
+/* After a successful BizPlay save, mirror the plan into the demo's own list so it
+ * is immediately visible here — BizPlay's own list only shows 결재요청+ documents
+ * of accounts involved, so a DRAFT_ONLY save would otherwise look like "nothing". */
+async function bzMirrorLocalPlan() {
+  try {
+    const trip = readTripFields();
+    const payload = {
+      CorpNo: CORP_NO,
+      PlanType: PLAN_TYPE,
+      TripInformation: {
+        Purpose: trip.purpose,
+        BusinessPeriod: `${trip.start} to ${trip.end}`,
+        Destination: trip.destination,
+        Title: trip.title,
+        Content: (trip.content + extraFieldsSummary()).slice(0, 500),
+        BusinessTripClassification: trip.classification,
+        Travelers: travelers.filter((t) => t.name).map((t) => ({
+          Name: t.name, Department: t.department || "", Position: t.position || "",
+          Origin: t.origin || "", Destination: t.destination || trip.destination, ReturnPoint: t.returnPoint || "",
+        })),
+      },
+      Attachemnt: attachments,
+    };
+    const res = await fetch(API, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    if (res.ok) loadPlans();
+  } catch (e) {
+    console.warn("[bizplay] local mirror failed:", e.message);
+  }
+}
+
+/* Manual save: values from the form -> the backend writes them into the RETRIEVED
+ * form's ③ skeleton (same writer paths as the agent) and POSTs to BizPlay. */
+async function bzSubmitManualCreate() {
+  const live = bzCatalog && bzCatalog[$("tripPurpose").value];
+  if (!live) { toast("Pick a travel purpose first.", "err"); return; }
+  const opt = $("tripClassification").selectedOptions && $("tripClassification").selectedOptions[0];
+  const sid = opt ? (opt.getAttribute("data-sid") || "") : "";
+  const itemValues = {};
+  Object.entries(readExtraFields()).forEach(([k, v]) => { if (v) itemValues[k] = v; });
+  document.querySelectorAll(".trav-card [data-bztf]").forEach((el) => {
+    const k = el.getAttribute("data-bztf");
+    if (itemValues[k]) return;
+    if (el.type === "checkbox") { if (el.checked) itemValues[k] = "신청"; }
+    else if ((el.value || "").trim()) itemValues[k] = el.value.trim();
+  });
+  const payload = {
+    corpUserId: BZ_CORP_USER_ID,
+    purposeId: live.purposeId,
+    segmentId: sid ? Number(sid) : null,
+    title: $("tripTitle").value.trim(),
+    content: $("tripContent").value.trim(),
+    startDate: $("startDate").value,
+    endDate: $("endDate").value,
+    destination: $("tripDestination").value.trim(),
+    travelerCorpUserIds: travelers.map((t) => t.bzId).filter(Boolean),
+    itemValues,
+    approvalLines: bzApproval.lines.map((l) => ({ corporationUserId: l.id, approvalKindType: l.kind })),
+  };
+  $("bzPreviewOverlay").classList.add("hidden");
+  const btns = [$("createCompleteBtn"), $("createCompleteBtn2")];
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    toast(data.reply || "Plan saved to BizPlay ✓", "ok");
+    await bzMirrorLocalPlan();   // show it in the demo list right away
+    closeCreate();
+  } catch (e) {
+    $("validationSummary").textContent = "Save failed: " + friendlyError(e.message);
+    toast("Save failed: " + friendlyError(e.message), "err");
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+
+/* Final step: POST ③ through the create endpoint with the picked approval lines.
+ * If the provider rejects the picked lines (encoding not yet captured for this corp),
+ * fall back to the verified DRAFT-only save and say so. */
+async function bzSubmitCreate() {
+  if (bzManualSave) { bzSubmitManualCreate(); return; }
+  if (!agent.sessionId || agent.busy) return;
+  $("bzPreviewOverlay").classList.add("hidden");
+  setAgentBusy(true, "Saving…");
+  const typing = appendTyping();
+  const post = (lines) => fetch(
+    `${BZ_API_BASE()}/agents/plan/${encodeURIComponent(agent.sessionId)}/create?corpNo=${encodeURIComponent(CORP_NO)}`,
+    { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approvalLines: lines }) });
+  try {
+    const lines = bzApproval.lines.map((l) => ({ corporationUserId: l.id, approvalKindType: l.kind }));
+    let res = await post(lines);
+    let json = await res.json().catch(() => ({}));
+    let note = "";
+    if (!res.ok && lines.length) {
+      // provider rejected the approver lines -> retry the known-good DRAFT-only body
+      res = await post([]);
+      json = await res.json().catch(() => ({}));
+      note = " (approver lines were rejected by BizPlay — saved as DRAFT-only; we need one captured 결재요청 request to learn their encoding)";
+    }
+    typing.remove();
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    agent.status = data.status || agent.status;
+    appendMsg("assistant", (data.reply || "Plan saved to BizPlay.") + note, {
+      intent: data.intent, subAgents: data.subAgents,
+    });
+    toast("Plan saved to BizPlay ✓", "ok");
+    bzMirrorLocalPlan();   // show it in the demo list right away
+  } catch (e) {
+    typing.remove();
+    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
+  } finally {
+    setAgentBusy(false);
+  }
 }
 async function openDetail(id) {
   if (!id) return;

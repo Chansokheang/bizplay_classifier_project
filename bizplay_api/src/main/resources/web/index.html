@@ -339,6 +339,7 @@
       <aside class="create-chat" id="createChat">
         <div id="agentThread" class="thread"></div>
         <div class="composer">
+          <div id="promptMenu" class="prompt-menu hidden" role="listbox" aria-label="Prompt templates"></div>
           <div id="agentFiles" class="file-chips"></div>
           <div class="composer-row">
             <textarea id="agentInput" rows="2" placeholder="e.g. John Doe travels Seoul → Busan by KTX, 2026-07-01 to 2026-07-03, client meetings."></textarea>
@@ -356,70 +357,105 @@
               <div class="select-wrap"><select id="agentModelSelect"><option value="">Auto</option></select></div>
             </label>
             <span class="composer-model-hint">applies to all agents</span>
+            <span class="composer-kbd-hint"><kbd>Ctrl</kbd>+<kbd>Space</kbd> templates</span>
           </div>
         </div>
       </aside>
 
       <div class="sheet-body">
-        <!-- Trip Information -->
+        <!-- Step 1: pick purpose + classification. The rest of the form renders after both are set. -->
         <section class="block">
           <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-briefcase"/></svg></span> Trip Information</h3>
           <div class="grid-2 form-rows">
             <div class="field span-2">
-              <label>Travel Purpose <span class="req">*</span></label>
+              <label>Travel Purpose <span class="req">*</span> <span class="ko-label">출장 목적</span></label>
               <div class="select-wrap">
                 <select id="tripPurpose">
                   <option value="">Select a purpose…</option>
-                  <option value="General business trip">일반출장 — General business trip</option>
-                  <option value="Educational business trip">교육출장 — Educational business trip</option>
-                  <option value="Overseas business trip">해외출장 — Overseas business trip</option>
+                  <option value="해외출장">해외출장 — Overseas</option>
+                  <option value="국내출장">국내출장 — Domestic</option>
+                  <option value="테스트(유성린)">테스트(유성린) — Test template</option>
+                  <option value="lg입력항목">lg입력항목 — LG fields</option>
+                  <option value="테스트">테스트 — Test</option>
+                  <option value="해양조선 목적테스트(CWB)">해양조선 목적테스트(CWB)</option>
                 </select>
               </div>
             </div>
             <div class="field span-2">
-              <label>Trip Period <span class="req">*</span></label>
-              <div class="period-row">
-                <input type="date" id="startDate" />
-                <span class="tilde">→</span>
-                <input type="date" id="endDate" />
-                <span id="periodHint" class="hint"></span>
+              <label>Travel Classification <span class="req">*</span> <span class="ko-label">출장 구분</span></label>
+              <div class="select-wrap">
+                <select id="tripClassification" disabled>
+                  <option value="">Select a purpose first…</option>
+                </select>
               </div>
-            </div>
-            <div class="field">
-              <label>Destination <span class="req">*</span></label>
-              <input type="text" id="tripDestination" maxlength="255" placeholder="e.g. Busan" />
-            </div>
-            <div class="field">
-              <label>Title <span class="req">*</span></label>
-              <input type="text" id="tripTitle" maxlength="50" placeholder="Give the trip a name" />
-            </div>
-            <div class="field span-2">
-              <label>Content</label>
-              <textarea id="tripContent" maxlength="500" placeholder="Notes, agenda, context…"></textarea>
-            </div>
-            <div class="field span-2">
-              <label>Classification</label>
-              <div class="seg">
-                <label class="seg-opt"><input type="radio" name="classification" value="CS" /><span>CS</span></label>
-                <label class="seg-opt"><input type="radio" name="classification" value="기타" /><span>기타 · Etc</span></label>
-              </div>
+              <span id="tripTypeHint" class="hint"></span>
             </div>
           </div>
         </section>
 
-        <!-- Travelers -->
-        <section class="block">
-          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg></span> Travellers <span class="count-badge"><span id="travelerCount">0</span></span></h3>
-          <div id="travelerList"></div>
-          <button class="btn btn-dashed" id="addTravelerBtn">+ Add another traveller</button>
-        </section>
+        <!-- Placeholder shown until both selects are chosen -->
+        <div id="tripDetailPlaceholder" class="detail-placeholder">
+          <svg class="ico ico-lg" aria-hidden="true"><use href="#i-file-text"/></svg>
+          <p>Select a <strong>travel purpose</strong> and <strong>classification</strong> above to build the plan.</p>
+        </div>
 
-        <!-- Attachment -->
-        <section class="block">
-          <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg></span> Attachment</h3>
-          <div class="att-bar"><button class="btn btn-quiet" id="addUrlBtn"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg> Register a URL</button></div>
-          <div id="attachmentList"></div>
-        </section>
+        <!-- Step 2: the rest of the form, revealed + tailored once both selects are set -->
+        <div id="tripDetail" class="hidden">
+          <!-- Trip Details -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg></span> Trip Details</h3>
+            <div class="grid-2 form-rows">
+              <div class="field span-2">
+                <label>Trip Period <span class="req">*</span> <span class="ko-label">출장 기간</span></label>
+                <div class="period-row">
+                  <input type="date" id="startDate" />
+                  <span class="tilde">→</span>
+                  <input type="date" id="endDate" />
+                  <span id="periodHint" class="hint"></span>
+                </div>
+              </div>
+              <div class="field">
+                <label id="tripDestLabel">Destination <span class="req">*</span> <span class="ko-label" id="tripDestKo">출장지</span></label>
+                <input type="text" id="tripDestination" list="destOptions" maxlength="255" placeholder="e.g. Busan" />
+                <datalist id="destOptions"></datalist>
+              </div>
+              <div class="field">
+                <label>Title <span class="req">*</span> <span class="ko-label">제목</span></label>
+                <div class="counted-input">
+                  <input type="text" id="tripTitle" maxlength="50" placeholder="Give the trip a name" />
+                  <span class="char-count" id="tripTitleCount">(0/50)</span>
+                </div>
+              </div>
+              <div class="field span-2">
+                <label>Content <span class="req">*</span> <span class="ko-label">내용</span></label>
+                <div class="counted-input">
+                  <input type="text" id="tripContent" maxlength="500" placeholder="Enter the content" />
+                  <span class="char-count" id="tripContentCount">(0/500)</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Template-specific fields, rendered per purpose (mirrors Bizplay's config-driven form) -->
+          <section class="block hidden" id="tripExtraSection">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg></span> <span id="tripExtraTitle">Additional Information</span> <span class="ko-label" id="tripExtraKo"></span></h3>
+            <div class="grid-2 form-rows" id="tripExtraFields"></div>
+          </section>
+
+          <!-- Travelers -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg></span> Travellers <span class="count-badge"><span id="travelerCount">0</span></span></h3>
+            <div id="travelerList"></div>
+            <button class="btn btn-dashed" id="addTravelerBtn">+ Add another traveller</button>
+          </section>
+
+          <!-- Attachment -->
+          <section class="block">
+            <h3 class="block-title"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-paperclip"/></svg></span> Attachment</h3>
+            <div class="att-bar"><button class="btn btn-quiet" id="addUrlBtn"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg> Register a URL</button></div>
+            <div id="attachmentList"></div>
+          </section>
+        </div>
       </div>
       </div><!-- /create-body -->
 
@@ -462,6 +498,68 @@
         <div class="foot-actions">
           <button class="btn btn-quiet" id="routeCancelBtn">Cancel</button>
           <button class="btn btn-primary" id="routeCheckBtn">Confirm route</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== BIZPLAY: SET APPROVAL ORDER (real-flow step 1) =============== -->
+  <div id="bzApprovalOverlay" class="overlay hidden">
+    <div class="sheet" id="bzApprovalSheet">
+      <div class="sheet-head">
+        <div>
+          <h2>Set approval order</h2>
+          <p class="sub">Pick the approvers for this plan — same step as the BizPlay save flow. <span class="ko-label">결재선 지정</span></p>
+        </div>
+        <button class="x-btn" id="bzApprovalCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="sheet-body bz-approval-body">
+        <div class="bz-approval-left">
+          <div class="bz-approval-search-row">
+            <div class="search-field">
+              <input type="text" id="bzStaffSearch" placeholder="Employee Search" />
+              <span class="search-field-ico" id="bzStaffSearchIco"></span>
+            </div>
+            <div class="select-wrap"><select id="bzDeptFilter"><option value="">All departments</option></select></div>
+          </div>
+          <div class="bz-staff-table-wrap">
+            <table class="bz-staff-table">
+              <thead><tr><th></th><th>name</th><th>Department Name</th><th>Employee No.</th><th>position</th></tr></thead>
+              <tbody id="bzStaffRows"><tr><td colspan="5" class="bz-empty">Loading staff…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="bz-approval-right">
+          <div class="bz-line-head">Approval line <span class="ko-label">결재선</span></div>
+          <div id="bzLineList" class="bz-line-list"><div class="bz-empty">Add approvers</div></div>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <span></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="bzApprovalCancelBtn">cancellation</button>
+          <button class="btn btn-primary" id="bzApprovalCheckBtn">check</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== BIZPLAY: PLAN PREVIEW (real-flow step 2, 출장계획확인) =============== -->
+  <div id="bzPreviewOverlay" class="overlay hidden">
+    <div class="sheet" id="bzPreviewSheet">
+      <div class="sheet-head">
+        <div>
+          <h2>출장계획확인</h2>
+          <p class="sub">Review before saving to BizPlay.</p>
+        </div>
+        <button class="x-btn" id="bzPreviewCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="sheet-body" id="bzPreviewBody"></div>
+      <div class="sheet-foot">
+        <button class="btn btn-quiet" id="bzPreviewCancelBtn">취소</button>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" id="bzPreviewEditLineBtn">결재선 수정</button>
+          <button class="btn btn-primary" id="bzPreviewSaveBtn">저장 (draft)</button>
         </div>
       </div>
     </div>
