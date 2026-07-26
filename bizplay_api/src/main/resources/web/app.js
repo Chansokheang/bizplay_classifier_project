@@ -742,6 +742,7 @@ function bzFieldsToCfg(form) {
       id: f.key, type,
       label: (f.label || f.key) + (f.required ? " *" : ""),
       rawLabel: f.label || f.key, required: !!f.required,
+      bzType: f.type,
       ko: "", options: f.options || [], placeholder: "",
     };
   };
@@ -753,6 +754,63 @@ function bzFieldsToCfg(form) {
   };
 }
 
+/* ---- Per-itemType widgets matching the REAL BizPlay card (lg입력항목 etc.) ----
+ * a = value-collection attribute: "data-xf" (form level) or "data-bztf" (traveler).
+ * Returns null for types without a dedicated widget (caller falls back to text). */
+const BZ_YN_TYPES = ["PARTNER_SUPPORT", "NATIONAL_PROJECT", "NOTEBOOK_EXPORT"];
+function bzWidgetHtml(f, a, uid) {
+  const t = f.bzType;
+  if (!t) return null;
+  const key = esc(f.id);
+  const name = `bzw-${uid}-${String(f.id).replace(/[^a-z0-9]/gi, "")}`;
+  const radios = (nm, attr, opts, checkedIdx) => `<div class="bzw-radios">` + opts.map((v, i) =>
+    `<label><input type="radio" name="${nm}" ${attr} value="${esc(v)}" ${i === checkedIdx ? "checked" : ""}/><span>${esc(v)}</span></label>`).join("") + `</div>`;
+  if (BZ_YN_TYPES.includes(t)) {
+    return radios(name, `${a}="${key}"`, ["Yes", "No"], 1);
+  }
+  if (t === "OVERSEAS_INSURANCE") {
+    return `<div class="bzw-sub">항공권</div>` + radios(name, `${a}="${key}"`, ["편도", "왕복"], 0);
+  }
+  if (t === "BSTR_LINKED_LEAVE") {
+    return `<div class="bzw-group" ${a}-group="${key}">
+      <div class="bzw-row"><input type="date" data-part="시작"/><span class="bzw-tilde">~</span><input type="date" data-part="종료"/></div>
+      <div class="bzw-row"><input type="text" data-part="체류지역" placeholder="체류지역을 입력하세요"/><input type="text" data-part="체류목적" data-primary placeholder="체류목적을 입력하세요"/></div>
+    </div>`;
+  }
+  if (t === "EDUCATION_INFO") {
+    return `<div class="bzw-group" ${a}-group="${key}">
+      <div class="bzw-sub">구분</div>
+      ${radios(name + "k", `data-part="구분"`, ["사내교육(인화원 교육 포함)", "사외교육"], 0)}
+      <div class="bzw-row"><div class="search-field"><input type="text" data-part="교육과정" placeholder="교육과정을 검색하세요"/><span class="search-field-ico">${svgIcon("search")}</span></div><input type="text" data-part="교육클래스" placeholder="교육클래스를 입력하세요"/></div>
+      <div class="bzw-row"><input type="date" data-part="교육시작일"/><span class="bzw-tilde">~</span><input type="date" data-part="교육종료일"/></div>
+      <input type="text" data-part="교육기관" placeholder="교육기관을 입력하세요"/>
+      <textarea data-part="내용" data-primary rows="2" placeholder="내용을 입력하세요"></textarea>
+    </div>`;
+  }
+  if ((t === "BSTR_SELECT" || t === "SITE_BSTR_TYPE") && (!f.options || !f.options.length)) {
+    // Options live server-side (itemList is empty for this corp) — placeholder select;
+    // 여부-style items get the obvious 예/아니오 pair so required ones stay fillable.
+    const opts = /여부/.test(f.rawLabel || "") ? ["예", "아니오"] : [];
+    return `<div class="select-wrap"><select ${a}="${key}"><option value="">선택하세요.</option>${opts.map((o) => `<option>${o}</option>`).join("")}</select></div>`;
+  }
+  return null;
+}
+
+/* Aggregate a composite widget's parts into one readable saved value. Radio parts
+ * always have a checked default, so the group only counts as filled when at least
+ * one typed part has content. */
+function bzReadGroup(g) {
+  const hasReal = [...g.querySelectorAll("[data-part]")].some((el) => el.type !== "radio" && (el.value || "").trim());
+  if (!hasReal) return "";
+  const parts = [];
+  g.querySelectorAll("[data-part]").forEach((el) => {
+    if (el.type === "radio") { if (el.checked) parts.push(el.getAttribute("data-part") + ": " + el.value); return; }
+    const v = (el.value || "").trim();
+    if (v) parts.push(el.getAttribute("data-part") + ": " + v);
+  });
+  return parts.join(" / ");
+}
+
 /* Per-traveler custom items (travelerItemUsed=true), rendered inside each card
  * like the real BizPlay form: "apply" items as a 신청 toggle, the rest compact. */
 function bzTravelerFieldsHtml(t) {
@@ -761,6 +819,12 @@ function bzTravelerFieldsHtml(t) {
   return `<div class="field span-2"><div class="trav-extras">` + list.map((f) => {
     if (f.type === "apply") {
       return `<label class="trav-extra trav-extra-apply"><input type="checkbox" data-bztf="${esc(f.id)}" data-id="${t.id}" /><span>${esc(f.label)} · 신청</span></label>`;
+    }
+    // Dedicated widget per itemType (Yes/No radios, 교육정보 composite, …) — like the real card.
+    const widget = bzWidgetHtml(f, "data-bztf", "t" + t.id);
+    if (widget) {
+      const wide = f.bzType === "EDUCATION_INFO" || f.bzType === "BSTR_LINKED_LEAVE";
+      return `<div class="trav-extra ${wide ? "trav-extra-wide" : ""}"><span class="trav-extra-label">${esc(f.label)}</span>${widget}</div>`;
     }
     if (f.options && f.options.length) {
       return `<div class="trav-extra"><span class="trav-extra-label">${esc(f.label)}</span><div class="select-wrap"><select data-bztf="${esc(f.id)}" data-id="${t.id}"><option value="">Select…</option>${f.options.map((o) => `<option>${esc(o)}</option>`).join("")}</select></div></div>`;
@@ -884,7 +948,10 @@ function renderExtraFields(cfg, keepValues) {
     const v = prev[f.id] != null ? prev[f.id] : "";
     const lab = `<label>${esc(f.label)}${f.ko ? ` <span class="ko-label">${esc(f.ko)}</span>` : ""}</label>`;
     let control = "";
-    if (f.type === "search") {
+    const bzw = bzWidgetHtml(f, "data-xf", "x");
+    if (bzw) {
+      control = bzw;   // dedicated per-itemType widget (Yes/No, 교육정보 composite, …)
+    } else if (f.type === "search") {
       control = `<div class="search-field"><input type="text" data-xf="${esc(f.id)}" value="${esc(v)}" placeholder="${esc(f.placeholder || "")}" />
         <span class="search-field-ico">${svgIcon("search")}</span></div>`;
     } else if (f.type === "select") {
@@ -917,6 +984,11 @@ function readExtraFields() {
     if (el.type === "radio") { if (el.checked) out[id] = el.value; }
     else if (el.isContentEditable) out[id] = rteText(el);
     else out[id] = (el.value || "").trim();
+  });
+  // Composite widgets (교육정보, 출장 연계 휴가, …): one aggregated value per group.
+  $("tripExtraFields").querySelectorAll("[data-xf-group]").forEach((g) => {
+    const v = bzReadGroup(g);
+    if (v) out[g.getAttribute("data-xf-group")] = v;
   });
   return out;
 }
@@ -1457,9 +1529,13 @@ function validateLiveTrip(trip) {
   });
   cfg.travelerExtra.filter((f) => f.required).forEach((f) => {
     const empty = [...document.querySelectorAll(".trav-card")].some((card) => {
-      const el = card.querySelector(`[data-bztf="${f.id}"]`);
-      if (!el) return true;
-      return el.type === "checkbox" ? false : !(el.value || "").trim();
+      const g = card.querySelector(`[data-bztf-group="${f.id}"]`);
+      if (g) return !bzReadGroup(g);
+      const els = [...card.querySelectorAll(`[data-bztf="${f.id}"]`)];
+      if (!els.length) return true;
+      if (els[0].type === "checkbox") return false;
+      if (els[0].type === "radio") return !els.some((el) => el.checked);
+      return !(els[0].value || "").trim();
     });
     if (empty) missing.push(f.rawLabel);
   });
@@ -2569,13 +2645,19 @@ async function applyBizplayTurnToForm(data) {
       v = it.selections[0].selectionName;
     }
     if (v == null || v === "") return;
-    document.querySelectorAll(`[data-xf="${key}"], [data-bztf="${key}"]`).forEach((el) => {
+    const direct = document.querySelectorAll(`[data-xf="${key}"], [data-bztf="${key}"]`);
+    direct.forEach((el) => {
       if (document.activeElement === el) return;
       if (el.type === "checkbox") { el.checked = true; return; }
       if (el.type === "radio") { el.checked = String(el.value) === String(v); return; }
       if (el.isContentEditable) { el.innerText = v; return; }   // rich-text (HTML) editor body
       el.value = v;
     });
+    if (!direct.length) {
+      // Composite widget (교육정보 …): put the agent's text into the group's primary field.
+      document.querySelectorAll(`[data-xf-group="${key}"] [data-primary], [data-bztf-group="${key}"] [data-primary]`)
+        .forEach((el) => { if (document.activeElement !== el) el.value = v; });
+    }
   });
 }
 
@@ -2788,7 +2870,14 @@ async function bzSubmitManualCreate() {
     const k = el.getAttribute("data-bztf");
     if (itemValues[k]) return;
     if (el.type === "checkbox") { if (el.checked) itemValues[k] = "신청"; }
+    else if (el.type === "radio") { if (el.checked) itemValues[k] = el.value; }
     else if ((el.value || "").trim()) itemValues[k] = el.value.trim();
+  });
+  document.querySelectorAll(".trav-card [data-bztf-group]").forEach((g) => {
+    const k = g.getAttribute("data-bztf-group");
+    if (itemValues[k]) return;
+    const v = bzReadGroup(g);
+    if (v) itemValues[k] = v;
   });
   const payload = {
     corpUserId: BZ_CORP_USER_ID,

@@ -82,6 +82,16 @@ public class FormSkeletonServiceImple implements FormSkeletonService {
                         options.add(name);
                     }
                 }
+                if (options.isEmpty()) {
+                    // BSTR_SELECT options are configured as labelItems (BSTR_LABEL entries),
+                    // not itemList — e.g. 렌터카 사용여부 -> ["사용"].
+                    for (JsonNode opt : item.path("labelItems")) {
+                        String name = opt.path("name").asText(null);
+                        if (name != null) {
+                            options.add(name);
+                        }
+                    }
+                }
                 fields.add(FieldSpec.builder()
                         .key("item:" + item.path("id").asLong())
                         .label(item.path("name").asText(null))

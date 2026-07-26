@@ -989,3 +989,16 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .bz-approval-search-row { display: flex; gap: 8px; }
 .bz-approval-search-row .search-field { flex: 1; }
 .bz-approval-search-row .select-wrap { flex: none; width: 160px; }
+
+/* ---------- Per-itemType widgets (real BizPlay card parity: lg입력항목 etc.) ---------- */
+.bzw-radios { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 6px 2px; }
+.bzw-radios label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.bzw-radios input[type="radio"] { accent-color: var(--brand); }
+.bzw-sub { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+.bzw-group { display: flex; flex-direction: column; gap: 8px; }
+.bzw-row { display: flex; gap: 8px; align-items: center; }
+.bzw-row > input, .bzw-row > .search-field { flex: 1; min-width: 0; }
+.bzw-tilde { color: var(--muted); flex: none; }
+.bzw-group input[type="date"] { min-width: 0; }
+.bzw-group textarea { resize: vertical; }
+.trav-extra-wide { grid-column: 1 / -1; }

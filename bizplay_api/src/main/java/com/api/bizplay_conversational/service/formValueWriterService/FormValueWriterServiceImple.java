@@ -148,7 +148,11 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             return writePeriod(document, state, issued, value, label);
         }
 
+        // Options come from itemList, or from labelItems for BSTR_SELECT-style items.
         JsonNode itemList = issued.path("item").path("itemList");
+        if (!itemList.isArray() || itemList.isEmpty()) {
+            itemList = issued.path("item").path("labelItems");
+        }
         String choice = value.isObject() ? text(value.path("choice")) : text(value);
         if (itemList.isArray() && itemList.size() > 0 && choice != null) {
             // Select-like (BSTR_SELECT and anything with options): pick the configured option.
