@@ -2834,6 +2834,8 @@ async function bzMirrorLocalPlan() {
     const payload = {
       CorpNo: CORP_NO,
       PlanType: PLAN_TYPE,
+      // Link the mirror to its chat session so the two are deleted together.
+      AgentSessionId: (agent.live && agent.sessionId) ? agent.sessionId : undefined,
       TripInformation: {
         Purpose: trip.purpose,
         BusinessPeriod: `${trip.start} to ${trip.end}`,

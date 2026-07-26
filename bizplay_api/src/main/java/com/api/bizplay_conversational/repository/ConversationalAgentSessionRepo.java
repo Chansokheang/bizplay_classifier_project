@@ -47,6 +47,13 @@ public interface ConversationalAgentSessionRepo {
         return Optional.ofNullable(findOneById(id));
     }
 
+    /** Remove a session (used when its mirrored plan is deleted — the two live and die together). */
+    @org.apache.ibatis.annotations.Delete("""
+            DELETE FROM conversational_agent_session
+            WHERE id = #{id, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}
+            """)
+    int deleteById(@Param("id") UUID id);
+
     /**
      * List sessions for a corp, newest first. Excludes the heavy JSON columns so the result
      * stays lightweight for browsing/finding a session to reuse.

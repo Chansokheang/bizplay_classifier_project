@@ -193,7 +193,9 @@ CREATE TABLE conversational_llm_model (
 CREATE TABLE conversational_trip_plan (
                                           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                           corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,
-                                          agent_session_id UUID REFERENCES conversational_agent_session(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                                          -- Plans mirror their agent session: deleting the session removes the plan too
+                                          -- (and the app's plan-delete removes the session — they live and die together).
+                                          agent_session_id UUID REFERENCES conversational_agent_session(id) ON UPDATE CASCADE ON DELETE CASCADE,
                                           user_req_id VARCHAR(100) NOT NULL,
                                           plan_type VARCHAR(255) NOT NULL,
                                           purpose VARCHAR(255) NOT NULL,

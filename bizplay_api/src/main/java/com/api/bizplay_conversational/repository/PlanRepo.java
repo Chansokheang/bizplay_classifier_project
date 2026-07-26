@@ -170,6 +170,10 @@ public interface PlanRepo {
     @Delete("DELETE FROM conversational_trip_plan WHERE id = #{planId, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}")
     int deletePlanById(@Param("planId") java.util.UUID planId);
 
+    /** The agent session this plan mirrors (null for manually created plans). */
+    @org.apache.ibatis.annotations.Select("SELECT agent_session_id FROM conversational_trip_plan WHERE id = #{planId, jdbcType=OTHER, typeHandler=com.api.bizplay_classifier_api.config.UUIDTypeHandler}")
+    String findAgentSessionIdByPlanId(@Param("planId") java.util.UUID planId);
+
     @Insert("""
             INSERT INTO conversational_trip_plan (
                 id,

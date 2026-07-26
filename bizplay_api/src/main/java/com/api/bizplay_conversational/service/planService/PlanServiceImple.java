@@ -50,6 +50,7 @@ public class PlanServiceImple implements PlanService {
     private final PlanRepo planRepo;
     private final DepartmentRepo departmentRepo;
     private final StaffRepo staffRepo;
+    private final com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo agentSessionRepo;
 
     @Override
     @Transactional(readOnly = true)
@@ -108,11 +109,26 @@ public class PlanServiceImple implements PlanService {
             throw new CustomNotFoundException("Invalid plan id: " + id);
         }
         // Remove child rows first to satisfy the foreign keys, then the plan.
+        String agentSessionId = planRepo.findAgentSessionIdByPlanId(planId);
         planRepo.deleteTravelersByPlanId(planId);
         planRepo.deleteAttachmentsByPlanId(planId);
         int deleted = planRepo.deletePlanById(planId);
         if (deleted == 0) {
             throw new CustomNotFoundException("Plan not found: " + id);
+        }
+        deleteLinkedAgentSession(agentSessionId);
+    }
+
+    /** Plans and their agent sessions live and die together: removing the mirrored plan also
+     *  removes the chat session (draft_json is useless without it, and vice versa). */
+    private void deleteLinkedAgentSession(String agentSessionId) {
+        if (agentSessionId == null || agentSessionId.isBlank()) {
+            return; // manually created plan — no session to clean up
+        }
+        try {
+            agentSessionRepo.deleteById(UUID.fromString(agentSessionId));
+        } catch (IllegalArgumentException e) {
+            // malformed id in an old row — nothing to delete
         }
     }
 
@@ -144,10 +160,12 @@ public class PlanServiceImple implements PlanService {
         List<String> notFoundIds = new java.util.ArrayList<>();
         for (UUID planId : parsed.values()) {
             // Remove child rows first to satisfy the foreign keys, then the plan.
+            String agentSessionId = planRepo.findAgentSessionIdByPlanId(planId);
             planRepo.deleteTravelersByPlanId(planId);
             planRepo.deleteAttachmentsByPlanId(planId);
             if (planRepo.deletePlanById(planId) > 0) {
                 deletedIds.add(planId.toString());
+                deleteLinkedAgentSession(agentSessionId);
             } else {
                 notFoundIds.add(planId.toString());
             }
