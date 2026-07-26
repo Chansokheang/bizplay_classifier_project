@@ -64,6 +64,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # Prints set/MISSING per connection secret (never values). A MISSING one explains
+      # the classic "ssh: attempted methods [none]" handshake failure immediately.
+      - name: Check connection secrets are visible to this run
+        run: |
+          check() { if [ -n "$2" ]; then echo "$1: set"; else echo "$1: MISSING"; fi; }
+          check SERVER_HOST     "${{ secrets.SERVER_HOST }}"
+          check SERVER_USER     "${{ secrets.SERVER_USER }}"
+          check SERVER_PORT     "${{ secrets.SERVER_PORT }}"
+          check SERVER_SSH_KEY  "${{ secrets.SERVER_SSH_KEY }}"
+          check SERVER_PASSWORD "${{ secrets.SERVER_PASSWORD }}"
+          check GHCR_USERNAME   "${{ secrets.GHCR_USERNAME }}"
+          check GHCR_PAT        "${{ secrets.GHCR_PAT }}"
+
       # Auth: SERVER_SSH_KEY (private key) is preferred; SERVER_PASSWORD is the fallback.
       # Either secret alone is enough — appleboy uses the key when it is non-empty.
       - name: Copy deployment files to server
