@@ -2606,9 +2606,11 @@ function offerBizplayCreate() {
  * ================================================================ */
 const bzApproval = { roster: [], lines: [] };   // lines: [{id, name, dept, empNo, position, kind}]
 let bzManualSave = false;   // true = flow was entered from the manual form (no agent session)
+// Values are BizPlay's ApprovalKindType enum (server rejects anything else):
+// DRAFT, APPROVAL, ACCEPT, AUDIT, AGREE, REFERENCE.
 const BZ_LINE_KINDS = [
-  ["APPROVAL", "결재"], ["AGREEMENT", "합의"],
-  ["RECEIPT", "수신"], ["REFERENCE", "참조"],
+  ["APPROVAL", "결재"], ["AGREE", "합의"],
+  ["ACCEPT", "수신"], ["REFERENCE", "참조"],
 ];
 
 /* Load the corporation's staff once (shared by traveler selects + the approval picker). */
@@ -2708,7 +2710,7 @@ function bzToggleLine(uid) {
 function bzShowPreview() {
   $("bzApprovalOverlay").classList.add("hidden");
   const me = bzApproval.roster.find((u) => String(u.id) === String(BZ_CORP_USER_ID));
-  const kindKo = { APPROVAL: "결재", AGREEMENT: "합의", RECEIPT: "수신", REFERENCE: "참조" };
+  const kindKo = { APPROVAL: "결재", AGREE: "합의", ACCEPT: "수신", REFERENCE: "참조" };
   const col = (hd, u) => `<div class="bz-appr-col"><div class="hd">${esc(hd)}</div>
     <div class="bd">${u ? `${esc(u.name)}<div class="sub2">${esc(String(u.empNo || ""))}</div>
       <div class="sub2">${esc(u.dept || "")}</div><div class="sub2">${esc(u.position || "")}</div>` : ""}</div></div>`;
