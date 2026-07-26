@@ -169,6 +169,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             boolean yes = !(raw.equalsIgnoreCase("false") || raw.equalsIgnoreCase("no")
                     || raw.contains("아니") || raw.equalsIgnoreCase("n") || raw.contains("미신청"));
             issued.put("value", yes ? "true" : "false");
+            writeSubChoice(issued, value);
             return label + " = " + (yes ? "true" : "false");
         }
         if ("OVERSEAS_INSURANCE".equals(itemType)) {
@@ -179,6 +180,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             String code = raw.contains("왕복") || raw.equalsIgnoreCase("ROUND_TRIP") ? "ROUND_TRIP"
                     : raw.contains("편도") || raw.equalsIgnoreCase("ONE_WAY") ? "ONE_WAY" : raw;
             issued.put("value", code);
+            writeSubChoice(issued, value);
             return label + " = " + code;
         }
 
@@ -275,6 +277,14 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         document.set("bstrEdus", edus);
         issued.put("value", type);   // real UI: the issued item's value carries the eduType
         return label + " = " + (content.isEmpty() ? course + " " + institution : content).trim();
+    }
+
+    /** Sub-choice (captured in real saves as value2: PARTNER_REGISTERED, OVER_90_DAYS, …). */
+    private void writeSubChoice(ObjectNode issued, JsonNode value) {
+        String sub = value.isObject() ? text(value.path("sub")) : null;
+        if (sub != null) {
+            issued.put("value2", sub);
+        }
     }
 
     private static String firstOf(java.util.Map<String, String> map, String... keys) {

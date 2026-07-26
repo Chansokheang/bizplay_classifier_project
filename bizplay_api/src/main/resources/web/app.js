@@ -766,10 +766,19 @@ function bzWidgetHtml(f, a, uid) {
   const radios = (nm, attr, opts, checkedIdx) => `<div class="bzw-radios">` + opts.map((v, i) =>
     `<label><input type="radio" name="${nm}" ${attr} value="${esc(v)}" ${i === checkedIdx ? "checked" : ""}/><span>${esc(v)}</span></label>`).join("") + `</div>`;
   if (BZ_YN_TYPES.includes(t)) {
-    return radios(name, `${a}="${key}"`, ["Yes", "No"], 1);
+    // Real encoding: value "true"/"false"; PARTNER_SUPPORT carries a sub-choice in value2.
+    const sub = t === "PARTNER_SUPPORT"
+      ? `<div class="select-wrap"><select ${a}2="${key}"><option value="">협력사 구분…</option><option value="PARTNER_REGISTERED">등록업체</option></select></div>`
+      : "";
+    return radios(name, `${a}="${key}"`, ["true", "false"], 1).replace(/>true</, ">Yes<").replace(/>false</, ">No<") + sub;
   }
   if (t === "OVERSEAS_INSURANCE") {
-    return `<div class="bzw-sub">항공권</div>` + radios(name, `${a}="${key}"`, ["편도", "왕복"], 0);
+    // value: ONE_WAY|ROUND_TRIP · value2: OVER_90_DAYS|WITHIN_90_DAYS (captured codes).
+    return `<div class="bzw-sub">항공권</div>`
+      + radios(name, `${a}="${key}"`, ["ONE_WAY", "ROUND_TRIP"], 0).replace(/>ONE_WAY</, ">편도<").replace(/>ROUND_TRIP</, ">왕복<")
+      + `<div class="bzw-sub">기간</div>`
+      + radios(name + "d", `${a}2="${key}"`, ["WITHIN_90_DAYS", "OVER_90_DAYS"], 0)
+          .replace(/>WITHIN_90_DAYS</, ">90일 이내<").replace(/>OVER_90_DAYS</, ">90일 초과<");
   }
   if (t === "BSTR_LINKED_LEAVE") {
     return `<div class="bzw-group" ${a}-group="${key}">
@@ -2901,6 +2910,14 @@ async function bzSubmitManualCreate() {
     const k = g.getAttribute("data-xf-group") || g.getAttribute("data-bztf-group");
     const v = bzReadEduObject(g);
     if (v) itemValues[k] = v; else delete itemValues[k];
+  });
+  // Sub-choice widgets (value2: 협력사 구분, 보험 기간) merge into {choice, sub}.
+  document.querySelectorAll(".trav-card [data-bztf2], #tripExtraFields [data-xf2]").forEach((el) => {
+    const k = el.getAttribute("data-bztf2") || el.getAttribute("data-xf2");
+    let sub = null;
+    if (el.type === "radio") { if (el.checked) sub = el.value; }
+    else sub = (el.value || "").trim() || null;
+    if (sub && typeof itemValues[k] === "string") itemValues[k] = { choice: itemValues[k], sub };
   });
   const payload = {
     corpUserId: BZ_CORP_USER_ID,
