@@ -1005,7 +1005,10 @@ function readExtraFields() {
   $("tripExtraFields").querySelectorAll("[data-xf]").forEach((el) => {
     const id = el.getAttribute("data-xf");
     if (el.type === "radio") { if (el.checked) out[id] = el.value; }
-    else if (el.isContentEditable) out[id] = rteText(el);
+    else if (el.isContentEditable) {
+      // HTML items keep their MARKUP (bold, lists…) — innerText would strip it.
+      out[id] = rteText(el) ? el.innerHTML.trim() : "";
+    }
     else out[id] = (el.value || "").trim();
   });
   // Composite widgets (교육정보, 출장 연계 휴가, …): one aggregated value per group.
