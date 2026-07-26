@@ -148,6 +148,10 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             return writePeriod(document, state, issued, value, label);
         }
 
+        if ("EDUCATION_INFO".equals(itemType)) {
+            return writeEducationInfo(document, issued, value, label);
+        }
+
         // Options come from itemList, or from labelItems for BSTR_SELECT-style items.
         JsonNode itemList = issued.path("item").path("itemList");
         if (!itemList.isArray() || itemList.isEmpty()) {
@@ -180,6 +184,81 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         }
         issued.put("value", v);
         return label + " = " + v;
+    }
+
+    /**
+     * EDUCATION_INFO — encoding captured from a REAL BizPlay UI save: the values live in the
+     * document's top-level {@code bstrEdus[]} array, NOT in the issued item's value:
+     * {@code {eduType: INTERNAL|EXTERNAL, eduCourse, eduClass, eduStartDate, eduEndDate,
+     * eduInstitution, content}} (unset parts are EMPTY STRINGS, matching the capture).
+     * Accepts a structured object (UI composite / mapper), or our own "구분: … / 교육과정: …"
+     * aggregate string, or free text (which becomes the content field).
+     */
+    private String writeEducationInfo(ObjectNode document, ObjectNode issued, JsonNode value, String label) {
+        java.util.Map<String, String> p = new java.util.HashMap<>();
+        if (value.isObject()) {
+            value.fields().forEachRemaining(e -> {
+                String v = text(e.getValue());
+                if (v != null) {
+                    p.put(e.getKey(), v);
+                }
+            });
+        } else {
+            String s = text(value);
+            if (s == null) {
+                return null;
+            }
+            // Our aggregate format parses deterministically; anything else is content.
+            for (String part : s.split("\\s*/\\s*")) {
+                int colon = part.indexOf(':');
+                if (colon > 0) {
+                    p.put(part.substring(0, colon).trim(), part.substring(colon + 1).trim());
+                }
+            }
+            if (p.isEmpty()) {
+                p.put("내용", s);
+            }
+        }
+        String gubun = firstOf(p, "구분", "eduType");
+        String type = (gubun != null && (gubun.contains("사외") || gubun.equalsIgnoreCase("EXTERNAL")))
+                ? "EXTERNAL" : "INTERNAL";
+        String course = orEmpty(firstOf(p, "교육과정", "eduCourse"));
+        String clazz = orEmpty(firstOf(p, "교육클래스", "eduClass"));
+        String start = orEmpty(firstOf(p, "교육시작일", "eduStartDate"));
+        String end = orEmpty(firstOf(p, "교육종료일", "eduEndDate"));
+        String institution = orEmpty(firstOf(p, "교육기관", "eduInstitution"));
+        String content = orEmpty(firstOf(p, "내용", "content", "choice"));
+        if (course.isEmpty() && clazz.isEmpty() && start.isEmpty() && end.isEmpty()
+                && institution.isEmpty() && content.isEmpty()) {
+            return null;   // nothing real was provided (a bare 구분 radio default is not a value)
+        }
+        ObjectNode edu = objectMapper.createObjectNode();
+        edu.put("eduType", type);
+        edu.put("eduCourse", course);
+        edu.put("eduClass", clazz);
+        edu.put("eduStartDate", start);
+        edu.put("eduEndDate", end);
+        edu.put("eduInstitution", institution);
+        edu.put("content", content);
+        ArrayNode edus = objectMapper.createArrayNode();
+        edus.add(edu);
+        document.set("bstrEdus", edus);
+        issued.putNull("value");   // the capture leaves the issued item empty — values ride bstrEdus
+        return label + " = " + (content.isEmpty() ? course + " " + institution : content).trim();
+    }
+
+    private static String firstOf(java.util.Map<String, String> map, String... keys) {
+        for (String key : keys) {
+            String v = map.get(key);
+            if (v != null && !v.isBlank()) {
+                return v.trim();
+            }
+        }
+        return null;
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     /** BSTR_PERIOD: top-level dates + the save body's selections encoding (start/name, end/erpCode). */
@@ -283,6 +362,10 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             default -> {
                 if (!key.startsWith("item:")) {
                     yield true; // unknown basics never block completion
+                }
+                if ("EDUCATION_INFO".equals(field.path("type").asText())
+                        && document.path("bstrEdus").size() > 0) {
+                    yield true;   // education values live in bstrEdus, not the issued item
                 }
                 JsonNode issued = findIssuedItemView(document, field.path("itemId").asLong());
                 yield issued != null

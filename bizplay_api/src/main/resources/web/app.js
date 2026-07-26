@@ -778,7 +778,7 @@ function bzWidgetHtml(f, a, uid) {
     </div>`;
   }
   if (t === "EDUCATION_INFO") {
-    return `<div class="bzw-group" ${a}-group="${key}">
+    return `<div class="bzw-group" ${a}-group="${key}" data-edu="1">
       <div class="bzw-sub">구분</div>
       ${radios(name + "k", `data-part="구분"`, ["사내교육(인화원 교육 포함)", "사외교육"], 0)}
       <div class="bzw-row"><div class="search-field"><input type="text" data-part="교육과정" placeholder="교육과정을 검색하세요"/><span class="search-field-ico">${svgIcon("search")}</span></div><input type="text" data-part="교육클래스" placeholder="교육클래스를 입력하세요"/></div>
@@ -794,6 +794,20 @@ function bzWidgetHtml(f, a, uid) {
     return `<div class="select-wrap"><select ${a}="${key}"><option value="">선택하세요.</option>${opts.map((o) => `<option>${o}</option>`).join("")}</select></div>`;
   }
   return null;
+}
+
+/* 교육정보 composite -> structured object (keys match the writer/mapper contract);
+ * null when no typed part has content (the 구분 radio default alone is not a value). */
+function bzReadEduObject(g) {
+  const out = {};
+  let hasReal = false;
+  g.querySelectorAll("[data-part]").forEach((el) => {
+    const part = el.getAttribute("data-part");
+    if (el.type === "radio") { if (el.checked) out[part] = el.value; return; }
+    const v = (el.value || "").trim();
+    if (v) { out[part] = v; hasReal = true; }
+  });
+  return hasReal ? out : null;
 }
 
 /* Aggregate a composite widget's parts into one readable saved value. Radio parts
@@ -2880,6 +2894,13 @@ async function bzSubmitManualCreate() {
     if (itemValues[k]) return;
     const v = bzReadGroup(g);
     if (v) itemValues[k] = v;
+  });
+  // 교육정보 composites (form-level and per traveler) override with the STRUCTURED
+  // object — the backend writes it into the real bstrEdus[] encoding.
+  document.querySelectorAll("[data-xf-group][data-edu], .trav-card [data-bztf-group][data-edu]").forEach((g) => {
+    const k = g.getAttribute("data-xf-group") || g.getAttribute("data-bztf-group");
+    const v = bzReadEduObject(g);
+    if (v) itemValues[k] = v; else delete itemValues[k];
   });
   const payload = {
     corpUserId: BZ_CORP_USER_ID,

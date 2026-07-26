@@ -26,6 +26,9 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             Return ONLY JSON, no prose, no markdown: an object whose keys are field keys from the
             definition and whose values follow the field's type:
             - BSTR_PERIOD: {"start":"YYYY-MM-DD","end":"YYYY-MM-DD","destination":<place or null>,"memo":<string or null>}
+            - EDUCATION_INFO (교육정보): {"구분":"사내교육"|"사외교육","교육과정":<string>,"교육클래스":<string>,
+              "교육시작일":"YYYY-MM-DD","교육종료일":"YYYY-MM-DD","교육기관":<string>,"내용":<string>}
+              — include only the keys the message actually gives
             - a field listing "options": {"choice":"<EXACTLY one of the listed options>"}
             - BASIC_TRAVELER: {"names":["<person name>", ...]}
             - BASIC_TITLE: a short title string for the trip (compose one from the message if a clear
