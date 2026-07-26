@@ -112,6 +112,33 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
                 return PurposeResolutionResult.builder().resolved(o).reason("Exact option match.").build();
             }
         }
+        // Normalized fast path: users write the option words without the " · " separator
+        // ("해외출장 장기로 …"). When the message contains an option's purpose name AND its
+        // segment name (or the purpose has no segment), that option wins deterministically —
+        // no LLM judgment involved, so a weaker/over-cautious model cannot break these cases.
+        // Longest combined name wins, so "테스트(유성린) 성린4" beats the bare "테스트" purpose.
+        PurposeOption tokenMatch = null;
+        int tokenLen = 0;
+        boolean tokenTie = false;
+        for (PurposeOption o : options) {
+            String p = o.getPurposeName() == null ? "" : o.getPurposeName().toLowerCase();
+            String s = o.getSegmentName() == null ? "" : o.getSegmentName().toLowerCase();
+            if (p.isEmpty() || !lower.contains(p) || (!s.isEmpty() && !lower.contains(s))) {
+                continue;
+            }
+            int len = p.length() + s.length();
+            if (len > tokenLen) {
+                tokenMatch = o;
+                tokenLen = len;
+                tokenTie = false;
+            } else if (len == tokenLen) {
+                tokenTie = true;
+            }
+        }
+        if (tokenMatch != null && !tokenTie) {
+            return PurposeResolutionResult.builder()
+                    .resolved(tokenMatch).reason("Purpose and trip-type names found in the message.").build();
+        }
 
         ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         if (client == null) {
