@@ -18,6 +18,7 @@ import com.api.bizplay_conversational.model.response.TripPlanAgentResponse;
 import com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo;
 import com.api.bizplay_conversational.service.clarificationAgentService.ClarificationAgentService;
 import com.api.bizplay_conversational.service.databaseLookupAgentService.DatabaseLookupAgentService;
+import com.api.bizplay_conversational.service.guardrailAgentService.GuardrailAgentService;
 import com.api.bizplay_conversational.service.pdfAgentService.PdfAgentService;
 import com.api.bizplay_conversational.service.requiredFieldValidationService.RequiredFieldValidationService;
 import com.api.bizplay_conversational.service.updateAgentService.UpdateAgentService;
@@ -59,6 +60,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
 
     private final Map<String, ChatClient> chatClientRegistry;
     private final com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService llmSettingsService;
+    private final GuardrailAgentService guardrailAgentService;
     private final DatabaseLookupAgentService databaseLookupAgentService;
     private final StaffLookupAgentService staffLookupAgentService;
     private final TextAnalysisAgentService textAnalysisAgentService;
@@ -79,6 +81,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
     public TripPlanAgentServiceImple(
             Map<String, ChatClient> chatClientRegistry,
             com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService llmSettingsService,
+            GuardrailAgentService guardrailAgentService,
             DatabaseLookupAgentService databaseLookupAgentService,
             StaffLookupAgentService staffLookupAgentService,
             TextAnalysisAgentService textAnalysisAgentService,
@@ -94,6 +97,7 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
             @Qualifier("agentTaskExecutor") Executor agentTaskExecutor) {
         this.chatClientRegistry = chatClientRegistry;
         this.llmSettingsService = llmSettingsService;
+        this.guardrailAgentService = guardrailAgentService;
         this.databaseLookupAgentService = databaseLookupAgentService;
         this.staffLookupAgentService = staffLookupAgentService;
         this.textAnalysisAgentService = textAnalysisAgentService;
@@ -192,6 +196,20 @@ public class TripPlanAgentServiceImple implements TripPlanAgentService {
         boolean hasMessage = request.getMessage() != null && !request.getMessage().isBlank();
         if (!hasFiles && !hasMessage) {
             throw new IllegalArgumentException("Either message or at least one fileId is required.");
+        }
+
+        // Guardrail BEFORE any LLM/sub-agent runs — this flow includes the NL->SQL database
+        // lookup agent, so NL mutation requests (insert/update/delete …) are refused up front.
+        if (hasMessage) {
+            GuardrailAgentService.GuardrailResult guard = guardrailAgentService.check(request.getMessage());
+            if (!guard.allowed()) {
+                return TripPlanAgentResponse.builder()
+                        .sessionId(request.getSessionId())
+                        .intent("GUARDRAIL_BLOCKED")
+                        .subAgents(List.of("GUARDRAIL_AGENT"))
+                        .reply(guard.reply())
+                        .build();
+            }
         }
 
         ConversationalAgentSession session = resolveSession(request);

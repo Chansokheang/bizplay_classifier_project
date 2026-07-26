@@ -14,6 +14,7 @@ import com.api.bizplay_conversational.service.fieldMapperAgentService.FieldMappe
 import com.api.bizplay_conversational.service.formFollowUpAgentService.FormFollowUpAgentService;
 import com.api.bizplay_conversational.service.formSkeletonService.FormSkeletonService;
 import com.api.bizplay_conversational.service.formValueWriterService.FormValueWriterService;
+import com.api.bizplay_conversational.service.guardrailAgentService.GuardrailAgentService;
 import com.api.bizplay_conversational.config.BizplayProperties;
 import com.api.bizplay_conversational.service.purposeSegmentAgentService.PurposeSegmentAgentService;
 import com.api.bizplay_conversational.service.travelerResolverService.TravelerResolverService;
@@ -48,6 +49,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private static final String STATE_ROLE = "agent_state";
 
     private final ConversationalAgentSessionRepo sessionRepo;
+    private final GuardrailAgentService guardrailAgentService;
     private final BizplayGatewayService bizplayGatewayService;
     private final PurposeSegmentAgentService purposeSegmentAgentService;
     private final FormSkeletonService formSkeletonService;
@@ -70,6 +72,18 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         String message = request.getMessage() == null ? "" : request.getMessage().trim();
         if (message.isBlank()) {
             throw new IllegalArgumentException("message is required.");
+        }
+
+        // Guardrail BEFORE any session write or LLM call: refuse DB-mutation requests aimed at
+        // the NL->SQL lookup agent, prompt-injection phrasing, and oversized input.
+        GuardrailAgentService.GuardrailResult guard = guardrailAgentService.check(message);
+        if (!guard.allowed()) {
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(request.getSessionId())
+                    .intent("GUARDRAIL_BLOCKED")
+                    .subAgents(List.of("GUARDRAIL_AGENT"))
+                    .reply(guard.reply())
+                    .build();
         }
 
         ConversationalAgentSession session = resolveSession(request);
