@@ -2883,6 +2883,9 @@ async function bzSubmitManualCreate() {
   });
   const payload = {
     corpUserId: BZ_CORP_USER_ID,
+    // WYSIWYG sync: the posted documents are written back into this session's draft_json.
+    agentSessionId: (agent.live && agent.sessionId) ? agent.sessionId : null,
+    corpNo: CORP_NO,
     purposeId: live.purposeId,
     segmentId: sid ? Number(sid) : null,
     title: $("tripTitle").value.trim(),
@@ -2908,7 +2911,16 @@ async function bzSubmitManualCreate() {
     const data = (json && (json.data || json.payload)) || {};
     toast(data.reply || "Plan saved to BizPlay ✓", "ok");
     await bzMirrorLocalPlan();   // show it in the demo list right away
-    closeCreate();
+    if (agent.live && agent.sessionId) {
+      // Chat-driven save: stay in the modal and confirm in the thread (the session's
+      // draft_json was synced server-side to the exact documents that were posted).
+      agent.status = data.status || agent.status;
+      appendMsg("assistant", data.reply || "Plan saved to BizPlay.", {
+        intent: data.intent, subAgents: data.subAgents,
+      });
+    } else {
+      closeCreate();
+    }
   } catch (e) {
     $("validationSummary").textContent = "Save failed: " + friendlyError(e.message);
     toast("Save failed: " + friendlyError(e.message), "err");
@@ -2917,45 +2929,13 @@ async function bzSubmitManualCreate() {
   }
 }
 
-/* Final step: POST ③ through the create endpoint with the picked approval lines.
- * If the provider rejects the picked lines (encoding not yet captured for this corp),
- * fall back to the verified DRAFT-only save and say so. */
+/* Final step of BOTH save entry points (chat chip and the form's Complete button).
+ * WYSIWYG invariant: the save always posts what is ON SCREEN — agent-filled values
+ * live in the DOM too, plus any manual edits the user typed into the form. When a
+ * chat session exists, the backend syncs the posted documents into its draft_json
+ * (the session-path /create endpoint remains for API/headless callers). */
 async function bzSubmitCreate() {
-  if (bzManualSave) { bzSubmitManualCreate(); return; }
-  if (!agent.sessionId || agent.busy) return;
-  $("bzPreviewOverlay").classList.add("hidden");
-  setAgentBusy(true, "Saving…");
-  const typing = appendTyping();
-  const post = (lines) => fetch(
-    `${BZ_API_BASE()}/agents/plan/${encodeURIComponent(agent.sessionId)}/create?corpNo=${encodeURIComponent(CORP_NO)}`,
-    { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approvalLines: lines }) });
-  try {
-    const lines = bzApproval.lines.map((l) => ({ corporationUserId: l.id, approvalKindType: l.kind }));
-    let res = await post(lines);
-    let json = await res.json().catch(() => ({}));
-    let note = "";
-    if (!res.ok && lines.length) {
-      // provider rejected the approver lines -> retry the known-good DRAFT-only body
-      res = await post([]);
-      json = await res.json().catch(() => ({}));
-      note = " (approver lines were rejected by BizPlay — saved as DRAFT-only; we need one captured 결재요청 request to learn their encoding)";
-    }
-    typing.remove();
-    if (!res.ok) throw apiError(json, res);
-    const data = (json && (json.data || json.payload)) || {};
-    agent.status = data.status || agent.status;
-    appendMsg("assistant", (data.reply || "Plan saved to BizPlay.") + note, {
-      intent: data.intent, subAgents: data.subAgents,
-    });
-    toast("Plan saved to BizPlay ✓", "ok");
-    bzMirrorLocalPlan();   // show it in the demo list right away
-  } catch (e) {
-    typing.remove();
-    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
-  } finally {
-    setAgentBusy(false);
-  }
+  bzSubmitManualCreate();
 }
 async function openDetail(id) {
   if (!id) return;

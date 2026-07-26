@@ -21,6 +21,14 @@ public class BizplayManualPlanRequest {
     private long purposeId;
     private Long segmentId;
 
+    /**
+     * Optional chat session this save belongs to. When present, the posted documents are written
+     * back into the session's draft_json and the session becomes POSTED — so the stored draft
+     * always equals what was actually sent to BizPlay (screen is the single source of truth).
+     */
+    private String agentSessionId;
+    private String corpNo;
+
     private String title;
     private String content;
     /** YYYY-MM-DD. */

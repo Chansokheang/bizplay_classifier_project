@@ -314,14 +314,38 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
 
         String providerResponse = bizplayGatewayService.postPlanDraft(documents, bizplayToken);
+        String reply = "Plan draft saved to BizPlay: " + providerResponse;
+        syncSessionAfterManualSave(request.getAgentSessionId(), documents, reply);
         return BizplayPlanAgentResponse.builder()
+                .sessionId(request.getAgentSessionId())
                 .status(ConversationalAgentSession.AgentStatus.POSTED.name())
                 .intent("CREATE_PLAN_MANUAL")
                 .subAgents(List.of("FORM_BUILDER", "BIZPLAY_GATEWAY"))
-                .reply("Plan draft saved to BizPlay: " + providerResponse)
+                .reply(reply)
                 .destination(state.path("destination").asText(null))
                 .draftJson(documents)
                 .build();
+    }
+
+    /**
+     * WYSIWYG invariant: after a manual (form-driven) save that belongs to a chat session, the
+     * session's draft_json is replaced with the documents that were ACTUALLY posted — the stored
+     * draft and the created BizPlay document can never diverge again.
+     */
+    private void syncSessionAfterManualSave(String agentSessionId, ArrayNode documents, String reply) {
+        if (agentSessionId == null || agentSessionId.isBlank()) {
+            return;
+        }
+        try {
+            sessionRepo.findById(UUID.fromString(agentSessionId.trim())).ifPresent(session -> {
+                session.setDraftJson(documents);
+                session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
+                appendTurn(session, "assistant", reply);
+                sessionRepo.save(session);
+            });
+        } catch (IllegalArgumentException e) {
+            log.warn("Manual save: invalid agentSessionId '{}' — session not synced.", agentSessionId);
+        }
     }
 
     // --- turn steps --------------------------------------------------------------
