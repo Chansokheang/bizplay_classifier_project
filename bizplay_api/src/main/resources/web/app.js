@@ -2949,16 +2949,7 @@ async function bzSubmitManualCreate() {
     const data = (json && (json.data || json.payload)) || {};
     toast(data.reply || "Plan saved to BizPlay ✓", "ok");
     await bzMirrorLocalPlan();   // show it in the demo list right away
-    if (agent.live && agent.sessionId) {
-      // Chat-driven save: stay in the modal and confirm in the thread (the session's
-      // draft_json was synced server-side to the exact documents that were posted).
-      agent.status = data.status || agent.status;
-      appendMsg("assistant", data.reply || "Plan saved to BizPlay.", {
-        intent: data.intent, subAgents: data.subAgents,
-      });
-    } else {
-      closeCreate();
-    }
+    closeCreate();               // done — the toast + list entry are the confirmation
   } catch (e) {
     $("validationSummary").textContent = "Save failed: " + friendlyError(e.message);
     toast("Save failed: " + friendlyError(e.message), "err");
