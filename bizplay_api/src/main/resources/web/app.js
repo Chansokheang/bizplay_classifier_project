@@ -2885,7 +2885,7 @@ async function bzSubmitManualCreate() {
   document.querySelectorAll(".trav-card [data-bztf]").forEach((el) => {
     const k = el.getAttribute("data-bztf");
     if (itemValues[k]) return;
-    if (el.type === "checkbox") { if (el.checked) itemValues[k] = "신청"; }
+    if (el.type === "checkbox") { if (el.checked) itemValues[k] = "true"; }   // real-UI encoding
     else if (el.type === "radio") { if (el.checked) itemValues[k] = el.value; }
     else if ((el.value || "").trim()) itemValues[k] = el.value.trim();
   });

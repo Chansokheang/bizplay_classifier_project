@@ -17,6 +17,13 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class FormValueWriterServiceImple implements FormValueWriterService {
 
+    /** 신청 toggles — real UI saves "true"/"false" strings (captured from seah/bstr/save). */
+    private static final java.util.Set<String> APPLY_TYPES = java.util.Set.of(
+            "EXPENSE_BEYOND_BSTR_PERIOD", "DAILY_COST", "FUEL_COST", "REQUEST_STAFF_LODGE");
+    /** Yes/No items — real UI saves "true"/"false" strings (value2 carries optional sub-choices). */
+    private static final java.util.Set<String> YN_TYPES = java.util.Set.of(
+            "PARTNER_SUPPORT", "NATIONAL_PROJECT", "NOTEBOOK_EXPORT");
+
     private final ObjectMapper objectMapper;
 
     @Override
@@ -152,6 +159,29 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             return writeEducationInfo(document, issued, value, label);
         }
 
+        // Real-UI captures: 신청 toggles and Yes/No items store STRING booleans, and the
+        // insurance item stores its radio codes — not Korean labels.
+        if (APPLY_TYPES.contains(itemType) || YN_TYPES.contains(itemType)) {
+            String raw = value.isObject() ? text(value.path("choice")) : text(value);
+            if (raw == null) {
+                return null;
+            }
+            boolean yes = !(raw.equalsIgnoreCase("false") || raw.equalsIgnoreCase("no")
+                    || raw.contains("아니") || raw.equalsIgnoreCase("n") || raw.contains("미신청"));
+            issued.put("value", yes ? "true" : "false");
+            return label + " = " + (yes ? "true" : "false");
+        }
+        if ("OVERSEAS_INSURANCE".equals(itemType)) {
+            String raw = value.isObject() ? text(value.path("choice")) : text(value);
+            if (raw == null) {
+                return null;
+            }
+            String code = raw.contains("왕복") || raw.equalsIgnoreCase("ROUND_TRIP") ? "ROUND_TRIP"
+                    : raw.contains("편도") || raw.equalsIgnoreCase("ONE_WAY") ? "ONE_WAY" : raw;
+            issued.put("value", code);
+            return label + " = " + code;
+        }
+
         // Options come from itemList, or from labelItems for BSTR_SELECT-style items.
         JsonNode itemList = issued.path("item").path("itemList");
         if (!itemList.isArray() || itemList.isEmpty()) {
@@ -243,7 +273,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         ArrayNode edus = objectMapper.createArrayNode();
         edus.add(edu);
         document.set("bstrEdus", edus);
-        issued.putNull("value");   // the capture leaves the issued item empty — values ride bstrEdus
+        issued.put("value", type);   // real UI: the issued item's value carries the eduType
         return label + " = " + (content.isEmpty() ? course + " " + institution : content).trim();
     }
 
