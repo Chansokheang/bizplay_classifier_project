@@ -15,6 +15,7 @@ import com.api.bizplay_conversational.service.formFollowUpAgentService.FormFollo
 import com.api.bizplay_conversational.service.formSkeletonService.FormSkeletonService;
 import com.api.bizplay_conversational.service.formValueWriterService.FormValueWriterService;
 import com.api.bizplay_conversational.service.guardrailAgentService.GuardrailAgentService;
+import com.api.bizplay_conversational.service.placeValidationService.PlaceValidationService;
 import com.api.bizplay_conversational.config.BizplayProperties;
 import com.api.bizplay_conversational.service.purposeSegmentAgentService.PurposeSegmentAgentService;
 import com.api.bizplay_conversational.service.travelerResolverService.TravelerResolverService;
@@ -50,6 +51,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
     private final ConversationalAgentSessionRepo sessionRepo;
     private final GuardrailAgentService guardrailAgentService;
+    private final PlaceValidationService placeValidationService;
     private final BizplayGatewayService bizplayGatewayService;
     private final PurposeSegmentAgentService purposeSegmentAgentService;
     private final FormSkeletonService formSkeletonService;
@@ -147,6 +149,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             if (pendingChoices == null && !travelerChips.isEmpty()) {
                 pendingChoices = travelerChips;
             }
+        }
+
+        // Korea-only place validation: DOMESTIC (국내) trips get their destination checked
+        // against the Korean gazetteer/geocoder. Non-blocking — an unknown place only warns.
+        if (!documents.isEmpty()) {
+            validateDestinationIfKorean(state, subAgents, reply);
         }
 
         // --- Validation + Sub-agent [D]: follow-up question ---------------------------------------
@@ -498,6 +506,32 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
         ids.add(id);
+    }
+
+    /**
+     * Korea-only destination validation ("only apply in Korea"): runs when the chosen purpose
+     * is DOMESTIC (name contains 국내) and the destination changed since the last check.
+     * VALID results are remembered silently; UNKNOWN appends a one-time, non-blocking warning.
+     */
+    private void validateDestinationIfKorean(ObjectNode state, List<String> subAgents, StringBuilder reply) {
+        String destination = state.path("destination").asText(null);
+        if (destination == null || destination.isBlank()) {
+            return;
+        }
+        String purposeName = state.path("purpose").path("purposeName").asText("");
+        if (!purposeName.contains("국내")) {
+            return;   // overseas / corp-specific purposes: not a Korean destination, skip
+        }
+        if (destination.equals(state.path("validatedDestination").asText(null))) {
+            return;   // unchanged since the last check — don't re-validate or re-warn
+        }
+        PlaceValidationService.Result result = placeValidationService.validateKorean(destination);
+        subAgents.add("PLACE_VALIDATOR");
+        state.put("validatedDestination", destination);
+        if (result.status() == PlaceValidationService.Result.Status.UNKNOWN) {
+            reply.append("⚠ 출장지 '").append(destination)
+                    .append("'을(를) 국내 지역으로 확인하지 못했습니다 — 지역명을 확인해 주세요. ");
+        }
     }
 
     /** Read currentCorpId from the (unverified) JWT payload — enough for a roster lookup key. */
