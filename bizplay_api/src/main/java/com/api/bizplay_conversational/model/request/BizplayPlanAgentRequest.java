@@ -23,4 +23,9 @@ public class BizplayPlanAgentRequest {
      * draft holds a single document and traveler NAMES wait in agent state.
      */
     private java.util.List<Long> travelerCorpUserIds;
+    /**
+     * Uploaded file ids (spreadsheets = who travels; PDFs = where/when/why). Extracted content is
+     * fed through the same field-mapper / traveler-resolver pipeline as typed text.
+     */
+    private java.util.List<String> fileIds;
 }

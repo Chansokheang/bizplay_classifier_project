@@ -38,9 +38,18 @@ public class ChatClientFactory {
                 ? "bearer"
                 : entry.getApiKeyHeader().trim().toLowerCase();
         boolean useBearer = "bearer".equals(headerStyle);
+        boolean noKey = entry.getApiKey() == null || entry.getApiKey().isBlank();
 
         String openAiApiKey;
-        if (useBearer) {
+        if (noKey) {
+            // Open endpoint (no auth): send no key header at all and strip the
+            // Authorization header Spring AI's OpenAiApi would otherwise add.
+            restClientBuilder.requestInterceptor((request, body, execution) -> {
+                request.getHeaders().remove(HttpHeaders.AUTHORIZATION);
+                return execution.execute(request, body);
+            });
+            openAiApiKey = "unused";
+        } else if (useBearer) {
             // Hand the real key to OpenAiApi so it emits Authorization: Bearer <key>.
             openAiApiKey = entry.getApiKey();
         } else {

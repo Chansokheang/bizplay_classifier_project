@@ -8,9 +8,19 @@ import com.api.bizplay_conversational.model.response.BizplayPlanAgentResponse;
 import com.api.bizplay_conversational.model.response.PurposeOption;
 import com.api.bizplay_conversational.model.response.PurposeResolutionResult;
 import com.api.bizplay_conversational.model.response.TripPlanAgentResponse;
+import com.api.bizplay_conversational.model.response.DatabaseLookupAgentResponse;
+import com.api.bizplay_conversational.model.response.SpreadsheetAnalysisResult;
+import com.api.bizplay_conversational.model.response.TextAnalysisResult;
 import com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo;
+import com.api.bizplay_conversational.service.agentPromptService.AgentPromptService;
 import com.api.bizplay_conversational.service.bizplayGatewayService.BizplayGatewayService;
+import com.api.bizplay_conversational.service.customAgentService.CustomAgentService;
+import com.api.bizplay_conversational.service.databaseLookupAgentService.DatabaseLookupAgentService;
 import com.api.bizplay_conversational.service.fieldMapperAgentService.FieldMapperAgentService;
+import com.api.bizplay_conversational.service.fileExtractionService.FileExtractionService;
+import com.api.bizplay_conversational.service.fileExtractionService.UploadedFile;
+import com.api.bizplay_conversational.service.pdfAgentService.PdfAgentService;
+import com.api.bizplay_conversational.service.spreadsheetAgentService.SpreadsheetAgentService;
 import com.api.bizplay_conversational.service.formFollowUpAgentService.FormFollowUpAgentService;
 import com.api.bizplay_conversational.service.formSkeletonService.FormSkeletonService;
 import com.api.bizplay_conversational.service.formValueWriterService.FormValueWriterService;
@@ -59,6 +69,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private final FormValueWriterService formValueWriterService;
     private final FormFollowUpAgentService formFollowUpAgentService;
     private final TravelerResolverService travelerResolverService;
+    private final AgentPromptService agentPromptService;
+    private final CustomAgentService customAgentService;
+    private final DatabaseLookupAgentService databaseLookupAgentService;
+    private final FileExtractionService fileExtractionService;
+    private final SpreadsheetAgentService spreadsheetAgentService;
+    private final PdfAgentService pdfAgentService;
     private final BizplayProperties bizplayProperties;
     private final ObjectMapper objectMapper;
 
@@ -71,13 +87,26 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (request.getCorpUserId() == null || request.getCorpUserId().isBlank()) {
             throw new IllegalArgumentException("corpUserId is required.");
         }
+        // Sub-agents resolve their (possibly corp-customized) prompts through this context.
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(request.getCorpNo());
+        try {
+            return chatTurn(request, bizplayToken);
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    private BizplayPlanAgentResponse chatTurn(BizplayPlanAgentRequest request, String bizplayToken) {
         String message = request.getMessage() == null ? "" : request.getMessage().trim();
-        if (message.isBlank()) {
+        List<String> fileIds = request.getFileIds() == null ? List.of() : request.getFileIds();
+        if (message.isBlank() && fileIds.isEmpty()) {
             throw new IllegalArgumentException("message is required.");
         }
+        boolean ko = koreanConversation(message);
 
         // Guardrail BEFORE any session write or LLM call: refuse DB-mutation requests aimed at
-        // the NL->SQL lookup agent, prompt-injection phrasing, and oversized input.
+        // the NL->SQL lookup agent, prompt-injection phrasing, and oversized input. It also
+        // ROUTES: a read-only data question goes to the NL->SQL lookup agent instead of the form.
         GuardrailAgentService.GuardrailResult guard = guardrailAgentService.check(message);
         if (!guard.allowed()) {
             return BizplayPlanAgentResponse.builder()
@@ -86,6 +115,18 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     .subAgents(List.of("GUARDRAIL_AGENT"))
                     .reply(guard.reply())
                     .build();
+        }
+        // User-defined custom sub-agents get first claim on the turn (router matches the
+        // message against each agent's "when to use"; null = nobody claimed it).
+        if (!message.isBlank()) {
+            CustomAgentService.RoutedReply custom = customAgentService.tryHandle(request.getCorpNo(), message);
+            if (custom != null) {
+                return sideTurn(request, message, custom.reply(), "CUSTOM_AGENT",
+                        List.of("CUSTOM:" + custom.agentName()));
+            }
+        }
+        if ("DATA_QUERY".equals(guard.category()) && agentPromptService.isModuleEnabled("database-lookup")) {
+            return dataQueryTurn(request, message, ko);
         }
 
         ConversationalAgentSession session = resolveSession(request);
@@ -97,11 +138,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         List<TripPlanAgentResponse.PendingChoice> pendingChoices = null;
         StringBuilder reply = new StringBuilder();
 
+        // Spreadsheet / PDF sub-agents: extracted file content joins this turn as extra text
+        // (mapped by the same field-mapper) and traveler names queue for the roster resolver.
+        String fileFacts = extractFiles(request, state, subAgents, reply, ko);
+        String turnText = message.isBlank() ? fileFacts
+                : (fileFacts.isBlank() ? message : message + "\n" + fileFacts);
+
         if (documents.isEmpty()) {
             // --- Sub-agent [A]: Purpose & Segment resolution -------------------------------------
             JsonNode catalog = bizplayGatewayService.getPurposeCatalog(request.getCorpUserId(), bizplayToken);
             List<PurposeOption> options = purposeSegmentAgentService.flattenCatalog(catalog);
-            PurposeResolutionResult res = purposeSegmentAgentService.resolve(message, options);
+            PurposeResolutionResult res = purposeSegmentAgentService.resolve(turnText, options);
             subAgents.add("PURPOSE_SEGMENT_AGENT");
 
             if (res.isResolved()) {
@@ -119,33 +166,36 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 state.put("paperName", form.getPaperName());
                 state.set("fields", objectMapper.valueToTree(form.getFields()));
                 subAgents.add("FORM_BUILDER");
-                reply.append("Trip type set to \"").append(chosen.getLabel())
-                        .append("\" and the \"").append(form.getPaperName()).append("\" form is loaded. ");
+                reply.append(t(ko,
+                        "Great — I've started a \"" + chosen.getLabel() + "\" plan for you. ",
+                        "좋아요 — \"" + chosen.getLabel() + "\" 출장 계획을 시작할게요. "));
                 // Map everything said so far (staged turns + this message) onto the fresh form.
-                fillFields(document, state, stagedPlus(state, message), subAgents, reply);
+                fillFields(document, state, stagedPlus(state, turnText), subAgents, reply, ko);
             } else {
                 intent = "PURPOSE_SELECTION";
-                state.withArray("staged").add(message);
+                state.withArray("staged").add(turnText);
                 pendingChoices = List.of(toPendingChoice(res.getCandidates()));
-                reply.append("Which Travel Purpose / Trip Type is this trip? Please pick one. ");
+                reply.append(t(ko,
+                        "What kind of trip are you planning? Pick the one that fits below. ",
+                        "어떤 성격의 출장인가요? 아래에서 맞는 유형을 골라 주세요. "));
             }
         } else {
             java.util.regex.Matcher pick = TRAVELER_PICK.matcher(message);
             if (pick.matches()) {
                 // Chip click from a traveler disambiguation: deterministic, no LLM involved.
                 intent = "TRAVELER_PICK";
-                applyTravelerPick(state, pick.group(1).trim(), Long.parseLong(pick.group(2)), pick.group(3).trim(), reply);
+                applyTravelerPick(state, pick.group(1).trim(), Long.parseLong(pick.group(2)), pick.group(3).trim(), reply, ko);
             } else {
                 // Form already loaded: every turn is field completion on documents[0].
                 intent = "FIELD_COMPLETION";
-                fillFields((ObjectNode) documents.get(0), state, message, subAgents, reply);
+                fillFields((ObjectNode) documents.get(0), state, turnText, subAgents, reply, ko);
             }
         }
 
         // Resolve pending traveler names against the corporation roster (gateway tool + chips).
-        if (!documents.isEmpty()) {
+        if (!documents.isEmpty() && agentPromptService.isModuleEnabled("traveler-resolver")) {
             List<TripPlanAgentResponse.PendingChoice> travelerChips =
-                    resolveTravelers(request, state, bizplayToken, reply, subAgents);
+                    resolveTravelers(request, state, bizplayToken, reply, subAgents, ko);
             if (pendingChoices == null && !travelerChips.isEmpty()) {
                 pendingChoices = travelerChips;
             }
@@ -153,22 +203,31 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
         // Korea-only place validation: DOMESTIC (국내) trips get their destination checked
         // against the Korean gazetteer/geocoder. Non-blocking — an unknown place only warns.
-        if (!documents.isEmpty()) {
-            validateDestinationIfKorean(state, subAgents, reply);
+        if (!documents.isEmpty() && agentPromptService.isModuleEnabled("place-validator")) {
+            validateDestinationIfKorean(state, subAgents, reply, ko);
         }
 
         // --- Validation + Sub-agent [D]: follow-up question ---------------------------------------
         List<String> missing = List.of();
         if (!documents.isEmpty()) {
-            missing = formValueWriterService.missingRequired(documents.get(0), state.path("fields"), state);
+            missing = requiredGaps(documents.get(0), state);
             if (missing.isEmpty()) {
                 session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
-                reply.append("All required fields are filled. Review the draft and create the plan when ready.");
+                reply.append(t(ko,
+                        "The form is all filled in — the last step is the approval line.",
+                        "양식은 모두 채워졌어요 — 마지막으로 결재선만 정하면 돼요."));
             } else {
                 session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
-                reply.append(formFollowUpAgentService.composeFollowUp(
-                        state.path("paperName").asText(null), missing));
-                subAgents.add("FOLLOW_UP_AGENT");
+                if (agentPromptService.isModuleEnabled("form-follow-up")) {
+                    reply.append(formFollowUpAgentService.composeFollowUp(
+                            state.path("paperName").asText(null), missing, ko));
+                    subAgents.add("FOLLOW_UP_AGENT");
+                } else {
+                    // Module off: deterministic ask, no LLM call.
+                    reply.append(t(ko,
+                            "Could you tell me: " + String.join(", ", missing) + "?",
+                            "다음 정보를 알려 주시겠어요: " + String.join(", ", missing) + "?"));
+                }
             }
         }
 
@@ -180,8 +239,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         syncTravelerDocuments(documents, state, request.getCorpUserId());
 
         // Persist: draft_json = EXACTLY the request-body array; state rides in chat_event_json.
+        state.put("lang", ko ? "ko" : "en");   // save-flow replies reuse the conversation language
         session.setDraftJson(documents);
-        appendTurn(session, "user", message);
+        appendTurn(session, "user", turnText);   // includes extracted file facts for later context
         appendTurn(session, "assistant", reply.toString());
         saveState(session, state);
         sessionRepo.save(session);
@@ -211,6 +271,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("sessionId is required.");
         }
+        // Per-corp settings (BizPlay endpoint / product code) resolve through this context.
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            return createPlanTurn(sessionId, corpNo, bizplayToken, approvalLines);
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    private BizplayPlanAgentResponse createPlanTurn(String sessionId, String corpNo, String bizplayToken,
+                                                    JsonNode approvalLines) {
         BizplayPlanAgentRequest lookup = new BizplayPlanAgentRequest();
         lookup.setCorpNo(corpNo);
         lookup.setSessionId(sessionId);
@@ -220,7 +291,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             throw new IllegalArgumentException("This session has no draft yet — choose a trip type first.");
         }
         ObjectNode state = loadState(session);
-        List<String> missing = formValueWriterService.missingRequired(documents.get(0), state.path("fields"), state);
+        List<String> missing = requiredGaps(documents.get(0), state);
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException("Cannot create the plan — required fields are missing: "
                     + String.join(", ", missing) + ".");
@@ -229,9 +300,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
         // POST the draft_json AS-IS (it already has the save-body structure).
         String providerResponse = bizplayGatewayService.postPlanDraft(documents, bizplayToken);
+        log.info("Plan draft saved to BizPlay: {}", providerResponse);
 
         session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
-        String reply = "Plan draft saved to BizPlay: " + providerResponse;
+        String reply = t("ko".equals(state.path("lang").asText(null)),
+                "All done — your trip plan has been saved to BizPlay.",
+                "완료됐어요 — 출장 계획이 BizPlay에 저장되었습니다.");
         appendTurn(session, "assistant", reply);
         sessionRepo.save(session);
         ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
@@ -258,6 +332,18 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (request.getCorpUserId() == null || request.getCorpUserId().isBlank()) {
             throw new IllegalArgumentException("corpUserId is required.");
         }
+        // Per-corp settings (BizPlay endpoint / product code) resolve through this context.
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(request.getCorpNo());
+        try {
+            return createManualPlanTurn(request, bizplayToken);
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    private BizplayPlanAgentResponse createManualPlanTurn(
+            com.api.bizplay_conversational.model.request.BizplayManualPlanRequest request,
+            String bizplayToken) {
         // 1) Rebuild the save-ready skeleton from the RETRIEVED form — structure is never invented.
         JsonNode papers = bizplayGatewayService.getPapers(
                 request.getPurposeId(), request.getSegmentId(), bizplayToken);
@@ -314,7 +400,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
 
         String providerResponse = bizplayGatewayService.postPlanDraft(documents, bizplayToken);
-        String reply = "Plan draft saved to BizPlay: " + providerResponse;
+        log.info("Manual plan draft saved to BizPlay: {}", providerResponse);
+        String reply = "Plan draft saved to BizPlay.";
         syncSessionAfterManualSave(request.getAgentSessionId(), documents, reply);
         return BizplayPlanAgentResponse.builder()
                 .sessionId(request.getAgentSessionId())
@@ -350,9 +437,268 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
     // --- turn steps --------------------------------------------------------------
 
+    /**
+     * A side turn answered outside the form flow (custom agent, data query): the reply joins the
+     * session history when one exists, and the draft is left untouched.
+     */
+    private BizplayPlanAgentResponse sideTurn(BizplayPlanAgentRequest request, String message,
+                                              String reply, String intent, List<String> subAgents) {
+        ConversationalAgentSession session = null;
+        if (request.getSessionId() != null && !request.getSessionId().isBlank()) {
+            try {
+                session = sessionRepo.findById(UUID.fromString(request.getSessionId().trim())).orElse(null);
+            } catch (IllegalArgumentException ignored) {
+                // Not a UUID — answer without touching any session.
+            }
+            if (session != null) {
+                appendTurn(session, "user", message);
+                appendTurn(session, "assistant", reply);
+                sessionRepo.save(session);
+            }
+        }
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(session != null ? session.getId().toString() : request.getSessionId())
+                .status(session != null && session.getStatus() != null ? session.getStatus().name() : null)
+                .intent(intent)
+                .subAgents(subAgents)
+                .reply(reply)
+                .draftJson(session != null ? session.getDraftJson() : null)
+                .build();
+    }
+
+    /**
+     * DATA_QUERY turn: the guardrail classified the message as a read-only question about stored
+     * data — answer it via the NL->SQL database-lookup sub-agent and leave the draft untouched.
+     */
+    private BizplayPlanAgentResponse dataQueryTurn(BizplayPlanAgentRequest request, String message, boolean ko) {
+        DatabaseLookupAgentResponse lookup;
+        try {
+            lookup = databaseLookupAgentService.lookup(request.getCorpNo(), message);
+        } catch (Exception e) {
+            log.warn("Database lookup failed: {}", e.getMessage());
+            lookup = null;
+        }
+        String reply = formatLookup(lookup, ko);
+
+        // Ride the existing session when there is one so the Q&A stays in the conversation history.
+        ConversationalAgentSession session = null;
+        if (request.getSessionId() != null && !request.getSessionId().isBlank()) {
+            try {
+                session = sessionRepo.findById(UUID.fromString(request.getSessionId().trim())).orElse(null);
+            } catch (IllegalArgumentException ignored) {
+                // Not a UUID — answer without touching any session.
+            }
+            if (session != null) {
+                appendTurn(session, "user", message);
+                appendTurn(session, "assistant", reply);
+                sessionRepo.save(session);
+            }
+        }
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(session != null ? session.getId().toString() : request.getSessionId())
+                .status(session != null && session.getStatus() != null ? session.getStatus().name() : null)
+                .intent("DATA_QUERY")
+                .subAgents(List.of("GUARDRAIL_AGENT", "DATABASE_LOOKUP_AGENT"))
+                .reply(reply)
+                .draftJson(session != null ? session.getDraftJson() : null)
+                .build();
+    }
+
+    /** Human sentence(s) out of an NL->SQL result — never a raw dump. */
+    private String formatLookup(DatabaseLookupAgentResponse lookup, boolean ko) {
+        if (lookup == null || !lookup.isExecuted() || lookup.getError() != null) {
+            return t(ko,
+                    "I couldn't look that up right now — sorry. Could you try asking another way?",
+                    "지금은 조회하지 못했어요 — 죄송해요. 다른 방식으로 물어봐 주시겠어요?");
+        }
+        List<java.util.Map<String, Object>> rows = lookup.getRows() == null ? List.of() : lookup.getRows();
+        if (rows.isEmpty()) {
+            return t(ko, "I looked, but nothing matched that.", "조회해 봤지만 해당하는 결과가 없어요.");
+        }
+        StringBuilder sb = new StringBuilder(t(ko,
+                "Here's what I found (" + rows.size() + " result" + (rows.size() == 1 ? "" : "s") + "):\n",
+                "조회 결과예요 (" + rows.size() + "건):\n"));
+        int shown = 0;
+        for (java.util.Map<String, Object> row : rows) {
+            if (shown++ == 10) {
+                sb.append(t(ko, "…and " + (rows.size() - 10) + " more.", "…외 " + (rows.size() - 10) + "건."));
+                break;
+            }
+            List<String> parts = new ArrayList<>();
+            row.forEach((k, v) -> parts.add(k + ": " + (v == null ? "-" : v)));
+            sb.append("• ").append(String.join(", ", parts)).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * Spreadsheet / PDF sub-agents for uploaded files. Extractions come back as plain text facts
+     * that ride the normal pipeline (field-mapper maps them; traveler names queue for the roster
+     * resolver) — no separate merge logic to maintain.
+     */
+    private String extractFiles(BizplayPlanAgentRequest request, ObjectNode state,
+                                List<String> subAgents, StringBuilder reply, boolean ko) {
+        List<String> fileIds = request.getFileIds() == null ? List.of() : request.getFileIds();
+        if (fileIds.isEmpty()) {
+            return "";
+        }
+        StringBuilder facts = new StringBuilder();
+        List<String> readFiles = new ArrayList<>();
+        for (String fid : fileIds) {
+            UploadedFile f = fileExtractionService.get(fid).orElse(null);
+            if (f == null) {
+                continue;
+            }
+            String fn = f.filename() == null ? fid : f.filename();
+            String lower = fn.toLowerCase(java.util.Locale.ROOT);
+            try {
+                if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".csv")) {
+                    if (!agentPromptService.isModuleEnabled("spreadsheet")) {
+                        reply.append(t(ko,
+                                "(The spreadsheet module is turned off — '" + fn + "' was skipped.) ",
+                                "(스프레드시트 모듈이 꺼져 있어 '" + fn + "'을(를) 건너뛰었어요.) "));
+                        continue;
+                    }
+                    SpreadsheetAnalysisResult sheet =
+                            spreadsheetAgentService.analyze(request.getCorpNo(), f.content(), fn);
+                    subAgents.add("SPREADSHEET_AGENT");
+                    List<String> names = new ArrayList<>();
+                    for (SpreadsheetAnalysisResult.ResolvedStaff s : sheet.getMatched()) {
+                        if (s != null && s.isMatched() && s.getStaffName() != null) {
+                            names.add(s.getStaffName());
+                            addPendingTraveler(state, s.getStaffName());
+                        }
+                    }
+                    if (!names.isEmpty()) {
+                        facts.append("Travelers listed in the uploaded spreadsheet '").append(fn)
+                                .append("': ").append(String.join(", ", names)).append(". ");
+                    }
+                    if (!sheet.getUnmatched().isEmpty()) {
+                        reply.append(t(ko,
+                                "From " + fn + ", I couldn't match: " + String.join(", ", sheet.getUnmatched()) + ". ",
+                                fn + "에서 " + String.join(", ", sheet.getUnmatched()) + "은(는) 명단에서 찾지 못했어요. "));
+                    }
+                    readFiles.add(fn);
+                } else if (lower.endsWith(".pdf")) {
+                    if (!agentPromptService.isModuleEnabled("pdf")) {
+                        reply.append(t(ko,
+                                "(The PDF module is turned off — '" + fn + "' was skipped.) ",
+                                "(PDF 모듈이 꺼져 있어 '" + fn + "'을(를) 건너뛰었어요.) "));
+                        continue;
+                    }
+                    TextAnalysisResult pdf =
+                            pdfAgentService.analyze(request.getCorpNo(), f.content(), fn, List.of());
+                    subAgents.add("PDF_AGENT");
+                    StringBuilder p = new StringBuilder();
+                    appendFact(p, "destination", pdf.getTripDestination());
+                    appendFact(p, "start date", pdf.getBusinessStartDate());
+                    appendFact(p, "end date", pdf.getBusinessEndDate());
+                    appendFact(p, "title", pdf.getTitle());
+                    appendFact(p, "purpose/content", pdf.getContent() != null ? pdf.getContent() : pdf.getPurpose());
+                    if (pdf.getTravelers() != null) {
+                        List<String> names = new ArrayList<>();
+                        for (TextAnalysisResult.TravelerRoute route : pdf.getTravelers()) {
+                            if (route != null && route.getName() != null && !route.getName().isBlank()) {
+                                names.add(route.getName());
+                                addPendingTraveler(state, route.getName());
+                            }
+                        }
+                        if (!names.isEmpty()) {
+                            appendFact(p, "travelers", String.join(", ", names));
+                        }
+                    }
+                    if (p.length() > 0) {
+                        facts.append("From the uploaded document '").append(fn).append("': ")
+                                .append(p).append(". ");
+                    }
+                    readFiles.add(fn);
+                } else {
+                    reply.append(t(ko,
+                            "(I can't read '" + fn + "' — only Excel/CSV and PDF files are supported.) ",
+                            "('" + fn + "' 형식은 읽을 수 없어요 — 엑셀/CSV과 PDF만 지원해요.) "));
+                }
+            } catch (Exception e) {
+                log.warn("File extraction failed for '{}': {}", fn, e.getMessage());
+                reply.append(t(ko,
+                        "(I couldn't read '" + fn + "'.) ",
+                        "('" + fn + "'을(를) 읽지 못했어요.) "));
+            }
+        }
+        if (!readFiles.isEmpty()) {
+            reply.append(t(ko,
+                    "I've read " + String.join(", ", readFiles) + ". ",
+                    String.join(", ", readFiles) + " 파일을 읽었어요. "));
+        }
+        return facts.toString().trim();
+    }
+
+    private static void appendFact(StringBuilder sb, String label, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (sb.length() > 0) {
+            sb.append("; ");
+        }
+        sb.append(label).append(" = ").append(value.trim());
+    }
+
+    /** Queue a traveler NAME for the roster resolver (skips names already present/resolved). */
+    private void addPendingTraveler(ObjectNode state, String name) {
+        ArrayNode arr = state.withArray("travelers");
+        for (JsonNode n : arr) {
+            if (n.asText("").equalsIgnoreCase(name)) {
+                return;
+            }
+        }
+        arr.add(name);
+    }
+
+    /**
+     * Conversation language for this turn. The web chat prepends an explicit instruction to every
+     * message ("Respond in Korean only…" / "Respond in English only…"); without one, fall back to
+     * Hangul detection on the message itself.
+     */
+    private boolean koreanConversation(String message) {
+        if (message.contains("Respond in Korean only")) {
+            return true;
+        }
+        if (message.contains("Respond in English only")) {
+            return false;
+        }
+        return message.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+    }
+
+    /** Reply fragment in the conversation's language — never mix the two in one turn. */
+    private static String t(boolean ko, String en, String kr) {
+        return ko ? kr : en;
+    }
+
+    /**
+     * Required-field gaps for the draft. The retrieved BizPlay spec leaves the trip period
+     * optional, but a plan without dates makes no sense — treat the period as required so the
+     * agent keeps asking (and the save flow refuses) until the dates are set.
+     */
+    private List<String> requiredGaps(JsonNode document, ObjectNode state) {
+        List<String> missing = new ArrayList<>(
+                formValueWriterService.missingRequired(document, state.path("fields"), state));
+        if (!document.hasNonNull("bstrStartDate")) {
+            String label = "출장 기간";
+            for (JsonNode f : state.path("fields")) {
+                if ("BSTR_PERIOD".equals(f.path("type").asText())) {
+                    label = f.path("label").asText(label);
+                    break;
+                }
+            }
+            if (!missing.contains(label)) {
+                missing.add(label);
+            }
+        }
+        return missing;
+    }
+
     /** Sub-agent [C]: LLM field mapping + deterministic writes into the request-body document. */
     private void fillFields(ObjectNode document, ObjectNode state, String text,
-                            List<String> subAgents, StringBuilder reply) {
+                            List<String> subAgents, StringBuilder reply, boolean ko) {
         JsonNode mapped = fieldMapperAgentService.mapFields(text, state.path("fields"));
         subAgents.add("FIELD_MAPPER_AGENT");
         List<String> applied = new ArrayList<>(
@@ -360,7 +706,10 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         applied.addAll(ensurePeriodFallback(document, state, text));
         state.remove("staged"); // consumed
         if (!applied.isEmpty()) {
-            reply.append("Captured: ").append(String.join("; ", applied)).append(". ");
+            // The UI shows every captured value in the plan summary — the reply just talks.
+            reply.append(t(ko,
+                    "I've filled in the details you gave me. ",
+                    "말씀해 주신 내용을 계획에 반영했어요. "));
         }
     }
 
@@ -444,7 +793,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      */
     private List<TripPlanAgentResponse.PendingChoice> resolveTravelers(BizplayPlanAgentRequest request,
                                                                        ObjectNode state, String token,
-                                                                       StringBuilder reply, List<String> subAgents) {
+                                                                       StringBuilder reply, List<String> subAgents,
+                                                                       boolean ko) {
         List<String> pending = new ArrayList<>();
         for (JsonNode n : state.path("travelers")) {
             String name = n.asText("");
@@ -459,7 +809,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 ? request.getCorporationId()
                 : corporationIdFromToken(token);
         if (corporationId == null) {
-            reply.append("(Staff lookup skipped: corporationId unknown.) ");
+            reply.append(t(ko,
+                    "(I couldn't reach the staff directory just now, so traveller names are unverified.) ",
+                    "(직원 명부를 조회할 수 없어 출장자 이름을 확인하지 못했어요.) "));
             return List.of();
         }
         JsonNode roster = bizplayGatewayService.getCorporationUsers(corporationId, token);
@@ -467,15 +819,19 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         subAgents.add("TRAVELER_RESOLVER");
 
         List<TripPlanAgentResponse.PendingChoice> chips = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();   // batched into ONE sentence, not one each
         for (TravelerResolverService.Resolution r : resolutions) {
             if (r.matched() != null) {
                 // Keep the ROSTER name in state (a romanized/partial input like "Kim Doha" would
                 // never match the roster again downstream — e.g. in the manual WYSIWYG save).
                 applyTravelerPick(state, r.matched().userName(), r.matched().corporationUserId(),
-                        r.input(), new StringBuilder());
+                        r.input(), new StringBuilder(), ko);
                 if (!r.input().equals(r.matched().userName())) {
-                    reply.append("Matched traveler '").append(r.input()).append("' to ")
-                            .append(r.matched().userName()).append(". ");
+                    reply.append(t(ko,
+                            "'" + r.input() + "' looks like " + r.matched().userName()
+                                    + " — I've added them to the trip. ",
+                            "'" + r.input() + "'은(는) " + r.matched().userName()
+                                    + " 님으로 확인해서 출장자에 추가했어요. "));
                 }
             } else if (r.candidates() != null && !r.candidates().isEmpty()) {
                 List<TripPlanAgentResponse.Option> options = new ArrayList<>();
@@ -489,16 +845,29 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 }
                 chips.add(TripPlanAgentResponse.PendingChoice.builder()
                         .kind("TRAVELER").name(r.input()).options(options).build());
-                reply.append("Multiple staff match '").append(r.input()).append("' — please pick. ");
+                reply.append(t(ko,
+                        "A few people match '" + r.input() + "' — could you pick the right one below? ",
+                        "'" + r.input() + "'에 해당하는 분이 여러 명이에요 — 아래에서 맞는 분을 골라 주시겠어요? "));
             } else {
-                reply.append("'").append(r.input()).append("' was not found in the staff roster. ");
+                notFound.add(r.input());
             }
+        }
+        if (notFound.size() == 1) {
+            reply.append(t(ko,
+                    "I couldn't find '" + notFound.get(0) + "' in the staff list — could you double-check the name? ",
+                    "'" + notFound.get(0) + "' 님을 직원 명단에서 찾지 못했어요 — 이름을 다시 확인해 주시겠어요? "));
+        } else if (!notFound.isEmpty()) {
+            String joined = String.join(", ", notFound);
+            reply.append(t(ko,
+                    "I couldn't find these people in the staff list: " + joined + " — could you check the names? ",
+                    "다음 분들을 직원 명단에서 찾지 못했어요: " + joined + " — 이름을 확인해 주시겠어요? "));
         }
         return chips;
     }
 
     /** Apply a traveler chip pick: swap the queried input for the chosen person and record the id. */
-    private void applyTravelerPick(ObjectNode state, String userName, long id, String input, StringBuilder reply) {
+    private void applyTravelerPick(ObjectNode state, String userName, long id, String input,
+                                   StringBuilder reply, boolean ko) {
         ArrayNode travelers = state.withArray("travelers");
         for (int i = travelers.size() - 1; i >= 0; i--) {
             if (travelers.get(i).asText("").equalsIgnoreCase(input)) {
@@ -519,7 +888,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         resolved.remove(input);
         resolved.put(userName, id);
         addTravelerId(state, id);
-        reply.append("Added ").append(userName).append(" as traveler. ");
+        reply.append(t(ko,
+                "Done — " + userName + " is on the traveller list. ",
+                "네 — " + userName + " 님을 출장자 명단에 추가했어요. "));
     }
 
     private void addTravelerId(ObjectNode state, long id) {
@@ -537,7 +908,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * is DOMESTIC (name contains 국내) and the destination changed since the last check.
      * VALID results are remembered silently; UNKNOWN appends a one-time, non-blocking warning.
      */
-    private void validateDestinationIfKorean(ObjectNode state, List<String> subAgents, StringBuilder reply) {
+    private void validateDestinationIfKorean(ObjectNode state, List<String> subAgents, StringBuilder reply,
+                                             boolean ko) {
         String destination = state.path("destination").asText(null);
         if (destination == null || destination.isBlank()) {
             return;
@@ -553,8 +925,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         subAgents.add("PLACE_VALIDATOR");
         state.put("validatedDestination", destination);
         if (result.status() == PlaceValidationService.Result.Status.UNKNOWN) {
-            reply.append("⚠ 출장지 '").append(destination)
-                    .append("'을(를) 국내 지역으로 확인하지 못했습니다 — 지역명을 확인해 주세요. ");
+            reply.append(t(ko,
+                    "One thing to double-check: I couldn't find '" + destination
+                            + "' among Korean regions — could you confirm the place name? ",
+                    "한 가지 확인해 주세요: '" + destination
+                            + "'을(를) 국내 지역에서 찾지 못했어요 — 지역명을 확인해 주시겠어요? "));
         }
     }
 

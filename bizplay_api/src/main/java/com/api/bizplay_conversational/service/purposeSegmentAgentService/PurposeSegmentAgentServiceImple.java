@@ -40,16 +40,20 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
     private final Map<String, ChatClient> chatClientRegistry;
     private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
+    private final com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService;
 
     @Value("${app.conversational.purpose-segment-agent.model:qwen3-14b}")
     private String modelName;
 
     public PurposeSegmentAgentServiceImple(Map<String, ChatClient> chatClientRegistry,
                                            LlmSettingsService llmSettingsService,
-                                           ObjectMapper objectMapper) {
+                                           ObjectMapper objectMapper,
+                                           com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService) {
         this.chatClientRegistry = chatClientRegistry;
         this.llmSettingsService = llmSettingsService;
         this.objectMapper = objectMapper;
+        this.agentPromptService = agentPromptService;
+        agentPromptService.registerDefault("purpose-segment", SYSTEM_PROMPT);
     }
 
     @Override
@@ -152,7 +156,7 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
                 cat.append(i + 1).append(". ").append(o.getLabel()).append('\n');
             }
             List<Message> prompt = List.of(
-                    new SystemMessage(SYSTEM_PROMPT),
+                    new SystemMessage(agentPromptService.resolve("purpose-segment", SYSTEM_PROMPT)),
                     new UserMessage(cat + "\nUser message:\n" + message));
             String raw = client.prompt().messages(prompt).call().content();
             JsonNode parsed = objectMapper.readTree(extractJson(stripThink(raw)));

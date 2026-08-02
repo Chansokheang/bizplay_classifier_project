@@ -65,6 +65,11 @@ const I18N = {
   "Travel Classification": "출장 구분", "Destination": "출장지", "Content": "내용", "Classification": "구분",
   "Region / City": "지역", "Country": "국가", "Institution / Venue": "교육기관",
   "Additional Information": "추가 정보", "Cost center": "코스트센터", "Enter the content": "내용을 입력하세요",
+  "Chat": "채팅", "Trip plan form": "출장 계획 양식", "Create Plan — Chat": "채팅으로 계획 작성",
+  "Where is your business trip taking you?": "이번 출장은 어디로 가시나요?",
+  "Describe it in your own words — I will draft the whole plan for you, from the trip form and dates to travellers and attachments.":
+    "자유롭게 설명해 주세요 — 출장 양식과 일정부터 출장자와 첨부까지 계획 전체를 대신 작성해 드립니다.",
+  "Or pick the form type yourself": "직접 양식 유형을 선택할게요",
   "Project code": "과제코드", "Education type": "교육유형", "Remarks": "비고", "Duration": "기간 구분", "One-way / Round": "편도/왕복",
   "Select a purpose…": "출장 목적 선택…", "Select a purpose first…": "출장 목적을 먼저 선택하세요…", "Select…": "선택…",
   "e.g. Busan": "예: 부산", "Give the trip a name": "출장 이름을 입력하세요",
@@ -392,9 +397,8 @@ function llmFormReset() {
   $("llmAuthScheme").value = "bearer";
   $("llmCompletionsPath").value = "/chat/completions";
   $("llmEnabled").checked = true;
-  $("llmApiKey").placeholder = "Paste the API key";
+  $("llmApiKey").placeholder = "Leave blank for open endpoints (no auth)";
   $("llmKeyHint").textContent = "";
-  $("llmKeyReq").classList.remove("hidden");
   $("llmDeleteBtn").classList.add("hidden");
   $("llmSaveBtn").textContent = "Save model";
   $("llmMsg").textContent = "";
@@ -424,8 +428,7 @@ function llmFormLoad(name) {
   // On edit the key is write-only: blank means "keep existing".
   $("llmApiKey").value = "";
   $("llmApiKey").placeholder = "•••• leave blank to keep existing key";
-  $("llmKeyHint").textContent = m.apiKeyMasked ? `Stored key: ${m.apiKeyMasked}` : "No key stored.";
-  $("llmKeyReq").classList.add("hidden");
+  $("llmKeyHint").textContent = m.apiKeyMasked ? `Stored key: ${m.apiKeyMasked}` : "No key stored (open endpoint).";
   $("llmDeleteBtn").classList.toggle("hidden", readonly);
   $("llmSaveBtn").textContent = "Update model";
   $("llmMsg").textContent = "";
@@ -458,7 +461,7 @@ async function llmSave() {
   if (!name) { $("llmMsg").textContent = "Name is required."; return; }
   if (!body.baseUrl) { $("llmMsg").textContent = "Base URL is required."; return; }
   if (!body.model) { $("llmMsg").textContent = "Model id is required."; return; }
-  if (!llmEditing && !body.apiKey) { $("llmMsg").textContent = "An API key is required to add a model."; return; }
+  // API key is optional — open endpoints (no auth) are registered without one.
 
   const btn = $("llmSaveBtn");
   btn.disabled = true; btn.textContent = llmEditing ? "Updating…" : "Saving…";
@@ -513,17 +516,17 @@ async function llmDelete() {
   }
 }
 
+/* LLM model management: popup opened from the Settings page's "LLM models…" button. */
 function openLlm() { llmFormReset(); $("llmOverlay").classList.remove("hidden"); loadLlmSettings(); loadLlmModels(); }
 function closeLlm() { $("llmOverlay").classList.add("hidden"); }
 function refreshLlm() { loadLlmSettings(); loadLlmModels(); }
 
 function initLlm() {
-  $("openLlmBtn").addEventListener("click", openLlm);
+  $("llmManageBtn").addEventListener("click", openLlm);
   $("llmCloseBtn").addEventListener("click", closeLlm);
   $("llmCloseBtn2").addEventListener("click", closeLlm);
   $("llmOverlay").addEventListener("mousedown", (ev) => { if (ev.target === $("llmOverlay")) closeLlm(); });
   $("llmRefreshBtn").addEventListener("click", refreshLlm);
-  $("llmActiveSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
   $("llmNewBtn").addEventListener("click", llmFormReset);
   $("llmCancelBtn").addEventListener("click", () => { llmEditing ? llmFormLoad(llmEditing) : llmFormReset(); });
   $("llmSaveBtn").addEventListener("click", llmSave);
@@ -531,6 +534,389 @@ function initLlm() {
   $("llmList").addEventListener("click", (ev) => {
     const row = ev.target.closest("[data-llm]");
     if (row) llmFormLoad(row.getAttribute("data-llm"));
+  });
+}
+
+/* ================================================================
+ * Agent Settings page (admin): per-sub-agent cards with an on/off toggle
+ * and the DEFAULT prompt always visible; a Starter-conversation card
+ * (greeting + GPT-style conversation-starter rows); the Orchestrator
+ * model select. Everything is saved per corp and applies on the next turn.
+ * ================================================================ */
+const AG_CARDS = [
+  { name: "guardrail", api: "LLM only — no external data API", label: "Guardrail", fixed: true, promptable: true, llm: true,
+    desc: "Safety-classifies every message before any agent runs (SAFE / DATA_QUERY / DB_MUTATION / INJECTION)." },
+  { name: "purpose-segment", api: "LLM only (the purpose catalog itself comes from the BizPlay API via the orchestrator)", label: "Purpose · Segment", fixed: true, promptable: true, llm: true,
+    desc: "Maps the user's words to 출장 목적 and 출장 구분, loading the matching form." },
+  { name: "field-mapper", api: "LLM only", label: "Field Mapper", fixed: true, promptable: true, llm: true,
+    desc: "Maps free text (and extracted file facts) onto the loaded form's fields — every turn." },
+  { name: "form-builder", api: "BizPlay API — retrieves the corp's form/paper definitions (endpoint configurable in Integrations)", label: "Form Builder", fixed: true, promptable: false, llm: false,
+    desc: "Builds the save-body skeleton from the retrieved BizPlay form — structure is mirrored 1:1, never invented." },
+  { name: "form-follow-up", api: "LLM only", label: "Follow-up", promptable: true, llm: true,
+    desc: "Phrases ONE natural question asking for the fields still missing." },
+  { name: "traveler-resolver", api: "LLM only — the roster is fetched from the BizPlay API by the orchestrator, not by this agent", label: "Traveler Resolver", promptable: true, llm: true,
+    desc: "Resolves names, romanizations and department references against the staff roster." },
+  { name: "place-validator", api: "LLM first; Naver Geocode API as the fallback", label: "Place Validator", promptable: true, llm: true,
+    desc: "Checks that domestic destinations are real Korean places and normalizes them." },
+  { name: "database-lookup", api: "Local PostgreSQL (SELECT-only) — no external API", label: "DB Lookup (NL→SQL)", promptable: false, llm: true,
+    desc: "Answers read-only data questions (staff, departments, past plans) mid-conversation." },
+  { name: "spreadsheet", api: "Local file parsing + LLM", label: "Spreadsheet", promptable: false, llm: true,
+    desc: "Reads uploaded staff-list spreadsheets and queues the travelers." },
+  { name: "pdf", api: "Local file parsing + LLM", label: "PDF", promptable: false, llm: true,
+    desc: "Reads uploaded trip documents (bookings, itineraries) into destination, dates, title and content." },
+];
+let apData = [];
+let apModules = [];
+
+/* Full-page settings view: hides the tab content while open ("← To Chat" returns). */
+function openAp() {
+  $("apCorpPill").textContent = `corp ${CORP_NO}`;
+  document.body.classList.add("ap-open");
+  window.scrollTo(0, 0);
+  apLoad();
+  caLoad();
+}
+function closeAp() { document.body.classList.remove("ap-open"); }
+
+async function apLoad() {
+  $("apAgentDetail").innerHTML = `<div class="muted-pad"><span class="spin"></span>Loading…</div>`;
+  try {
+    const q = `?corpNo=${encodeURIComponent(CORP_NO)}`;
+    const [pRes, mRes] = await Promise.all([
+      fetch(`${AGENT_API}/agent-prompts${q}`),
+      fetch(`${AGENT_API}/agent-modules${q}`),
+    ]);
+    const pJson = await pRes.json();
+    const mJson = await mRes.json();
+    if (!pRes.ok) throw apiError(pJson, pRes);
+    if (!mRes.ok) throw apiError(mJson, mRes);
+    apData = pJson.data || pJson.payload || [];
+    apModules = mJson.data || mJson.payload || [];
+    renderStarterCard();
+    renderAgentCards();
+  } catch (e) {
+    $("apAgentDetail").innerHTML = `<div class="muted-pad">${esc(friendlyError(e.message))}</div>`;
+  }
+}
+
+/* ---- Starter conversation: greeting + GPT-style starter rows (✕ per row) ---- */
+function apStarterRowHtml(value) {
+  return `<div class="ap-starter-row"><input type="text" maxlength="160" value="${esc(value)}"
+      placeholder="e.g. Please create a business trip plan to Busan for next Tuesday." />
+      <button type="button" class="ap-row-x" title="Remove">✕</button></div>`;
+}
+function renderStarterCard() {
+  const msg = apData.find((p) => p.name === "starter-message") || {};
+  const sug = apData.find((p) => p.name === "starter-suggestions") || {};
+  $("apStarterMsg").value = msg.effectivePrompt || "";
+  const lines = (sug.effectivePrompt || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  $("apStarterRows").innerHTML = lines.map(apStarterRowHtml).join("") + apStarterRowHtml("");
+  $("apStarterMsgNote").textContent =
+    (msg.source === "CUSTOM" || sug.source === "CUSTOM") ? "Customized for this corp." : "";
+}
+function apStarterValues() {
+  return [...$("apStarterRows").querySelectorAll("input")]
+    .map((i) => i.value.trim()).filter(Boolean).slice(0, 6);
+}
+async function apStarterSave() {
+  const q = `?corpNo=${encodeURIComponent(CORP_NO)}`;
+  const greeting = $("apStarterMsg").value.trim();
+  const lines = apStarterValues();
+  try {
+    const calls = [];
+    calls.push(greeting
+      ? fetch(`${AGENT_API}/agent-prompts/starter-message${q}`, { method: "PUT",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: greeting }) })
+      : fetch(`${AGENT_API}/agent-prompts/starter-message${q}`, { method: "DELETE" }));
+    calls.push(lines.length
+      ? fetch(`${AGENT_API}/agent-prompts/starter-suggestions${q}`, { method: "PUT",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: lines.join("\n") }) })
+      : fetch(`${AGENT_API}/agent-prompts/starter-suggestions${q}`, { method: "DELETE" }));
+    const results = await Promise.all(calls);
+    for (const r of results) if (!r.ok) throw apiError(await r.json().catch(() => ({})), r);
+    toast("Starter conversation saved ✓", "ok");
+    starterMessage = null; starterSuggestions = null;   // chat hero refetches
+    apLoad();
+  } catch (e) {
+    $("apStarterMsgNote").textContent = friendlyError(e.message);
+  }
+}
+async function apStarterReset() {
+  const q = `?corpNo=${encodeURIComponent(CORP_NO)}`;
+  await Promise.all([
+    fetch(`${AGENT_API}/agent-prompts/starter-message${q}`, { method: "DELETE" }),
+    fetch(`${AGENT_API}/agent-prompts/starter-suggestions${q}`, { method: "DELETE" }),
+  ]);
+  toast("Starter conversation reset to defaults.", "ok");
+  starterMessage = null; starterSuggestions = null;
+  apLoad();
+}
+
+/* ---- Sub-agents master-detail: list on the right, selected agent's card on the left.
+ * ONE prompt editor per agent — prefilled with the effective prompt (custom if saved,
+ * else the default); Save overrides, Reset restores the default. ---- */
+let apSelectedAgent = "guardrail";
+
+function renderAgentList() {
+  const item = (c) => {
+    const p = apData.find((x) => x.name === c.name);
+    const m = apModules.find((x) => x.name === c.name);
+    const on = c.fixed || !m || m.enabled;
+    return `<button type="button" class="ap-md-item ${c.name === apSelectedAgent ? "active" : ""}" data-ag-pick="${esc(c.name)}">
+        <span class="ap-md-dot ${on ? "on" : ""}"></span>
+        <span class="ap-md-name">${esc(c.label)}</span>
+        ${p && p.source === "CUSTOM" ? `<span class="badge-src badge-db">CUSTOM</span>` : ""}
+        ${on ? "" : `<span class="badge-src badge-off">OFF</span>`}
+      </button>`;
+  };
+  const llm = AG_CARDS.filter((c) => c.llm);
+  const nonLlm = AG_CARDS.filter((c) => !c.llm);
+  $("apAgentList").innerHTML =
+    `<div class="ap-md-subtitle">LLM agents</div>` + llm.map(item).join("") +
+    `<div class="ap-md-subtitle">Non-LLM agents (deterministic)</div>` + nonLlm.map(item).join("");
+}
+
+function renderAgentDetail() {
+  const c = AG_CARDS.find((x) => x.name === apSelectedAgent) || AG_CARDS[0];
+  const p = apData.find((x) => x.name === c.name);
+  const m = apModules.find((x) => x.name === c.name);
+  const on = c.fixed || !m || m.enabled;
+  const effective = p ? (p.customPrompt || p.defaultPrompt || "") : "";
+  const head = `<div class="ag-head">
+      <span class="ag-title">${esc(c.label)}
+        <span class="badge-src ${c.llm ? "badge-config" : "badge-off"}">${c.llm ? "LLM" : "NON-LLM"}</span>
+        ${p && p.source === "CUSTOM" ? `<span class="badge-src badge-db">CUSTOM</span>` : ""}</span>
+      ${c.fixed
+        ? `<span class="ag-fixed" title="Core module — always on">Always on</span>`
+        : `<label class="ag-switch" title="Turn this sub-agent on/off for this corp">
+             <input type="checkbox" data-ag-toggle="${esc(c.name)}" ${on ? "checked" : ""} />
+             <span class="ag-slider"></span>
+           </label>`}
+    </div>`;
+  const body = c.promptable
+    ? `<label class="ag-lbl">Prompt <span class="hint-inline">(${p && p.source === "CUSTOM" ? "customized — Reset restores the default" : "built-in default — edit and Save to override"})</span></label>
+       <textarea data-ag-prompt="${esc(c.name)}" rows="12">${esc(effective)}</textarea>
+       <div class="ag-actions">
+         <button class="btn btn-danger btn-sm" data-ag-reset="${esc(c.name)}"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Reset to default</button>
+         <span class="spacer"></span>
+         <button class="btn btn-primary btn-sm" data-ag-save="${esc(c.name)}">Save prompt</button>
+       </div>`
+    : `<p class="ag-noprompt">Prompt not customizable — ${c.name === "form-builder"
+          ? "deterministic (mirrors the retrieved form)."
+          : c.name === "database-lookup" ? "its prompt is dynamic (embeds the live DB schema)." : "it has no own prompt."}</p>`;
+  const apiLine = c.api ? `<p class="ag-api"><span class="ag-lbl">External API</span> ${esc(c.api)}</p>` : "";
+  $("apAgentDetail").innerHTML = `${head}<p class="ag-desc">${esc(c.desc)}</p>${apiLine}${body}`;
+  $("apAgentDetail").classList.toggle("ag-off", !on);
+}
+
+function renderAgentCards() {   // kept as the single refresh entry point
+  renderAgentList();
+  renderAgentDetail();
+}
+
+async function apAgentSave(name) {
+  const ta = document.querySelector(`[data-ag-prompt="${name}"]`);
+  const prompt = (ta.value || "").trim();
+  const p = apData.find((x) => x.name === name);
+  if (!prompt) { toast("Write the prompt first — or use Reset to restore the default.", "err"); return; }
+  if (p && prompt === (p.defaultPrompt || "").trim() && p.source !== "CUSTOM") {
+    toast("Same as the default — nothing to save.", "");
+    return;
+  }
+  try {
+    const res = await fetch(`${AGENT_API}/agent-prompts/${encodeURIComponent(name)}?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, enabled: true }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast("Prompt saved ✓ — live on the next chat turn.", "ok");
+    apLoad();
+  } catch (e) {
+    toast(friendlyError(e.message), "err");
+  }
+}
+async function apAgentReset(name) {
+  try {
+    const res = await fetch(`${AGENT_API}/agent-prompts/${encodeURIComponent(name)}?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Reset failed.");
+    toast("Reset to the built-in default.", "ok");
+    apLoad();
+  } catch (e) {
+    toast(friendlyError(e.message), "err");
+  }
+}
+async function apModuleToggle(name, enabled, checkbox) {
+  try {
+    const res = await fetch(`${AGENT_API}/agent-modules/${encodeURIComponent(name)}?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast(`${name} ${enabled ? "enabled" : "disabled"} for this corp.`, "ok");
+    const m = apModules.find((x) => x.name === name);
+    if (m) m.enabled = enabled;
+    renderAgentCards();
+  } catch (e) {
+    toast(friendlyError(e.message), "err");
+    checkbox.checked = !enabled;   // revert
+  }
+}
+
+/* ---- Custom agents (Phase 1): builder card + list on the Settings page ---- */
+let caData = [];
+let caToolCatalog = {};
+let caSelected = null;   // null = building a new agent
+
+async function caLoad() {
+  try {
+    const q = `?corpNo=${encodeURIComponent(CORP_NO)}`;
+    const [aRes, tRes] = await Promise.all([
+      fetch(`${AGENT_API}/custom-agents${q}`),
+      fetch(`${AGENT_API}/custom-agents/tools`),
+    ]);
+    const aJson = await aRes.json();
+    const tJson = await tRes.json();
+    if (!aRes.ok) throw apiError(aJson, aRes);
+    caData = aJson.data || aJson.payload || [];
+    caToolCatalog = (tJson.data || tJson.payload) || {};
+    renderCaList();
+    caFill(caSelected ? caData.find((a) => a.name === caSelected) : null);
+  } catch (e) {
+    $("caMsg").textContent = friendlyError(e.message);
+  }
+}
+
+function renderCaList() {
+  $("caList").innerHTML = caData.length ? caData.map((a) => `
+    <button type="button" class="ap-md-item ${a.name === caSelected ? "active" : ""}" data-ca-pick="${esc(a.name)}">
+      <span class="ap-md-dot ${a.enabled ? "on" : ""}"></span>
+      <span class="ap-md-name">${esc(a.name)}</span>
+      ${a.enabled ? "" : `<span class="badge-src badge-off">OFF</span>`}
+    </button>`).join("")
+    : `<p class="card-note">No custom agents yet — build the first one on the left.</p>`;
+}
+
+function caFill(a) {
+  caSelected = a ? a.name : null;
+  $("caTitle").textContent = a ? a.name : "New custom agent";
+  $("caName").value = a ? a.name : "";
+  $("caName").disabled = !!a;                        // name is the key
+  $("caDesc").value = a ? (a.description || "") : "";
+  $("caPrompt").value = a ? (a.prompt || "") : "";
+  $("caEnabled").checked = a ? a.enabled !== false : true;
+  $("caTools").innerHTML = Object.entries(caToolCatalog).map(([key, desc]) => `
+    <label class="ca-tool"><input type="checkbox" value="${esc(key)}" ${a && (a.tools || []).includes(key) ? "checked" : ""} />
+      <span><strong>${esc(key)}</strong> — ${esc(desc)}</span></label>`).join("");
+  $("caDeleteBtn").classList.toggle("hidden", !a);
+  $("caMsg").textContent = "";
+  $("caTestOut").classList.add("hidden");
+  renderCaList();
+}
+
+async function caSave() {
+  const name = $("caName").value.trim();
+  if (!name) { $("caMsg").textContent = "Name is required."; return; }
+  const body = {
+    description: $("caDesc").value.trim(),
+    prompt: $("caPrompt").value.trim(),
+    tools: [...$("caTools").querySelectorAll("input:checked")].map((i) => i.value),
+    enabled: $("caEnabled").checked,
+  };
+  try {
+    const res = await fetch(`${AGENT_API}/custom-agents/${encodeURIComponent(name)}?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast(`Custom agent “${name}” saved ✓ — the chat routes matching messages to it.`, "ok");
+    caSelected = name;
+    caLoad();
+  } catch (e) {
+    $("caMsg").textContent = friendlyError(e.message);
+  }
+}
+
+async function caDelete() {
+  if (!caSelected) return;
+  try {
+    const res = await fetch(`${AGENT_API}/custom-agents/${encodeURIComponent(caSelected)}?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Delete failed.");
+    toast("Custom agent deleted.", "ok");
+    caSelected = null;
+    caLoad();
+  } catch (e) {
+    $("caMsg").textContent = friendlyError(e.message);
+  }
+}
+
+async function caTest() {
+  const msg = $("caTestInput").value.trim();
+  if (!caSelected) { $("caMsg").textContent = "Save the agent first, then test it."; return; }
+  if (!msg) return;
+  const out = $("caTestOut");
+  out.classList.remove("hidden");
+  out.innerHTML = `<span class="spin"></span> Running…`;
+  try {
+    const res = await fetch(`${AGENT_API}/custom-agents/${encodeURIComponent(caSelected)}/test?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: msg }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const d = json.data || json.payload || {};
+    out.innerHTML = `<div class="ca-test-reply">${esc(d.reply || "(no reply)")}</div>
+      ${d.toolsUsed && d.toolsUsed.length ? `<div class="ca-test-tools">tools used: ${d.toolsUsed.map(esc).join(", ")}</div>` : `<div class="ca-test-tools">no tools used</div>`}`;
+  } catch (e) {
+    out.innerHTML = `<div class="ca-test-reply">${esc(friendlyError(e.message))}</div>`;
+  }
+}
+
+function initCa() {
+  $("caNewBtn").addEventListener("click", () => caFill(null));
+  $("caSaveBtn").addEventListener("click", caSave);
+  $("caDeleteBtn").addEventListener("click", caDelete);
+  $("caTestBtn").addEventListener("click", caTest);
+  $("caTestInput").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); caTest(); } });
+  $("caList").addEventListener("click", (ev) => {
+    const pick = ev.target.closest("[data-ca-pick]");
+    if (pick) caFill(caData.find((a) => a.name === pick.getAttribute("data-ca-pick")));
+  });
+}
+
+
+function initAp() {
+  $("openApBtn").addEventListener("click", openAp);
+  $("apBackBtn").addEventListener("click", closeAp);
+  $("apStarterSaveBtn").addEventListener("click", apStarterSave);
+  $("apStarterResetBtn").addEventListener("click", apStarterReset);
+  // Starter rows: ✕ removes; typing in the last row grows a fresh empty one.
+  $("apStarterRows").addEventListener("click", (ev) => {
+    const x = ev.target.closest(".ap-row-x");
+    if (!x) return;
+    const rows = $("apStarterRows").querySelectorAll(".ap-starter-row");
+    if (rows.length > 1) x.closest(".ap-starter-row").remove();
+    else x.closest(".ap-starter-row").querySelector("input").value = "";
+  });
+  $("apStarterRows").addEventListener("input", (ev) => {
+    const rows = [...$("apStarterRows").querySelectorAll(".ap-starter-row input")];
+    if (rows.length && rows[rows.length - 1].value.trim() && rows.length < 6) {
+      $("apStarterRows").insertAdjacentHTML("beforeend", apStarterRowHtml(""));
+    }
+  });
+  $("apAgentList").addEventListener("click", (ev) => {
+    const pick = ev.target.closest("[data-ag-pick]");
+    if (pick) { apSelectedAgent = pick.getAttribute("data-ag-pick"); renderAgentCards(); }
+  });
+  $("apAgentDetail").addEventListener("click", (ev) => {
+    const save = ev.target.closest("[data-ag-save]");
+    if (save) { apAgentSave(save.getAttribute("data-ag-save")); return; }
+    const reset = ev.target.closest("[data-ag-reset]");
+    if (reset) apAgentReset(reset.getAttribute("data-ag-reset"));
+  });
+  $("apAgentDetail").addEventListener("change", (ev) => {
+    const t = ev.target.closest("[data-ag-toggle]");
+    if (t) apModuleToggle(t.getAttribute("data-ag-toggle"), t.checked, t);
   });
 }
 
@@ -588,23 +974,8 @@ const API_ORIGIN = localStorage.getItem("bizplay.apiOrigin") ??
     : "");
 const API = API_ORIGIN + "/api/v1/plans";
 
-/* Seed staff/departments (mirror src/test/data/seed_staff_department.sql for corp 1234567890).
- * In the traditional method these are picked manually from fixed master-data lists. */
-const STAFF = [
-  { name: "John Doe",      department: "Sales",           position: "Manager" },
-  { name: "Mike Ross",     department: "Sales",           position: "Staff" },
-  { name: "Rachel Zane",   department: "Sales",           position: "Associate" },
-  { name: "Jane Smith",    department: "Marketing",       position: "Specialist" },
-  { name: "Tom Hardy",     department: "Marketing",       position: "Lead" },
-  { name: "Alice Johnson", department: "Engineering",     position: "Senior Engineer" },
-  { name: "Bob Martin",    department: "Engineering",     position: "Engineer" },
-  { name: "Charlie Park",  department: "Engineering",     position: "Intern" },
-  { name: "David Kim",     department: "Finance",         position: "Analyst" },
-  { name: "Emma Wilson",   department: "Finance",         position: "Controller" },
-  { name: "Grace Lee",     department: "Human Resources", position: "HR Manager" },
-  { name: "Henry Cho",     department: "Human Resources", position: "Recruiter" },
-];
-const DEPARTMENTS = [...new Set(STAFF.map((s) => s.department))];
+/* Staff and departments come ONLY from the lookup APIs (/api/v1/staff,
+ * /api/v1/departments) — there is no local seed roster. */
 const LOCATIONS = [
   "에이치비솔루션 본사", "에이치비솔루션 인천지사", "에이치비솔루션 구미지사",
   "Seoul", "Busan", "Incheon", "Gumi", "Daegu", "Daejeon", "Gwangju",
@@ -685,6 +1056,8 @@ const TRIP_TYPES = {
  * ================================================================ */
 const BZ_API_BASE = () => API_ORIGIN + "/api/v1/agent-conversations/bizplay";
 let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId") || "30447";
+/* The signed-in demo user — "I"/"me" in chat defaults to this person. */
+let CURRENT_USER_NAME = localStorage.getItem("bizplay.userName") || "김도하";
 let bzCatalog = null;        // { purposeName: { purposeId, segments: [{segmentId, segmentName, label}] } }
 const bzFormCache = {};      // "purposeId:segmentId" -> form response (paperId, paperName, fields)
 let bzActiveCfg = null;      // extra-field cfg generated from the live form (extraFieldsSummary uses it)
@@ -766,9 +1139,12 @@ function bzWidgetHtml(f, a, uid) {
   const radios = (nm, attr, opts, checkedIdx) => `<div class="bzw-radios">` + opts.map((v, i) =>
     `<label><input type="radio" name="${nm}" ${attr} value="${esc(v)}" ${i === checkedIdx ? "checked" : ""}/><span>${esc(v)}</span></label>`).join("") + `</div>`;
   if (BZ_YN_TYPES.includes(t)) {
-    // Real encoding: value "true"/"false"; PARTNER_SUPPORT carries a sub-choice in value2.
+    // Real encoding: value "true"/"false"; PARTNER_SUPPORT carries a sub-choice in value2,
+    // the partner company in a selections row, and the visit purpose in the "text" slot.
     const sub = t === "PARTNER_SUPPORT"
       ? `<div class="select-wrap"><select ${a}2="${key}"><option value="">협력사 구분…</option><option value="PARTNER_REGISTERED">등록업체</option></select></div>`
+        + `<input type="text" ${a}p="${key}" placeholder="협력사명을 입력하세요"/>`
+        + `<input type="text" ${a}t="${key}" placeholder="방문목적을 입력하세요"/>`
       : "";
     return radios(name, `${a}="${key}"`, ["true", "false"], 1).replace(/>true</, ">Yes<").replace(/>false</, ">No<") + sub;
   }
@@ -781,7 +1157,7 @@ function bzWidgetHtml(f, a, uid) {
           .replace(/>WITHIN_90_DAYS</, ">90일 이내<").replace(/>OVER_90_DAYS</, ">90일 초과<");
   }
   if (t === "BSTR_LINKED_LEAVE") {
-    return `<div class="bzw-group" ${a}-group="${key}">
+    return `<div class="bzw-group" ${a}-group="${key}" data-leave="1">
       <div class="bzw-row"><input type="date" data-part="시작"/><span class="bzw-tilde">~</span><input type="date" data-part="종료"/></div>
       <div class="bzw-row"><input type="text" data-part="체류지역" placeholder="체류지역을 입력하세요"/><input type="text" data-part="체류목적" data-primary placeholder="체류목적을 입력하세요"/></div>
     </div>`;
@@ -803,6 +1179,19 @@ function bzWidgetHtml(f, a, uid) {
     return `<div class="select-wrap"><select ${a}="${key}"><option value="">선택하세요.</option>${opts.map((o) => `<option>${o}</option>`).join("")}</select></div>`;
   }
   return null;
+}
+
+/* 출장 연계 휴가 composite -> structured {start,end,region,purpose} (writer contract:
+ * leave start = value, end = value2, region/purpose = selections row). */
+function bzReadLeaveObject(g) {
+  const map = { "시작": "start", "종료": "end", "체류지역": "region", "체류목적": "purpose" };
+  const out = {};
+  let hasReal = false;
+  g.querySelectorAll("[data-part]").forEach((el) => {
+    const v = (el.value || "").trim();
+    if (v) { out[map[el.getAttribute("data-part")] || el.getAttribute("data-part")] = v; hasReal = true; }
+  });
+  return hasReal ? out : null;
 }
 
 /* 교육정보 composite -> structured object (keys match the writer/mapper contract);
@@ -1299,6 +1688,11 @@ function formatPeriod(p) {
  * ---------------------------------------------------------------- */
 function openCreate() {
   // reset
+  prevCards = { info: null, details: null, extra: null, trav: null };
+  wizAsked = null;
+  wizExtrasAsked = new Set();
+  wizTravDone = false;
+  chatLang = LANG === "ko" ? "ko" : "en";
   travelers = [];
   travelerSeq = 0;
   $("tripPurpose").value = "";
@@ -1317,6 +1711,9 @@ function openCreate() {
   // Chat pane starts hidden ("Create manually"); openAgent() turns it on.
   $("agentThread").innerHTML = "";
   resetAgent();
+  chatOnly = false;
+  $("createBody").classList.remove("chat-only");
+  $("chatToggleBtn").classList.remove("hidden");
   setChatPane(false);
   $("createOverlay").classList.remove("hidden");
 }
@@ -1818,6 +2215,11 @@ function init() {
   // the rest of the form appears only once both are chosen.
   $("tripPurpose").addEventListener("change", () => applyTripType(false));
   $("tripClassification").addEventListener("change", () => { updateTripDetailVisibility(); bzOnClassificationChange(); });
+  // Chat mode: the live BizPlay form reveals the template-extra section asynchronously
+  // (after its fetch) — move it into the thread whenever it becomes visible.
+  new MutationObserver(() => {
+    if (chatOnly && !$("tripExtraSection").classList.contains("hidden")) ensureWizardSections();
+  }).observe($("tripExtraSection"), { attributes: true, attributeFilter: ["class"] });
   // Replace the hardcoded purpose/type catalog with the live one from the private BizPlay API.
   loadBizplayCatalog();
 
@@ -1929,6 +2331,7 @@ function init() {
 
   // --- Agent chat (lives inside the Create Trip Plan modal) ---
   $("openAgentBtn").addEventListener("click", openAgent);
+  $("openChatBtn").addEventListener("click", openChatMode);
   $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
@@ -2242,6 +2645,580 @@ function openAgentResumed(d) {
   setChatPane(true);
 }
 
+/* ================================================================
+ *  CHAT MODE — pure-chat plan creation. The (hidden) real form stays
+ *  the single data model; an editable form CARD is rendered inside the
+ *  thread after each agent turn, writing through to the form, so
+ *  validation, the route loop, and Create all work unchanged.
+ * ================================================================ */
+let chatOnly = false;
+
+/* In chat mode the REAL form sections are moved into the thread as answers land,
+ * so the chat shows exactly the same section UI as the Create Plan form —
+ * including whatever the live BizPlay form loader renders into them. The nodes
+ * (with their listeners intact) move back to the modal on the next open. */
+let prevCards = { info: null, details: null, extra: null, trav: null };   // in-thread preview cards
+let wizAsked = null;   // last locally-asked question: { step, el } — prevents repeats
+let wizTravDone = false;   // travellers confirmed (Done) — gates the section preview
+/* Mirror the user's language: Korean input → Korean questions, English → English. */
+let chatLang = (localStorage.getItem("bizplay.lang") || "en") === "ko" ? "ko" : "en";
+function T(en, ko) { return chatLang === "ko" ? ko : en; }
+
+/* Read-only preview card in the thread: renders once when its section completes,
+ * then updates in place as values change. No inputs — the chat is the editor. */
+function previewCard(key, title, icon, rowsHtml) {
+  let card = prevCards[key];
+  if (!card || !card.isConnected) {
+    const thread = $("agentThread");
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg-assistant chat-section";
+    wrap.innerHTML = `<div class="prev-card">
+      <div class="pc-head">${svgIcon(icon)} <span>${esc(title)}</span>${svgIcon("check-circle", "pc-check")}</div>
+      <div class="pc-body"></div>
+    </div>`;
+    thread.appendChild(wrap);
+    card = wrap.querySelector(".prev-card");
+    prevCards[key] = card;
+    if (MOTION) gsap.fromTo(wrap, { opacity: 0, y: 10 },
+      { opacity: 1, y: 0, duration: 0.35, ease: "power2.out", clearProps: "transform,opacity" });
+    thread.scrollTop = thread.scrollHeight;
+    card._prevHtml = null;
+  }
+  // A CHANGED section rides down with the newest message (an update far above the
+  // current conversation point would otherwise go unnoticed).
+  if (card._prevHtml !== rowsHtml) {
+    card.querySelector(".pc-body").innerHTML = rowsHtml;
+    if (card._prevHtml != null) {
+      const thread = $("agentThread");
+      thread.appendChild(card.closest(".msg"));
+      thread.scrollTop = thread.scrollHeight;
+    }
+    card._prevHtml = rowsHtml;
+  }
+}
+
+function pcRow(label, value) {
+  if (value == null || value === "") return "";
+  return `<div class="pc-row"><span class="pc-k">${esc(label)}</span><span class="pc-v">${esc(value)}</span></div>`;
+}
+
+function pcPerson(t) {
+  const init = (t.name || "?").trim().slice(0, 1).toUpperCase();
+  const sub = [t.department, t.position].filter(Boolean).join(" · ");
+  return `<div class="pc-person"><span class="pc-avatar">${esc(init)}</span>
+    <span class="pc-pname">${esc(t.name)}</span>${sub ? `<span class="pc-pdept">${esc(sub)}</span>` : ""}</div>`;
+}
+
+/* Ask a question only if the same one isn't already pending in the thread. */
+function askOnce(step, appendFn) {
+  const a = wizAsked;
+  if (a && a.step === step && a.el && a.el.isConnected &&
+      !a.el.classList.contains("choice-done") && !a.el.classList.contains("guide-done")) return;
+  wizAsked = { step, el: appendFn() };
+}
+
+/* Compact state summary sent ahead of free-text so the agent doesn't re-ask
+ * for fields the user already filled via the local wizard chips. */
+function formContextPrefix() {
+  const t = readTripFields();
+  const parts = [];
+  if (t.purpose) parts.push("purpose=" + t.purpose);
+  if (t.classification) parts.push("classification=" + t.classification);
+  if (t.start && t.end) parts.push("period=" + t.start + " to " + t.end);
+  if (t.destination) parts.push("destination=" + t.destination);
+  if (t.title) parts.push("title=" + t.title);
+  const names = travelers.filter((x) => x.name).map((x) => x.name).join(", ");
+  if (names) parts.push("travelers=" + names);
+  // Tell the agent what the form still needs, so its replies ask for the right
+  // things in natural language instead of re-asking what is already set.
+  const missing = [];
+  if (!t.purpose) missing.push("trip form/purpose");
+  if (t.purpose && !t.classification) missing.push("classification");
+  if (!t.start || !t.end) missing.push("travel dates");
+  if (!t.destination) missing.push("destination");
+  if (!t.title) missing.push("title");
+  if (!t.content) missing.push("content");
+  if (!travelers.some((x) => x.name)) missing.push("traveler names");
+  extraDefsFromDom().forEach((d) => { if (!d.value) missing.push(d.label); });
+  const lang = chatLang === "ko"
+    ? "Respond in Korean only, no English."
+    : "Respond in English only, no Korean.";
+  return "(Current user: " + CURRENT_USER_NAME + " — \"I\"/\"me\" refers to them. Form state: "
+    + (parts.join("; ") || "empty")
+    + (missing.length ? ". Still needed: " + missing.join(", ") : "")
+    + ". " + lang + ") ";
+}
+
+/* Preview a section only once it is COMPLETE — partially-filled sections stay
+ * out of the thread while the follow-up questions collect the rest. */
+/* "show all" / "preview all" / "전체 보여줘": re-present every section preview
+ * (and the approval line) at the current point of the conversation. */
+function showAllPreviews() {
+  const thread = $("agentThread");
+  appendMsg("assistant", T("Here's the whole plan so far:", "지금까지의 계획 전체예요:"));
+  ensureWizardSections();   // refresh values first
+  ["info", "details", "extra", "trav"].forEach((k) => {
+    const card = prevCards[k];
+    if (card && card.isConnected) thread.appendChild(card.closest(".msg"));
+  });
+  const appr = thread.querySelector(".chat-appr-card");
+  if (appr) thread.appendChild(appr.closest(".msg"));
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function ensureWizardSections() {
+  const t = readTripFields();
+  const cfg = TRIP_TYPES[t.purpose] || {};
+  if (t.purpose && t.classification) {
+    previewCard("info", T("Trip Information", "출장 정보"), "briefcase",
+      pcRow(T("Travel Purpose", "출장 목적"), t.purpose) +
+      pcRow(T("Classification", "출장 구분"), t.classification));
+  }
+  const detailsDone = t.start && t.end && t.destination && t.title && t.content;
+  if (detailsDone) {
+    const days = dayCount(t.start, t.end);
+    previewCard("details", T("Trip Details", "출장 상세"), "calendar",
+      pcRow(T("Period", "출장 기간"), `${t.start} → ${t.end} (${days}${T(days === 1 ? " day" : " days", "일")})`) +
+      pcRow(cfg.destLabel ? T(cfg.destLabel, cfg.destKo || cfg.destLabel) : T("Destination", "출장지"), t.destination) +
+      pcRow(T("Title", "제목"), t.title) +
+      pcRow(T("Content", "내용"), t.content));
+    const extras = extraDefsFromDom().filter((d) => d.value);
+    if (!$("tripExtraSection").classList.contains("hidden") && !nextUnaskedExtra() && extras.length) {
+      previewCard("extra", T("Additional Information", "추가 정보"), "cpu",
+        extras.map((d) => pcRow(d.label, d.value)).join(""));
+    }
+  }
+  // Travellers preview once confirmed (Done) — or when the agent resolved them.
+  if (travelers.some((x) => x.name) && (wizTravDone || !(wizAsked && wizAsked.step === "travelers"))) {
+    previewCard("trav", T("Travellers", "출장자"), "users",
+      travelers.filter((x) => x.name).map(pcPerson).join(""));
+  }
+}
+
+/* Final call-to-action once every section is fulfilled. */
+function appendCreateAction(quiet) {
+  // Chat mode: the form is complete — flow straight into the approval line
+  // (asked in the thread); saving happens on Done ✓ there. "quiet" skips the
+  // completion bubble when the backend reply already announced this step.
+  if (chatOnly) {
+    if (document.querySelector("#agentThread .wiz-create")) return;   // once per chat
+    const thread = $("agentThread");
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg-assistant wiz-create" + (quiet ? " hidden" : "");
+    wrap.innerHTML = quiet ? "" : `<div class="bubble">${esc(agent.live
+      ? T("That completes the form — everything is filled in above. Now let's set the approval line.",
+          "양식이 모두 완성됐어요 — 위 내용을 확인해 주세요. 이제 결재선을 정할게요.")
+      : T("That completes the form — everything is filled in above. Whenever you're ready, just tell me to save it.",
+          "양식이 모두 완성됐어요 — 위 내용을 확인하시고, 저장을 원하시면 \"저장해 줘\"라고 말씀해 주세요."))}</div>`;
+    thread.appendChild(wrap);
+    thread.scrollTop = thread.scrollHeight;
+    if (agent.live) bzChatApprovalFlow();
+    return;
+  }
+  if (document.querySelector("#agentThread .wiz-create:not(.guide-done)")) return;   // one live CTA at a time
+  document.querySelectorAll("#agentThread .wiz-create").forEach((n) => n.classList.add("guide-done"));
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="bubble">${esc(T("That completes the form — everything is filled in above. Give it a quick look and create the plan when you are happy.",
+    "양식이 모두 완성됐어요 — 위 내용을 확인하시고, 마음에 드시면 계획을 생성해 주세요."))}</div>
+    <div class="guide-widget wiz-create"><button type="button" class="btn btn-primary">${esc(T("Create this plan", "이 계획 생성"))}</button></div>`;
+  wrap.querySelector(".btn").addEventListener("click", completeCreate);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* "Chat" button — same engine as Create Plan, but everything happens in the thread:
+ * greeting → pick a form type → follow-up questions for each missing field → review card. */
+function openChatMode() {
+  openCreate();                                   // full reset (also clears chat-only)
+  chatOnly = true;
+  wizAsked = null;                                        // fresh question tracking
+  $("createBody").classList.add("chat-only");
+  $("chatToggleBtn").classList.add("hidden");
+  setChatPane(true);
+  $("createTitle").textContent = "Create Plan — Chat";
+  renderChatHero();                               // POC-style opener: hero + example prompts
+  loadStarterMessage();                           // server-customized opener, swapped in when fetched
+}
+
+/* Natural-language example prompts, POC-flow style, tuned to plan creation. */
+const CHAT_SUGGESTIONS = [
+  "Please create a business trip plan to Busan for next Tuesday.",
+  "I am going to the KSHRD Center in Phnom Penh from 2026-08-20 to 2026-08-21 to train IT instructors.",
+  "Prepare an overseas trip to the Osaka exhibition for me and my team lead.",
+];
+
+/* Server-customizable chat opener + example prompts (/agent-prompts).
+ * ALWAYS refetched for the CURRENT corp on chat open — the values are per-corp,
+ * so a cached copy goes stale the moment the corp number (or a save) changes. */
+let starterMessage = null;
+let starterSuggestions = null;   // array of suggestion strings, one hero card each
+async function loadStarterMessage() {
+  try {
+    const res = await fetch(`${AGENT_API}/agent-prompts?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json();
+    const list = (json && (json.data || json.payload)) || [];
+    const msg = list.find((p) => p.name === "starter-message");
+    const sug = list.find((p) => p.name === "starter-suggestions");
+    starterMessage = (msg && msg.effectivePrompt) || null;
+    starterSuggestions = (sug && sug.effectivePrompt)
+      ? sug.effectivePrompt.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).slice(0, 4)
+      : null;
+    // Hero already open: re-render it in place (opener + cards).
+    const thread = $("agentThread");
+    if (thread && thread.querySelector(".chat-hero") && thread.children.length === 1) renderChatHero();
+  } catch { /* keep the built-in defaults */ }
+}
+
+function renderChatHero() {
+  const thread = $("agentThread");
+  thread.innerHTML = `<div class="chat-hero" id="chatHero">
+    <span class="ch-ico">${svgIcon("plane", "ico-lg")}</span>
+    <h3 class="ch-title">Where is your business trip taking you?</h3>
+    <p class="ch-sub">${esc(starterMessage || "Describe it in your own words — I will draft the whole plan for you, from the trip form and dates to travellers and attachments.")}</p>
+    <div class="ch-cards">
+      ${(starterSuggestions || CHAT_SUGGESTIONS).map((s) => `<button type="button" class="ch-card">${svgIcon("chat")} <span>${esc(s)}</span></button>`).join("")}
+    </div>
+    <button type="button" class="ch-alt" id="chatHeroManual">Or pick the form type yourself</button>
+  </div>`;
+  thread.querySelectorAll(".ch-card").forEach((b) => b.addEventListener("click", () => {
+    $("agentInput").value = b.textContent.trim();
+    sendAgent();
+  }));
+  $("chatHeroManual").addEventListener("click", () => { dismissChatHero(); nextWizardStep(); });
+  if (MOTION) {
+    gsap.fromTo("#chatHero > *", { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.45, ease: "power3.out", stagger: 0.07, clearProps: "transform,opacity" });
+  }
+}
+
+function dismissChatHero() {
+  const hero = $("chatHero");
+  if (!hero) return;
+  // Removal must not depend on the tween finishing — rAF (and therefore GSAP)
+  // freezes in background tabs, which would leave the hero stuck above the chat.
+  if (MOTION) {
+    gsap.to(hero, { opacity: 0, y: -8, duration: 0.25, ease: "power2.in" });
+    setTimeout(() => hero.remove(), 300);
+  } else hero.remove();
+}
+
+/* ---- Guided wizard: ask for the first missing field, one question at a time ---- */
+
+/* Assistant bubble + locally-handled option chips (no LLM round-trip). */
+function guideChips(prompt, options, onPick) {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble"; bubble.textContent = prompt;
+  wrap.appendChild(bubble);
+  const row = document.createElement("div");
+  row.className = "choice-row";
+  options.forEach((opt) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "choice-chip" + (opt.quiet ? " choice-skip" : "");
+    b.textContent = opt.label;
+    b.addEventListener("click", () => {
+      if (row.classList.contains("choice-done")) return;
+      row.classList.add("choice-done"); b.classList.add("choice-picked");
+      appendMsg("user", opt.label, {});
+      onPick(opt);
+    });
+    row.appendChild(b);
+  });
+  wrap.appendChild(row);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  return row;
+}
+
+/* Assistant bubble + an inline answer widget (text or date-range). */
+function guideWidget(prompt, innerHtml, wire) {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="bubble">${esc(prompt)}</div><div class="guide-widget">${innerHtml}</div>`;
+  const w = wrap.querySelector(".guide-widget");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  wire(w, (shownText) => { w.classList.add("guide-done"); appendMsg("user", shownText, {}); });
+  return w;
+}
+
+/* Plain question — no inline input. The user answers in the composer and the
+ * agent's LLM maps the free-text answer (however ambiguous) onto the field. */
+function guideAsk(prompt) {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="bubble">${esc(prompt)}</div>`;
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  return wrap;
+}
+
+/* Inline range calendar: click the start day, then the end day (same day twice =
+ * a one-day trip) — the range highlights and confirms itself, no typing, no OK. */
+function guideDates(prompt, onSubmit) {
+  const now = new Date();
+  let view = new Date(now.getFullYear(), now.getMonth(), 1);
+  let selStart = null, selEnd = null;   // ISO "YYYY-MM-DD"
+  const WD = chatLang === "ko" ? ["일", "월", "화", "수", "목", "금", "토"]
+                               : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const iso = (y, m, d) => `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const todayIso = iso(now.getFullYear(), now.getMonth(), now.getDate());   // past days can't be picked
+
+  return guideWidget(prompt, `<div class="cal"></div>`, (w, done) => {
+    const cal = w.querySelector(".cal");
+    const hint = () => !selStart
+      ? T("Pick the start date.", "시작일을 선택해 주세요.")
+      : T("Now pick the end date — the same day works for a one-day trip.",
+          "이제 종료일을 선택해 주세요 — 당일 출장이면 같은 날을 한 번 더 누르세요.");
+    const render = () => {
+      const y = view.getFullYear(), m = view.getMonth();
+      const title = chatLang === "ko" ? `${y}년 ${m + 1}월`
+        : view.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      const lead = new Date(y, m, 1).getDay();
+      const days = new Date(y, m + 1, 0).getDate();
+      let cells = "";
+      for (let i = 0; i < lead; i++) cells += `<span class="cal-d cal-blank"></span>`;
+      for (let d = 1; d <= days; d++) {
+        const v = iso(y, m, d);
+        const dow = (lead + d - 1) % 7;
+        const past = v < todayIso;
+        const cls = ["cal-d"];
+        if (dow === 0) cls.push("cal-sun");
+        if (dow === 6) cls.push("cal-sat");
+        if (past) cls.push("cal-off");
+        if (v === selStart || v === selEnd) cls.push("cal-sel");
+        else if (selStart && selEnd && v > selStart && v < selEnd) cls.push("cal-range");
+        cells += `<button type="button" class="${cls.join(" ")}"${past ? " disabled" : ` data-iso="${v}"`}>${d}</button>`;
+      }
+      const atCurrentMonth = y === now.getFullYear() && m === now.getMonth();
+      cal.innerHTML = `
+        <div class="cal-head">
+          <button type="button" class="cal-nav" data-nav="-1" aria-label="Previous month"${atCurrentMonth ? " disabled" : ""}>‹</button>
+          <span class="cal-title">${title}</span>
+          <button type="button" class="cal-nav" data-nav="1" aria-label="Next month">›</button>
+        </div>
+        <div class="cal-grid cal-wd">${WD.map((n, i) =>
+          `<span class="${i === 0 ? "cal-sun" : i === 6 ? "cal-sat" : ""}">${n}</span>`).join("")}</div>
+        <div class="cal-grid">${cells}</div>
+        <div class="cal-hint">${esc(hint())}</div>`;
+      cal.querySelectorAll(".cal-nav").forEach((b) => b.addEventListener("click", () => {
+        view = new Date(y, m + Number(b.dataset.nav), 1);
+        render();
+      }));
+      cal.querySelectorAll(".cal-d[data-iso]").forEach((b) => b.addEventListener("click", () => {
+        const v = b.dataset.iso;
+        if (!selStart || selEnd || v < selStart) { selStart = v; selEnd = null; render(); return; }
+        selEnd = v;
+        render();
+        done(`${selStart} → ${selEnd}`);
+        onSubmit(selStart, selEnd);
+      }));
+    };
+    render();
+  });
+}
+
+/* Travellers: offer staff chips (from master data); "Done" moves on. */
+function askTravelers() {
+  const staff = liveStaffList();
+  const picked = new Set(travelers.filter((t) => t.name).map((t) => t.name));
+  const opts = staff.filter((s) => !picked.has(s.name)).slice(0, 8)
+    .map((s) => ({ label: `${s.name} (${s.department})`, value: s.name }));
+  if (picked.size) opts.push({ label: T("Done ✓", "완료 ✓"), quiet: true, done: true });
+  return guideChips(picked.size
+      ? T("Added! Is anyone else joining, or shall we move on?", "추가했어요! 더 가는 분이 있나요, 아니면 넘어갈까요?")
+      : T("Now, who is traveling? Pick teammates below — or just tell me their names in a message.",
+          "이제 누가 출장을 가나요? 아래에서 선택하시거나 이름을 말씀해 주세요."),
+    opts, (opt) => {
+      if (opt.done) { wizTravDone = true; ensureWizardSections(); nextWizardStep(); return; }
+      const s = staff.find((x) => x.name === opt.value);
+      const empty = travelers.find((t) => !t.name);   // fill the auto-added blank row first
+      if (empty) { empty.name = s.name; empty.department = s.department; empty.position = s.position; }
+      else travelers.push({ id: ++travelerSeq, name: s.name, department: s.department, position: s.position, origin: "", destination: "", returnPoint: "" });
+      renderTravelers();
+      ensureWizardSections();   // reveal/refresh the Travellers section card
+      askTravelers();
+    });
+}
+
+/* Template extras (코스트센터, HTML111, …) are optional but must be OFFERED before
+ * the flow closes — the core-fields check alone would skip them. */
+function wizardHasPendingExtra() {
+  const t = readTripFields();
+  return !!(t.purpose && t.classification && nextUnaskedExtra());
+}
+
+function wizardIncomplete() {
+  const t = readTripFields();
+  return !t.purpose || !t.classification || !t.start || !t.end || !t.destination
+    || !t.title || !t.content || !travelers.some((x) => x.name);
+}
+
+/* ---- Template-aware extra fields (코스트센터, 과제코드, HTML111, radios …) ----
+ * Read live from the DOM so both the static templates and the BizPlay live
+ * loader are covered; each empty extra is asked once, in natural language. */
+let wizExtrasAsked = new Set();
+
+function extraDefsFromDom() {
+  const seen = new Set(), defs = [];
+  $("tripExtraFields").querySelectorAll("[data-xf]").forEach((el) => {
+    const id = el.getAttribute("data-xf");
+    if (seen.has(id)) return;
+    seen.add(id);
+    const field = el.closest(".field");
+    const labEl = field && field.querySelector("label");
+    const label = (labEl ? labEl.textContent : id).replace(/\s+/g, " ").trim();
+    let type = "text", options = null, value = "";
+    if (el.tagName === "SELECT") { type = "select"; options = [...el.options].map((o) => o.value).filter(Boolean); value = el.value; }
+    else if (el.type === "radio") {
+      type = "radio";
+      const group = [...$("tripExtraFields").querySelectorAll(`[data-xf="${id}"]`)];
+      options = group.map((r) => r.value);
+      value = (group.find((r) => r.checked) || {}).value || "";
+    } else if (el.isContentEditable) { type = "rich"; value = rteText(el); }
+    else { value = (el.value || "").trim(); }
+    defs.push({ id, label, type, options, value, el });
+  });
+  return defs;
+}
+
+function nextUnaskedExtra() {
+  if ($("tripExtraSection").classList.contains("hidden")) return null;
+  return extraDefsFromDom().find((d) => !d.value && !wizExtrasAsked.has(d.id)) || null;
+}
+
+function askExtraField(d) {
+  const done = () => { wizExtrasAsked.add(d.id); ensureWizardSections(); nextWizardStep(); };
+  const formKo = (TRIP_TYPES[$("tripPurpose").value] || {}).ko || "this";
+  if (d.type === "select" || d.type === "radio") {
+    return guideChips(
+      T(`This form also has a “${d.label}” choice — which one applies to your trip?`,
+        `이 양식에는 “${d.label}” 항목도 있어요 — 어떤 것이 해당하나요?`),
+      d.options.map((o) => ({ label: o, value: o })).concat([{ label: T("Skip", "건너뛰기"), value: "", quiet: true }]),
+      (o) => {
+        if (o.value) {
+          if (d.type === "select") { d.el.value = o.value; d.el.dispatchEvent(new Event("change", { bubbles: true })); }
+          else {
+            const r = [...$("tripExtraFields").querySelectorAll(`[data-xf="${d.id}"]`)].find((x) => x.value === o.value);
+            if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+          }
+        }
+        done();
+      });
+  }
+  // Free-text extras: plain question + Skip chip — the typed answer arrives via
+  // the composer and the agent maps it onto the field.
+  return guideChips(
+    T(`The ${formKo} form also asks for “${d.label}” — what should I put there? Or Skip if it doesn't apply.`,
+      `${formKo} 양식의 “${d.label}”에는 무엇을 적을까요? 해당 없으면 건너뛰기를 눌러 주세요.`),
+    [{ label: T("Skip", "건너뛰기"), value: "", quiet: true }],
+    () => done());
+}
+
+/* Swap a wizard question's bubble for an LLM-composed one (same Follow-up
+ * sub-agent as the plan flow) — the hardcoded string is only the instant
+ * placeholder / offline fallback, so questions never feel predefined. */
+async function askNaturally(el, labels) {
+  const bubble = el && el.closest && el.closest(".msg")?.querySelector(".bubble");
+  if (!bubble) return;
+  try {
+    const res = await fetch(`${AGENT_API}/follow-up-question`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ corpNo: CORP_NO, missing: labels, korean: chatLang === "ko" }),
+    });
+    const json = await res.json();
+    const q = ((json.data || json.payload) || {}).question;
+    if (q && q.length > 5 && bubble.isConnected) bubble.textContent = q;
+  } catch { /* placeholder stays */ }
+}
+
+/* Ask for the first missing field, in conversational language that carries the
+ * context of what has already been chosen. */
+function nextWizardStep() {
+  if (!chatOnly) return;
+  const t = readTripFields();
+  const cfg = TRIP_TYPES[t.purpose] || {};
+  const purposeLabel = cfg.ko || t.purpose || "";
+  const pendingExtra = (t.purpose && t.classification) ? nextUnaskedExtra() : null;
+
+  if (!t.purpose) {
+    askOnce("purpose", () => guideChips(
+      T("To get us started — which trip form should we use? Overseas and domestic are the usual ones, and the rest are your company’s special templates.",
+        "먼저 어떤 출장 양식을 사용할까요? 해외출장과 국내출장이 일반적이고, 나머지는 회사 전용 템플릿이에요."),
+      Object.keys(TRIP_TYPES).map((k) => ({ label: k, value: k })),
+      (o) => {
+        const sel = $("tripPurpose");
+        sel.value = o.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));   // runs applyTripType incl. live BizPlay wiring
+        ensureWizardSections(); nextWizardStep();
+      }));
+  } else if (!t.classification) {
+    const clsSel = $("tripClassification");
+    const opts = [...clsSel.options].filter((o) => o.value)
+      .map((o) => ({ label: o.textContent, value: o.value }));
+    askOnce("classification", () => guideChips(
+      T(`A ${purposeLabel} trip — noted. Which classification fits this one best?`,
+        `${purposeLabel} 출장이군요. 어떤 구분이 가장 잘 맞나요?`),
+      opts.length ? opts : (cfg.classifications || []).map(([v, l]) => ({ label: l, value: v })),
+      (o) => {
+        clsSel.value = o.value;
+        clsSel.dispatchEvent(new Event("change", { bubbles: true })); // triggers the live form load too
+        ensureWizardSections(); nextWizardStep();
+      }));
+  } else if (!t.start || !t.end) {
+    askOnce("period", () => {
+      const el = guideDates(
+        T("When will you be traveling? Pick the start and end dates below.",
+          "언제 다녀오시나요? 아래에서 시작일과 종료일을 선택해 주세요."),
+        (s, e) => { $("startDate").value = s; $("endDate").value = e; ensureWizardSections(); nextWizardStep(); });
+      askNaturally(el, [T("trip period (start and end dates)", "출장 기간(시작일과 종료일)")]);
+      return el;
+    });
+  } else if (!t.destination) {
+    const q = /국가/.test(cfg.destKo || "") ? T("Which country are you headed to?", "어느 나라로 가시나요?")
+      : /지역/.test(cfg.destKo || "") ? T("Which city or region will you be visiting?", "어느 도시나 지역으로 가시나요?")
+      : T("Where will this trip take place?", "어디에서 진행되는 출장인가요?");
+    askOnce("destination", () => {
+      const opts = (cfg.options || []).slice(0, 6).map((o) => ({ label: o, value: o }));
+      const el = opts.length
+        ? guideChips(q, opts, (o) => { $("tripDestination").value = o.value; ensureWizardSections(); nextWizardStep(); })
+        : guideAsk(q);
+      askNaturally(el, [T("destination (city or region)", "출장지(도시/지역)")]);
+      return el;
+    });
+  } else if (!t.title) {
+    askOnce("title", () => {
+      const el = guideAsk(T("What would you like to call this plan?", "이 계획의 이름을 뭐라고 할까요?"));
+      askNaturally(el, [T("a short title for the plan", "계획 제목")]);
+      return el;
+    });
+  } else if (!t.content) {
+    askOnce("content", () => {
+      const el = guideAsk(T("And what is the trip for? A sentence or two is plenty.",
+        "이번 출장의 목적을 한두 문장으로 알려 주시겠어요?"));
+      askNaturally(el, [T("a short description of the trip's purpose", "출장 내용(목적 설명)")]);
+      return el;
+    });
+  } else if (pendingExtra) {
+    askOnce("extra:" + pendingExtra.id, () => askExtraField(pendingExtra));
+  } else if (!travelers.some((x) => x.name)) {
+    askOnce("travelers", () => {
+      const el = askTravelers();
+      if (!travelers.some((x) => x.name)) askNaturally(el, [T("who is going on the trip (travellers)", "출장자(누가 가는지)")]);
+      return el;
+    });
+  } else {
+    appendCreateAction();
+  }
+}
+
 /* ---- File upload ---- */
 async function onAgentFiles(ev) {
   const files = Array.from(ev.target.files || []);
@@ -2268,12 +3245,44 @@ function renderAgentFiles() {
 }
 
 /* ---- Chat turn ---- */
-async function sendAgent() {
+async function sendAgent(opts) {
   if (agent.busy) return;
   const message = $("agentInput").value.trim();
   const fileIds = agent.pending.map((f) => f.fileId);
-  if (!message && !fileIds.length) { toast("Type a message or attach a file.", "err"); return; }
+  // Nothing to send: no error — like any chat app, just put the cursor back.
+  if (!message && !fileIds.length) { $("agentInput").focus(); return; }
 
+  // Mirror the user's language — but only from text they actually typed. Chip
+  // clicks send composed text that may contain Korean template/staff names
+  // (e.g. "Trip type: 테스트(유성린)") and must not flip an English conversation.
+  const keepLang = !!(opts && opts.keepLang === true);
+  if (message && !keepLang) chatLang = /[가-힣]/.test(message) ? "ko" : "en";
+  if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
+
+  // "Show all" / "전체 보여줘": re-present every preview at the bottom — local, no LLM.
+  if (chatOnly && message && message.length <= 40
+      && (/(show|preview|see|view|summar)\w*\s.*(all|plan|everything|summary|form)|^(show|preview) all$/i.test(message)
+          || /(전체|계획|요약|다)\s*(를|을)?\s*(보여|볼래|미리보기)|미리보기/.test(message))
+      && Object.values(prevCards).some((c) => c && c.isConnected)) {
+    appendMsg("user", message);
+    $("agentInput").value = "";
+    showAllPreviews();
+    return;
+  }
+
+  // "Save it" / "저장해 줘" in chat runs the real save flow instead of a chat turn —
+  // saving is only ever user-initiated (there is no save button in chat mode).
+  const saveIntent = chatOnly && message && message.length <= 40 && /\bsave\b|\bsubmit\b|저장/i.test(message);
+  if (saveIntent
+      && !wizardIncomplete() && (!agent.live || agent.status === "READY_FOR_REVIEW")) {
+    appendMsg("user", message);
+    $("agentInput").value = "";
+    if (agent.live) {
+      if (chatOnly) bzChatApprovalFlow();   // in-thread approval line, no popup
+      else bzOpenApprovalFlow();
+    } else completeCreate();
+    return;
+  }
   // Optimistic user bubble (text + any file chips)
   appendMsg("user", message, { files: agent.pending.map((f) => f.filename) });
   $("agentInput").value = "";
@@ -2285,22 +3294,16 @@ async function sendAgent() {
   const typing = appendTyping();
   try {
     // A NEW plan session goes to the BizPlay form-driven agent when the live
-    // catalog is up (files still ride the PoC agent — no upload path yet in ③).
+    // catalog is up. Files ride along too — the live agent runs the same
+    // spreadsheet/PDF sub-agents as the PoC flow.
     if (!agent.sessionId && agent.mode === "plan") {
-      agent.live = !!bzCatalog && !fileIds.length;
-    }
-    if (agent.live && fileIds.length) {
-      typing.remove();
-      toast("Attachments aren't supported in the live BizPlay flow yet — remove the file or start a new chat.", "err");
-      agent.pending = sentFiles;
-      renderAgentFiles();
-      setAgentBusy(false);
-      return;
+      agent.live = !!bzCatalog;
     }
     let url, body;
     if (agent.live) {
       url = `${BZ_API_BASE()}/agents/plan`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+      if (fileIds.length) body.fileIds = fileIds;
       if (agent.sessionId) body.sessionId = agent.sessionId;
     } else {
       body = { corpNo: CORP_NO, message: message || null, fileIds };
@@ -2310,6 +3313,9 @@ async function sendAgent() {
       const endpoint = agent.mode === "report" ? "/agents/expense-report" : "/agents/trip-plan";
       url = `${AGENT_API}${endpoint}`;
     }
+    // Chat mode: prepend the local form state so the agent doesn't re-ask for
+    // fields the user already filled via wizard chips (shown bubble stays clean).
+    if (chatOnly && body.message) body.message = formContextPrefix() + body.message;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2323,15 +3329,54 @@ async function sendAgent() {
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;   // full last turn (missingFields etc.) for panels/tests
+    // Form first, reply second: the turn reads as USER -> updated previews ->
+    // the agent's message -> any follow-up chips. (A form-apply failure must not
+    // swallow the reply, hence the try.)
+    try {
+      if (agent.live) {
+        await applyBizplayTurnToForm(data);        // ③-shaped draft -> the designed form
+      } else {
+        applyDraftToForm(agent.draft);             // PoC draft -> the designed form
+      }
+    } catch (formErr) {
+      console.error("apply draft failed", formErr);
+    }
+    // A typed answer resolves whichever extra-field question was pending — the
+    // agent has captured the value; don't keep waiting for the Skip chip.
+    if (chatOnly && message && wizAsked && /^extra:/.test(wizAsked.step)) {
+      wizExtrasAsked.add(wizAsked.step.slice("extra:".length));
+      if (wizAsked.el && wizAsked.el.classList) wizAsked.el.classList.add("choice-done");
+    }
+    if (chatOnly) ensureWizardSections();          // completed sections preview first…
     appendMsg("assistant", data.reply || "(no reply)", {
-      intent: data.intent, subAgents: data.subAgents,
-      choiceGroups: data.pendingChoices,
+      // Chat mode reads as a plain conversation — internal intent/sub-agent
+      // badges (PURPOSE_SELECTION etc.) stay on the developer-facing form view.
+      intent: chatOnly ? null : data.intent,
+      subAgents: chatOnly ? null : data.subAgents,
+      // chat mode detaches the chips from the reply so they can land BELOW the preview
+      choiceGroups: chatOnly ? null : data.pendingChoices,
     });
+    const hasChoices = !!(data.pendingChoices && data.pendingChoices.length);
+    if (chatOnly) {
+      if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
+      else if (wizardIncomplete() || wizardHasPendingExtra()) nextWizardStep();
+      // Mid-approval correction: the section previews just updated — continue the
+      // approval conversation at the bottom instead of going quiet.
+      else if (agent.live && document.querySelector("#agentThread .chat-appr-card, #agentThread .appr-row")) bzChatAskApprover();
+      // Everything arrived in one turn: the backend reply already announced the
+      // approval-line step — start it without a duplicate completion bubble.
+      else appendCreateAction(agent.live && !!data.reply);
+    }
+    // The final CTA always comes last, and never while something is still being asked.
+    // Chat mode never auto-offers a save button — the user asks to save in chat.
     if (agent.live) {
-      await applyBizplayTurnToForm(data);          // ③-shaped draft -> the designed form
-      if (data.status === "READY_FOR_REVIEW") offerBizplayCreate();
-    } else {
-      applyDraftToForm(agent.draft);               // PoC draft -> the designed form
+      if (data.status === "READY_FOR_REVIEW" && !chatOnly && !hasChoices) offerBizplayCreate();
+      // The user just asked to save and this very turn made the draft ready
+      // (locally-picked values sync on the way in) — honor the ask right now
+      // instead of replying "save whenever you're ready".
+      if (chatOnly && saveIntent && data.status === "READY_FOR_REVIEW" && !hasChoices) bzChatApprovalFlow();
+    } else if (chatOnly && !hasChoices && !wizardIncomplete()) {
+      appendCreateAction();
     }
   } catch (e) {
     typing.remove();
@@ -2479,7 +3524,10 @@ function appendMsg(role, text, meta = {}) {
   if (meta.subAgents && meta.subAgents.length) {
     foot = `<div class="msg-meta">${meta.intent ? `<span class="chip-intent">${esc(meta.intent)}</span>` : ""}${meta.subAgents.map((a) => `<span class="chip-agent">${esc(prettyAgent(a))}</span>`).join("")}</div>`;
   }
-  wrap.innerHTML = `<div class="bubble ${meta.error ? "bubble-error" : ""}">${text ? esc(text) : "<i>(file only)</i>"}${metaHtml}</div>${foot}`;
+  // chips-only messages (no text) render without an empty bubble
+  const chipsOnly = !text && !metaHtml && meta.choiceGroups && meta.choiceGroups.length;
+  wrap.innerHTML = chipsOnly ? foot
+    : `<div class="bubble ${meta.error ? "bubble-error" : ""}">${text ? esc(text) : "<i>(file only)</i>"}${metaHtml}</div>${foot}`;
   // Interactive disambiguation chips (pendingChoices from the agent): one row per
   // ambiguous name; clicking a chip sends its sendText as the next chat turn.
   if (meta.choiceGroups && meta.choiceGroups.length) {
@@ -2502,10 +3550,14 @@ function appendMsg(role, text, meta = {}) {
           row.classList.add("choice-done");
           btn.classList.add("choice-picked");
           $("agentInput").value = sendText;
-          sendAgent();
+          sendAgent({ keepLang: true });   // chip text is composed, not the user's language
         });
         row.appendChild(btn);
       };
+      // "I"/"me"-style ambiguity defaults to the signed-in user, offered first.
+      if (g.name && /^(i|me|myself|나|저|본인)$/i.test(String(g.name).trim())) {
+        addChip(`${CURRENT_USER_NAME} · that’s me`, `The traveler is ${CURRENT_USER_NAME}.`);
+      }
       (g.options || []).forEach((opt) => {
         const isSkip = !opt.staffId && /^skip$/i.test(opt.label || "");
         addChip(opt.label || opt.sendText || "?", opt.sendText || opt.label || "", isSkip ? "choice-skip" : "");
@@ -2697,7 +3749,7 @@ function offerBizplayCreate() {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "choice-chip";
-  btn.textContent = "✓ Save to BizPlay (set approval order)";
+  btn.textContent = T("✓ Save to BizPlay (set approval order)", "✓ BizPlay에 저장 (결재선 지정)");
   btn.addEventListener("click", () => {
     if (agent.busy) return;
     bzOpenApprovalFlow();
@@ -2761,6 +3813,96 @@ async function bzOpenApprovalFlow(manual) {
   }
   bzRenderDeptFilter();
   bzRenderStaffRows();
+}
+
+/* ---- Chat-mode approval line: picked IN THE THREAD, no popup ----
+ * "save it" -> the assistant asks who approves; roster chips build the 결재선 in
+ * order (shown as a card); Done ✓ saves through the same bzSubmitManualCreate
+ * path the modal uses. */
+async function bzChatApprovalFlow() {
+  bzManualSave = !(agent.live && agent.sessionId);
+  bzApproval.lines = [];
+  if (!bzApproval.roster.length) {
+    try {
+      await bzLoadRoster();
+    } catch (e) {
+      appendMsg("assistant", "⚠ " + T("I couldn't load the staff list for the approval line: ",
+        "결재선을 위한 직원 명단을 불러오지 못했어요: ") + friendlyError(e.message), { error: true });
+      return;
+    }
+  }
+  bzChatAskApprover();
+}
+
+/* The 결재선 as a read-only thread card (same look as the section previews). */
+function bzChatApprovalCard() {
+  const thread = $("agentThread");
+  let card = thread.querySelector(".chat-appr-card");
+  if (!card) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg-assistant chat-section";
+    wrap.innerHTML = `<div class="prev-card chat-appr-card">
+        <div class="pc-head"><span class="b-ico">${svgIcon("shield")}</span> ${esc(T("Approval line", "결재선"))}</div>
+        <div class="pc-body"></div></div>`;
+    thread.appendChild(wrap);
+    card = wrap.querySelector(".chat-appr-card");
+  }
+  card.querySelector(".pc-body").innerHTML = bzApproval.lines.length
+    ? bzApproval.lines.map((l, i) => {
+        const kindKo = (BZ_LINE_KINDS.find((k) => k[0] === l.kind) || [])[1] || l.kind;
+        return `<div class="pc-row"><span class="pc-k">${i + 1}. ${esc(kindKo)}</span>
+            <span class="pc-v">${esc(l.name)} · ${esc(l.dept || "?")}${l.position ? " · " + esc(l.position) : ""}</span></div>`;
+      }).join("")
+    : `<div class="pc-row"><span class="pc-v">${esc(T("No approvers yet.", "아직 결재자가 없어요."))}</span></div>`;
+  thread.appendChild(card.closest(".msg"));   // the 결재선 rides with the newest message
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* English labels for the real ApprovalKindType values (Korean comes from BZ_LINE_KINDS). */
+const BZ_KIND_EN = { APPROVAL: "Approval", AGREE: "Agree", ACCEPT: "Receive", REFERENCE: "Reference" };
+
+function bzChatAskApprover() {
+  // Retire any earlier, unanswered approval chip rows — the question re-asks at
+  // the bottom after corrections, and two active rows would conflict.
+  document.querySelectorAll("#agentThread .choice-row.appr-row:not(.choice-done)")
+    .forEach((r) => r.classList.add("choice-done"));
+  const picked = new Set(bzApproval.lines.map((l) => l.id));
+  const opts = bzApproval.roster.filter((u) => !picked.has(u.id)).slice(0, 10)
+    .map((u) => ({ label: `${u.name} · ${u.dept || "?"}${u.position ? " · " + u.position : ""}`, value: String(u.id) }));
+  if (bzApproval.lines.length) opts.push({ label: T("Done ✓ — save now", "완료 ✓ — 저장하기"), value: "", done: true });
+  const row = guideChips(bzApproval.lines.length
+    ? T("Anyone else for the approval line? Or choose Done to save.", "결재선에 더 추가할 분이 있나요? 없으면 완료를 눌러 저장할게요.")
+    : T("Almost done — who should be in the approval line? Pick people in order.",
+        "거의 다 됐어요 — 결재선에 누가 들어가나요? 순서대로 선택해 주세요."),
+    opts, (opt) => {
+      if (opt.done) {
+        appendMsg("assistant", T("Saving to BizPlay…", "BizPlay에 저장하는 중…"));
+        bzSubmitManualCreate();
+        return;
+      }
+      const u = bzApproval.roster.find((x) => String(x.id) === opt.value);
+      if (u) bzChatAskKind(u); else bzChatAskApprover();
+    });
+  row.classList.add("appr-row");
+  return row;
+}
+
+/* Each person gets a role, exactly like the real UI's per-line dropdown:
+ * 결재 / 합의 / 수신 / 참조 (ApprovalKindType — the server rejects anything else). */
+function bzChatAskKind(u) {
+  const row = guideChips(
+    T(`What role should ${u.name} have in the approval line?`, `${u.name} 님은 어떤 유형인가요?`),
+    BZ_LINE_KINDS.map(([value, ko]) => ({
+      label: chatLang === "ko" ? ko : `${ko} · ${BZ_KIND_EN[value] || value}`,
+      value,
+    })),
+    (opt) => {
+      bzApproval.lines.push({ id: u.id, name: u.name, dept: u.dept, empNo: u.empNo, position: u.position, kind: opt.value });
+      bzChatApprovalCard();
+      bzChatAskApprover();
+    });
+  row.classList.add("appr-row");
+  return row;
 }
 
 /* Departments come from the same private-API roster (departments[] per user). */
@@ -2914,6 +4056,12 @@ async function bzSubmitManualCreate() {
     const v = bzReadEduObject(g);
     if (v) itemValues[k] = v; else delete itemValues[k];
   });
+  // 출장 연계 휴가 composites override with the STRUCTURED object (value/value2/selections).
+  document.querySelectorAll("[data-xf-group][data-leave], .trav-card [data-bztf-group][data-leave]").forEach((g) => {
+    const k = g.getAttribute("data-xf-group") || g.getAttribute("data-bztf-group");
+    const v = bzReadLeaveObject(g);
+    if (v) itemValues[k] = v; else delete itemValues[k];
+  });
   // Sub-choice widgets (value2: 협력사 구분, 보험 기간) merge into {choice, sub}.
   document.querySelectorAll(".trav-card [data-bztf2], #tripExtraFields [data-xf2]").forEach((el) => {
     const k = el.getAttribute("data-bztf2") || el.getAttribute("data-xf2");
@@ -2921,6 +4069,16 @@ async function bzSubmitManualCreate() {
     if (el.type === "radio") { if (el.checked) sub = el.value; }
     else sub = (el.value || "").trim() || null;
     if (sub && typeof itemValues[k] === "string") itemValues[k] = { choice: itemValues[k], sub };
+  });
+  // PARTNER_SUPPORT extras: partner company -> selections row, visit purpose -> "text" slot.
+  document.querySelectorAll(".trav-card [data-bztfp], #tripExtraFields [data-xfp], .trav-card [data-bztft], #tripExtraFields [data-xft]").forEach((el) => {
+    const isPartner = el.hasAttribute("data-bztfp") || el.hasAttribute("data-xfp");
+    const k = el.getAttribute("data-bztfp") || el.getAttribute("data-xfp")
+      || el.getAttribute("data-bztft") || el.getAttribute("data-xft");
+    const v = (el.value || "").trim();
+    if (!v || !itemValues[k]) return;   // details only ride along with a Y/N choice
+    if (typeof itemValues[k] === "string") itemValues[k] = { choice: itemValues[k] };
+    itemValues[k][isPartner ? "partner" : "purpose"] = v;
   });
   const payload = {
     corpUserId: BZ_CORP_USER_ID,
@@ -2954,8 +4112,12 @@ async function bzSubmitManualCreate() {
     await bzMirrorLocalPlan();   // show it in the demo list right away
     closeCreate();               // done — the toast + list entry are the confirmation
   } catch (e) {
-    $("validationSummary").textContent = "Save failed: " + friendlyError(e.message);
-    toast("Save failed: " + friendlyError(e.message), "err");
+    const msg = "Save failed: " + friendlyError(e.message);
+    $("validationSummary").textContent = msg;
+    toast(msg, "err");
+    // Chat mode hides the footer where validationSummary lives — the failure
+    // must survive in the thread, not just in a 4-second toast.
+    if (chatOnly) appendMsg("assistant", "⚠ " + msg, { error: true });
   } finally {
     btns.forEach((b) => (b.disabled = false));
   }
@@ -3142,6 +4304,7 @@ async function loadSession(id) {
  *  DRAFT EDIT — PUT /sessions/{id}/draft (manual checkpoint)
  * ================================================================ */
 function showTab(name) {
+  document.body.classList.remove("ap-open");          // leaving Agent Settings: tabs take over again
   if (!roleAllows(name)) name = ROLE_TABS[ROLE][0];   // role gate: never open a hidden tab
   currentTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.getAttribute("data-tab") === name));
@@ -4659,12 +5822,10 @@ let mdEditDeptId = null, mdEditStaffId = null; // rows currently in edit mode
 /* Live lists for the create-plan dropdowns; fall back to the seed constants
  * while the corp has no master data (or the API is unreachable). */
 function liveStaffList() {
-  return mdStaff.length
-    ? mdStaff.map((s) => ({ name: s.name, department: s.departmentName || "", position: s.position || "" }))
-    : STAFF;
+  return mdStaff.map((s) => ({ name: s.name, department: s.departmentName || "", position: s.position || "" }));
 }
 function liveDeptNames() {
-  return mdDepts.length ? mdDepts.map((d) => d.name) : DEPARTMENTS;
+  return mdDepts.map((d) => d.name);
 }
 
 async function fetchMasterData() {
@@ -4914,4 +6075,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); });

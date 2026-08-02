@@ -190,6 +190,34 @@ CREATE TABLE conversational_llm_model (
                                           updated_date TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Runtime-customized sub-agent prompts (and the chat "starter-message"), saved PER CORP.
+-- A row overrides the agent's compiled-in default for that corp; no row / disabled = default.
+-- Also carries module on/off rows ("module:<agent>") and integration settings ("setting:*").
+CREATE TABLE conversational_agent_prompt (
+                                          corp_no VARCHAR(50) NOT NULL,
+                                          name VARCHAR(100) NOT NULL,
+                                          prompt TEXT NOT NULL,
+                                          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                          created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          PRIMARY KEY (corp_no, name)
+);
+
+-- User-defined custom sub-agents (per corp): prompt + read-only tool allowlist; routed
+-- automatically in the plan-agent chat when a message matches the description.
+CREATE TABLE conversational_custom_agent (
+                                          corp_no VARCHAR(50) NOT NULL,
+                                          name VARCHAR(100) NOT NULL,
+                                          description TEXT NOT NULL,
+                                          prompt TEXT NOT NULL,
+                                          model VARCHAR(100),
+                                          tools VARCHAR(500) NOT NULL DEFAULT '',
+                                          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                          created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          PRIMARY KEY (corp_no, name)
+);
+
 CREATE TABLE conversational_trip_plan (
                                           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                           corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,

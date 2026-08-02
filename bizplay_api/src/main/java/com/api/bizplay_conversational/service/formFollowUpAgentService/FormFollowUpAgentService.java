@@ -9,5 +9,6 @@ import java.util.List;
  */
 public interface FormFollowUpAgentService {
 
-    String composeFollowUp(String paperName, List<String> missingLabels);
+    /** @param korean true = ask in Korean; false = ask in English (labels keep their own language). */
+    String composeFollowUp(String paperName, List<String> missingLabels, boolean korean);
 }

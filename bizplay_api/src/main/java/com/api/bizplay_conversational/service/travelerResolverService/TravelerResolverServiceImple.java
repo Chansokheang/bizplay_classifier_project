@@ -1,5 +1,6 @@
 package com.api.bizplay_conversational.service.travelerResolverService;
 
+import com.api.bizplay_conversational.service.agentPromptService.AgentPromptService;
 import com.api.bizplay_conversational.service.llmSettingsService.LlmSettingsService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,6 +28,7 @@ public class TravelerResolverServiceImple implements TravelerResolverService {
             Rules:
             - "match" only when exactly one roster entry is clearly the same person.
             - Several plausible entries -> match=null and list them in "candidates".
+            - A department or team reference -> match=null, all its members in "candidates".
             - Nobody plausible -> match=null, candidates=[].
             - Numbers must come from the roster list. Never invent people.
             /no_think
@@ -35,16 +37,20 @@ public class TravelerResolverServiceImple implements TravelerResolverService {
     private final Map<String, ChatClient> chatClientRegistry;
     private final LlmSettingsService llmSettingsService;
     private final ObjectMapper objectMapper;
+    private final AgentPromptService agentPromptService;
 
     @Value("${app.conversational.traveler-resolver-agent.model:qwen3-14b}")
     private String modelName;
 
     public TravelerResolverServiceImple(Map<String, ChatClient> chatClientRegistry,
                                         LlmSettingsService llmSettingsService,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        AgentPromptService agentPromptService) {
         this.chatClientRegistry = chatClientRegistry;
         this.llmSettingsService = llmSettingsService;
         this.objectMapper = objectMapper;
+        this.agentPromptService = agentPromptService;
+        agentPromptService.registerDefault("traveler-resolver", SYSTEM_PROMPT);
     }
 
     @Override
@@ -61,6 +67,17 @@ public class TravelerResolverServiceImple implements TravelerResolverService {
     }
 
     private Resolution resolveOne(String input, List<Candidate> all, JsonNode roster) {
+        // LLM-first: the model reads the roster and decides (handles exact names,
+        // romanization, nicknames and department references alike). The deterministic
+        // matcher below remains only as the fallback when the model is unreachable.
+        Resolution llm = fuzzyAssist(input, all);
+        if (llm != null) {
+            return llm;
+        }
+        return ruleFallback(input, all, roster);
+    }
+
+    private Resolution ruleFallback(String input, List<Candidate> all, JsonNode roster) {
         String needle = input.toLowerCase(Locale.ROOT);
 
         // 1. Deterministic: exact then contains on userName / englishUserName / employeeNumber.
@@ -104,11 +121,6 @@ public class TravelerResolverServiceImple implements TravelerResolverService {
             return new Resolution(input, null, dept, false);
         }
 
-        // 3. Cross-script fuzzy assist (romanized vs Korean) — LLM picks FROM the roster only.
-        Resolution fuzzy = fuzzyAssist(input, all);
-        if (fuzzy != null) {
-            return fuzzy;
-        }
         return new Resolution(input, null, null, true);
     }
 
@@ -126,7 +138,7 @@ public class TravelerResolverServiceImple implements TravelerResolverService {
                         .append(nullSafe(c.positionName())).append(")\n");
             }
             List<Message> prompt = List.of(
-                    new SystemMessage(SYSTEM_PROMPT),
+                    new SystemMessage(agentPromptService.resolve("traveler-resolver", SYSTEM_PROMPT)),
                     new UserMessage(rosterText + "\nPerson reference:\n" + input));
             String raw = client.prompt().messages(prompt).call().content();
             JsonNode parsed = objectMapper.readTree(extractJson(stripThink(raw)));

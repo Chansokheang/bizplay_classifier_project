@@ -23,6 +23,11 @@ public interface GuardrailAgentService {
             return new GuardrailResult(true, null, null);
         }
 
+        /** Allowed, but classified (e.g. DATA_QUERY) so the orchestrator can route the turn. */
+        public static GuardrailResult okWith(String category) {
+            return new GuardrailResult(true, category, null);
+        }
+
         public static GuardrailResult blocked(String category, String reply) {
             return new GuardrailResult(false, category, reply);
         }

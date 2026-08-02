@@ -25,4 +25,7 @@ public class BizplayProperties {
 
     /** Cache TTL (seconds) for purpose catalogs and paper definitions. */
     private long cacheTtlSeconds = 300;
+
+    /** Product/tenant segment of the draft-save path: /api/v2/approval/{productCode}/bstr/plan/draft. */
+    private String productCode = "seah";
 }

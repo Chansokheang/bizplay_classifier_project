@@ -33,6 +33,8 @@
     <symbol id="i-import" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
     <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
     <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2"/><path d="M15 2v2"/><path d="M9 20v2"/><path d="M15 20v2"/><path d="M20 9h2"/><path d="M20 14h2"/><path d="M2 9h2"/><path d="M2 14h2"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-plane" viewBox="0 0 24 24"><path d="M14.54 21.69a.5.5 0 0 0 .93-.03l6.5-19a.5.5 0 0 0-.63-.63l-19 6.5a.5.5 0 0 0-.03.93l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="m21.85 2.15-10.94 10.94"/></symbol>
   </svg>
 
   <!-- Global top loading bar (shown while fetching) -->
@@ -54,7 +56,7 @@
         </div>
       </div>
       <div class="top-right">
-        <button id="openLlmBtn" class="btn btn-quiet btn-sm admin-only hidden" title="Manage the LLM models your agents use"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> LLM Models</button>
+        <button id="openApBtn" class="btn btn-quiet btn-sm admin-only hidden" title="Model setup and agent setup"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> Setting</button>
         <div class="lang-toggle role-toggle" role="group" aria-label="Role">
           <button class="lang-btn role-btn active" data-role="traveler" type="button"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Traveler</button>
           <button class="lang-btn role-btn" data-role="admin" type="button"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg> Admin</button>
@@ -93,6 +95,97 @@
   </div>
 
   <main class="wrap page">
+    <!-- ============== AGENT SETTINGS (admin, full page) ============== -->
+    <section id="apPage" class="ap-page">
+      <div class="ap-page-head">
+        <h2><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg></span> Business trip agent settings</h2>
+        <div class="ap-head-actions">
+          <button class="btn btn-quiet" id="llmManageBtn" title="Add, edit or delete the registered LLM models"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> LLM models…</button>
+          <button class="btn btn-quiet" id="apBackBtn">← To Chat</button>
+        </div>
+      </div>
+
+      <div class="ap-card">
+        <h3 class="ap-card-title"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Starter conversation</h3>
+        <p class="ap-card-sub">What the chat shows before the first message — the greeting and the clickable conversation starters. Saved for this corporation only.</p>
+        <div class="field">
+          <label>Greeting</label>
+          <textarea id="apStarterMsg" rows="2" placeholder="Describe it in your own words — I will draft the whole plan for you…"></textarea>
+        </div>
+        <div class="field">
+          <label>Conversation starters</label>
+          <div id="apStarterRows" class="ap-starter-rows"></div>
+        </div>
+        <div class="llm-form-actions">
+          <button class="btn btn-danger btn-sm" id="apStarterResetBtn"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Reset to defaults</button>
+          <span class="spacer"></span>
+          <span id="apStarterMsgNote" class="val-summary"></span>
+          <button class="btn btn-primary btn-sm" id="apStarterSaveBtn">Save starter conversation</button>
+        </div>
+      </div>
+
+      <div class="ap-card ap-gate-card">
+        <div class="ap-gate">
+          <span class="ap-gate-ico"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg></span>
+          <span class="ap-gate-name">Guardrail Gate</span>
+          <span class="ap-gate-desc">Every message is safety-classified (SAFE &middot; DATA_QUERY &middot; DB_MUTATION &middot; INJECTION) before any agent runs; DB writes and prompt injection are always refused.</span>
+          <span class="ap-gate-state">ON<br /><small>(fixed)</small></span>
+        </div>
+      </div>
+
+      <h3 class="ap-section-title"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> Sub-agents <span class="tagpill" id="apCorpPill" title="Settings are saved per corporation"></span></h3>
+      <p class="ap-card-sub">Pick a sub-agent from the list — its card shows the prompt in one editor (default prefilled). Edit and Save to override; Reset restores the default.</p>
+      <div class="ap-md">
+        <div id="apAgentDetail" class="ap-card ap-md-detail"><div class="muted-pad"><span class="spin"></span>Loading…</div></div>
+        <div id="apAgentList" class="ap-md-list"></div>
+      </div>
+
+      <h3 class="ap-section-title"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Custom agents <span class="hint-inline">(build your own)</span></h3>
+      <p class="ap-card-sub">Create a new sub-agent for this corporation: describe when it should take over a chat message, give it a prompt, and pick which read-only tools it may use. The chat routes matching messages to it automatically.</p>
+      <div class="ap-md">
+        <div id="caDetail" class="ap-card ap-md-detail">
+          <div class="ag-head">
+            <span class="ag-title" id="caTitle">New custom agent</span>
+            <label class="ag-switch" title="Enabled — the router may pick this agent"><input type="checkbox" id="caEnabled" checked /><span class="ag-slider"></span></label>
+          </div>
+          <div class="field">
+            <label>Name <span class="req">*</span> <span class="hint-inline">(runs on the model selected in Chat)</span></label>
+            <input type="text" id="caName" maxlength="100" placeholder="e.g. per-diem-helper" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>When to use <span class="req">*</span> <span class="hint-inline">(the router matches messages against this)</span></label>
+            <input type="text" id="caDesc" maxlength="300" placeholder="e.g. questions about travel allowance, per-diem, expense rules" />
+          </div>
+          <div class="field">
+            <label>Prompt <span class="req">*</span></label>
+            <textarea id="caPrompt" rows="6" placeholder="You answer per-diem questions using the company's rule data. Always cite the rule."></textarea>
+          </div>
+          <div class="field">
+            <label>Tools <span class="hint-inline">(read-only allowlist)</span></label>
+            <div id="caTools" class="ca-tools"></div>
+          </div>
+          <div class="llm-form-actions">
+            <button class="btn btn-danger btn-sm hidden" id="caDeleteBtn"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button>
+            <span class="spacer"></span>
+            <span id="caMsg" class="val-summary"></span>
+            <button class="btn btn-primary btn-sm" id="caSaveBtn">Save agent</button>
+          </div>
+          <div class="ca-test">
+            <label class="ag-lbl">Test it</label>
+            <div class="gw-row">
+              <input type="text" id="caTestInput" maxlength="300" placeholder="Type a test message and run it against this agent" />
+              <button class="btn btn-quiet btn-sm" id="caTestBtn">Run test</button>
+            </div>
+            <div id="caTestOut" class="ca-test-out hidden"></div>
+          </div>
+        </div>
+        <div class="ap-md-list">
+          <button type="button" class="btn btn-primary btn-sm" id="caNewBtn">+ New agent</button>
+          <div id="caList" class="ap-md-list"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ===================== TAB 1: REQUEST PLAN ===================== -->
     <section id="tab-plan" class="tab-pane">
     <div class="list-head">
@@ -103,6 +196,7 @@
         <button id="openAgentBtn" class="btn btn-primary hidden" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Create with Agent</button>
         <button id="openResumeBtn" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Resume draft</button>
         <button id="openCreateBtn" class="btn btn-primary">+ Create Plan</button>
+        <button id="openChatBtn" class="btn btn-quiet" title="Build the plan in a pure chat — the form renders inside the conversation"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Chat</button>
         <button id="openMasterBtn" class="btn btn-quiet" title="Manage the departments and staff used in trip plans"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Staff &amp; Departments</button>
       </div>
     </div>
@@ -792,8 +886,9 @@
   </div>
 
   <!-- ======================= LLM MODELS (admin) ======================= -->
+  <!-- ======================= LLM MODELS (admin popup) ======================= -->
   <div id="llmOverlay" class="overlay hidden">
-    <div class="sheet sheet-wide" id="llmSheet">
+    <div class="sheet sheet-wide">
       <div class="sheet-head">
         <div>
           <h2>LLM Models</h2>
@@ -801,20 +896,7 @@
         </div>
         <button class="x-btn" id="llmCloseBtn" aria-label="Close">✕</button>
       </div>
-
       <div class="sheet-body">
-        <div class="llm-active-bar">
-          <div class="lab-main">
-            <span class="lab-title"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Active model for agents</span>
-            <span class="lab-sub">All conversational sub-agents use this model. “Auto” lets each agent fall back to its own configured default.</span>
-          </div>
-          <div class="select-wrap lab-select">
-            <select id="llmActiveSelect">
-              <option value="">Auto — each agent’s default</option>
-            </select>
-          </div>
-        </div>
-
         <div class="llm-grid">
           <!-- List -->
           <section class="block">
@@ -827,7 +909,7 @@
           </section>
 
           <!-- Form -->
-          <section class="block">
+          <section class="block" id="llmSheet">
             <h3 class="block-title" id="llmFormTitle"><span class="b-ico"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg></span> New model</h3>
             <p id="llmReadonlyNote" class="card-note hidden">This model comes from app config and can’t be edited here.</p>
             <div class="grid-2 form-rows">
@@ -848,8 +930,8 @@
                 <input type="text" id="llmBaseUrl" maxlength="255" placeholder="https://gateway.example.com" autocomplete="off" />
               </div>
               <div class="field span-2">
-                <label>API key <span class="req" id="llmKeyReq">*</span></label>
-                <input type="password" id="llmApiKey" maxlength="400" placeholder="Paste the API key" autocomplete="new-password" />
+                <label>API key <span class="hint-inline">(optional)</span></label>
+                <input type="password" id="llmApiKey" maxlength="400" placeholder="Leave blank for open endpoints (no auth)" autocomplete="new-password" />
                 <span class="hint" id="llmKeyHint"></span>
               </div>
               <div class="field">
@@ -890,7 +972,6 @@
           </section>
         </div>
       </div>
-
       <div class="sheet-foot">
         <span id="llmMsg" class="val-summary"></span>
         <div class="foot-actions">

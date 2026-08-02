@@ -29,6 +29,11 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             - EDUCATION_INFO (교육정보): {"구분":"사내교육"|"사외교육","교육과정":<string>,"교육클래스":<string>,
               "교육시작일":"YYYY-MM-DD","교육종료일":"YYYY-MM-DD","교육기관":<string>,"내용":<string>}
               — include only the keys the message actually gives
+            - BSTR_LINKED_LEAVE (출장 연계 휴가): {"start":"YYYY-MM-DD","end":"YYYY-MM-DD",
+              "region":<stay place or null>,"purpose":<leave purpose or null>} — the LEAVE dates,
+              not the trip dates; include only when the message mentions leave linked to the trip
+            - PARTNER_SUPPORT (협력사 지원): {"choice":"true"|"false","partner":<partner company
+              name or null>,"purpose":<visit purpose or null>}
             - a field listing "options": {"choice":"<EXACTLY one of the listed options>"}
             - BASIC_TRAVELER: {"names":["<person name>", ...]}
             - BASIC_TITLE: a short title string for the trip (compose one from the message if a clear
@@ -56,6 +61,7 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
     private final LlmSettingsService llmSettingsService;
     private final DateContextService dateContextService;
     private final ObjectMapper objectMapper;
+    private final com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService;
 
     @Value("${app.conversational.field-mapper-agent.model:qwen3-14b}")
     private String modelName;
@@ -63,11 +69,14 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
     public FieldMapperAgentServiceImple(Map<String, ChatClient> chatClientRegistry,
                                         LlmSettingsService llmSettingsService,
                                         DateContextService dateContextService,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService) {
         this.chatClientRegistry = chatClientRegistry;
         this.llmSettingsService = llmSettingsService;
         this.dateContextService = dateContextService;
         this.objectMapper = objectMapper;
+        this.agentPromptService = agentPromptService;
+        agentPromptService.registerDefault("field-mapper", SYSTEM_PROMPT);
     }
 
     @Override
@@ -93,7 +102,8 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
                 def.append('\n');
             }
             List<Message> prompt = List.of(
-                    new SystemMessage(SYSTEM_PROMPT + "\n" + dateContextService.buildContext()),
+                    new SystemMessage(agentPromptService.resolve("field-mapper", SYSTEM_PROMPT)
+                            + "\n" + dateContextService.buildContext()),
                     new UserMessage(def + "\nUser message:\n" + message));
             String raw = client.prompt().messages(prompt).call().content();
             log.info("Field mapper raw output: {}", raw);

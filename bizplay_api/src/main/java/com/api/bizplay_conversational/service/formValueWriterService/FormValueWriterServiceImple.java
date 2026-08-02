@@ -151,12 +151,28 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         }
         String itemType = field.path("type").asText("");
 
+        if ("BSTR_LINKED_LEAVE".equals(itemType)) {
+            return writeLinkedLeave(issued, value, label);
+        }
+
         if ("BSTR_PERIOD".equals(itemType) || value.has("start") || value.has("end")) {
             return writePeriod(document, state, issued, value, label);
         }
 
         if ("EDUCATION_INFO".equals(itemType)) {
             return writeEducationInfo(document, issued, value, label);
+        }
+
+        if ("BSTR_ROUTE".equals(itemType)) {
+            // Company storage spec: routes NEVER live in the issued item — they go to the
+            // document's top-level bstrRoutes[] (route row shape pending a real-UI capture).
+            // Hold the description in agent state so nothing the user said is lost.
+            String note = value.isObject() ? text(value.path("choice")) : text(value);
+            if (note == null) {
+                return null;
+            }
+            state.put("routeNote", note);
+            return label + " = " + note + " (경로는 bstrRoutes[]로 저장 예정)";
         }
 
         // Real-UI captures: 신청 toggles and Yes/No items store STRING booleans, and the
@@ -170,6 +186,12 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
                     || raw.contains("아니") || raw.equalsIgnoreCase("n") || raw.contains("미신청"));
             issued.put("value", yes ? "true" : "false");
             writeSubChoice(issued, value);
+            if ("DAILY_COST".equals(itemType)) {
+                writeDailyCostRows(document, issued, yes);
+            }
+            if ("PARTNER_SUPPORT".equals(itemType)) {
+                writePartnerDetails(issued, value);
+            }
             return label + " = " + (yes ? "true" : "false");
         }
         if ("OVERSEAS_INSURANCE".equals(itemType)) {
@@ -287,6 +309,145 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         }
     }
 
+    /**
+     * BSTR_LINKED_LEAVE — company storage spec (slide "복합 항목"): leave start = value,
+     * leave end = value2, stay region/purpose = a selections row. Accepts a structured
+     * object ({start,end,region,purpose}), our UI aggregate string
+     * ("시작: … / 종료: … / 체류지역: … / 체류목적: …"), or free text (→ purpose).
+     * The selections row mirrors the period picker family: region in selectionAreaInfo,
+     * purpose in selectionMemo (field mapping to be confirmed by a real-UI capture).
+     */
+    private String writeLinkedLeave(ObjectNode issued, JsonNode value, String label) {
+        java.util.Map<String, String> p = new java.util.HashMap<>();
+        if (value.isObject()) {
+            value.fields().forEachRemaining(e -> {
+                String v = text(e.getValue());
+                if (v != null) {
+                    p.put(e.getKey(), v);
+                }
+            });
+        } else {
+            String s = text(value);
+            if (s == null) {
+                return null;
+            }
+            for (String part : s.split("\\s*/\\s*")) {
+                int colon = part.indexOf(':');
+                if (colon > 0) {
+                    p.put(part.substring(0, colon).trim(), part.substring(colon + 1).trim());
+                }
+            }
+            if (p.isEmpty()) {
+                p.put("체류목적", s);
+            }
+        }
+        String start = firstOf(p, "시작", "start");
+        String end = firstOf(p, "종료", "end");
+        String region = firstOf(p, "체류지역", "region");
+        String purpose = firstOf(p, "체류목적", "purpose", "choice");
+        if (start == null && end == null && region == null && purpose == null) {
+            return null;
+        }
+        if (start != null) {
+            issued.put("value", start);
+        }
+        if (end != null) {
+            issued.put("value2", end);
+        }
+        if (region != null || purpose != null) {
+            ObjectNode sel = objectMapper.createObjectNode();
+            sel.putNull("selectionId");
+            sel.putNull("selectionName");
+            sel.putNull("selectionErpCode");
+            if (purpose != null) {
+                sel.put("selectionMemo", purpose);
+            } else {
+                sel.putNull("selectionMemo");
+            }
+            if (region != null) {
+                sel.put("selectionAreaInfo", "{\"name\":\"" + region.replace("\"", "\\\"") + "\"}");
+            } else {
+                sel.putNull("selectionAreaInfo");
+            }
+            ArrayNode selections = objectMapper.createArrayNode();
+            selections.add(sel);
+            issued.set("selections", selections);
+        }
+        List<String> parts = new ArrayList<>();
+        if (start != null || end != null) {
+            parts.add(orEmpty(start) + " ~ " + orEmpty(end));
+        }
+        if (region != null) {
+            parts.add(region);
+        }
+        if (purpose != null) {
+            parts.add(purpose);
+        }
+        return label + " = " + String.join(" · ", parts);
+    }
+
+    /**
+     * DAILY_COST — real-UI capture: applying for daily cost stores value "true" AND one
+     * selections row per trip day ({selectionName: yyyy-MM-dd, everything else null})
+     * for day-confirm items (item.requestWay = PAY_DAY_CONFIRM). Rows are rebuilt from
+     * the document's period; cleared when the user declines.
+     */
+    private void writeDailyCostRows(ObjectNode document, ObjectNode issued, boolean yes) {
+        if (!yes) {
+            issued.set("selections", objectMapper.createArrayNode());
+            return;
+        }
+        if (!"PAY_DAY_CONFIRM".equals(issued.path("item").path("requestWay").asText())) {
+            return;
+        }
+        String start = isoDate(document.path("bstrStartDate"));
+        String end = isoDate(document.path("bstrEndDate"));
+        if (start == null) {
+            return;
+        }
+        java.time.LocalDate from = java.time.LocalDate.parse(start);
+        java.time.LocalDate to = end != null ? java.time.LocalDate.parse(end) : from;
+        if (to.isBefore(from)) {
+            to = from;
+        }
+        ArrayNode rows = objectMapper.createArrayNode();
+        for (java.time.LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+            ObjectNode row = objectMapper.createObjectNode();
+            row.putNull("selectionId");
+            row.putNull("selectionErpCode");
+            row.put("selectionName", d.toString());
+            row.putNull("selectionMemo");
+            row.putNull("selectionAreaInfo");
+            rows.add(row);
+        }
+        issued.set("selections", rows);
+    }
+
+    /**
+     * PARTNER_SUPPORT — company storage spec: beyond value (Y/N) and value2 (partner
+     * type), the partner COMPANY is a selections row and the visit purpose rides the
+     * "text" slot (onChangeValue's 4th argument, serialized on the issued item).
+     */
+    private void writePartnerDetails(ObjectNode issued, JsonNode value) {
+        if (!value.isObject()) {
+            return;
+        }
+        String partner = text(value.path("partner"));
+        if (partner != null) {
+            ObjectNode sel = objectMapper.createObjectNode();
+            sel.putNull("selectionId");
+            sel.put("selectionName", partner);
+            sel.putNull("selectionErpCode");
+            ArrayNode selections = objectMapper.createArrayNode();
+            selections.add(sel);
+            issued.set("selections", selections);
+        }
+        String purpose = text(value.path("purpose"));
+        if (purpose != null) {
+            issued.put("text", purpose);
+        }
+    }
+
     private static String firstOf(java.util.Map<String, String> map, String... keys) {
         for (String key : keys) {
             String v = map.get(key);
@@ -320,10 +481,21 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             document.put("bstrEndDate", end + "T00:00:00.000Z");
         }
         writePeriodSelections(document, state, issued);
+        refreshDailyCostRows(document);
         String startText = isoDate(document.path("bstrStartDate"));
         String endText = isoDate(document.path("bstrEndDate"));
         return (startText == null && endText == null) ? null
                 : label + " = " + startText + " .. " + endText;
+    }
+
+    /** Period changed: day-confirm daily-cost rows follow the trip dates, so rebuild them. */
+    private void refreshDailyCostRows(ObjectNode document) {
+        for (JsonNode issued : document.path("issuedItems")) {
+            if ("DAILY_COST".equals(issued.path("item").path("itemType").asText())
+                    && "true".equals(issued.path("value").asText())) {
+                writeDailyCostRows(document, (ObjectNode) issued, true);
+            }
+        }
     }
 
     /** (Re)build the period item's selections from the document dates + state destination/memo. */
@@ -406,6 +578,11 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
                 if ("EDUCATION_INFO".equals(field.path("type").asText())
                         && document.path("bstrEdus").size() > 0) {
                     yield true;   // education values live in bstrEdus, not the issued item
+                }
+                if ("BSTR_ROUTE".equals(field.path("type").asText())) {
+                    // Routes live in bstrRoutes[] (never the issued item); until that array
+                    // is wired, a held route note also counts so required routes don't block.
+                    yield document.path("bstrRoutes").size() > 0 || notBlank(state.path("routeNote"));
                 }
                 JsonNode issued = findIssuedItemView(document, field.path("itemId").asLong());
                 yield issued != null
