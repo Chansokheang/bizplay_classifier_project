@@ -258,6 +258,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelers(travelerNames(state))
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
+                .origin(state.path("origin").asText(null))
                 .draftJson(saved.getDraftJson())
                 .createdDate(saved.getCreatedDate())
                 .updatedDate(saved.getUpdatedDate())
@@ -319,6 +320,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelers(travelerNames(state))
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
+                .origin(state.path("origin").asText(null))
                 .draftJson(saved.getDraftJson())
                 .createdDate(saved.getCreatedDate())
                 .updatedDate(saved.getUpdatedDate())
@@ -410,6 +412,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .subAgents(List.of("FORM_BUILDER", "BIZPLAY_GATEWAY"))
                 .reply(reply)
                 .destination(state.path("destination").asText(null))
+                .origin(state.path("origin").asText(null))
                 .draftJson(documents)
                 .build();
     }
@@ -514,6 +517,13 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         List<java.util.Map<String, Object>> rows = lookup.getRows() == null ? List.of() : lookup.getRows();
         if (rows.isEmpty()) {
             return t(ko, "I looked, but nothing matched that.", "조회해 봤지만 해당하는 결과가 없어요.");
+        }
+        // A single one-column row reads better as a sentence than as a labeled dump.
+        if (rows.size() == 1 && rows.get(0).size() == 1) {
+            Object only = rows.get(0).values().iterator().next();
+            return t(ko,
+                    "Here's what I found: " + (only == null ? "-" : only),
+                    "조회 결과는 \"" + (only == null ? "-" : only) + "\"예요.");
         }
         StringBuilder sb = new StringBuilder(t(ko,
                 "Here's what I found (" + rows.size() + " result" + (rows.size() == 1 ? "" : "s") + "):\n",
@@ -665,7 +675,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (message.contains("Respond in English only")) {
             return false;
         }
-        return message.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+        // Proportion, not presence: an English sentence quoting a Korean name (김도하)
+        // must still count as English.
+        long hangul = message.codePoints().filter(cp -> cp >= 0xAC00 && cp <= 0xD7A3).count();
+        long latin = message.codePoints().filter(Character::isAlphabetic).count() - hangul;
+        return hangul > 0 && hangul * 3 > latin;
     }
 
     /** Reply fragment in the conversation's language — never mix the two in one turn. */
@@ -904,31 +918,43 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     }
 
     /**
-     * Korea-only destination validation ("only apply in Korea"): runs when the chosen purpose
-     * is DOMESTIC (name contains 국내) and the destination changed since the last check.
-     * VALID results are remembered silently; UNKNOWN appends a one-time, non-blocking warning.
+     * Korea-only place validation ("only apply in Korea"): runs when the chosen purpose is
+     * DOMESTIC (name contains 국내) and a place changed since its last check. Covers BOTH the
+     * destination (출장지) and the origin (출발지) when the user gave one. VALID results are
+     * remembered silently; UNKNOWN appends a one-time, non-blocking warning per place.
      */
     private void validateDestinationIfKorean(ObjectNode state, List<String> subAgents, StringBuilder reply,
                                              boolean ko) {
-        String destination = state.path("destination").asText(null);
-        if (destination == null || destination.isBlank()) {
-            return;
-        }
         String purposeName = state.path("purpose").path("purposeName").asText("");
         if (!purposeName.contains("국내")) {
-            return;   // overseas / corp-specific purposes: not a Korean destination, skip
+            return;   // overseas / corp-specific purposes: not Korean places, skip
         }
-        if (destination.equals(state.path("validatedDestination").asText(null))) {
+        validateKoreanPlace(state, subAgents, reply, ko,
+                "destination", "validatedDestination", "destination (출장지)", "출장지");
+        validateKoreanPlace(state, subAgents, reply, ko,
+                "origin", "validatedOrigin", "departure place (출발지)", "출발지");
+    }
+
+    private void validateKoreanPlace(ObjectNode state, List<String> subAgents, StringBuilder reply,
+                                     boolean ko, String stateKey, String cacheKey,
+                                     String labelEn, String labelKo) {
+        String place = state.path(stateKey).asText(null);
+        if (place == null || place.isBlank()) {
+            return;
+        }
+        if (place.equals(state.path(cacheKey).asText(null))) {
             return;   // unchanged since the last check — don't re-validate or re-warn
         }
-        PlaceValidationService.Result result = placeValidationService.validateKorean(destination);
-        subAgents.add("PLACE_VALIDATOR");
-        state.put("validatedDestination", destination);
+        PlaceValidationService.Result result = placeValidationService.validateKorean(place);
+        if (!subAgents.contains("PLACE_VALIDATOR")) {
+            subAgents.add("PLACE_VALIDATOR");
+        }
+        state.put(cacheKey, place);
         if (result.status() == PlaceValidationService.Result.Status.UNKNOWN) {
             reply.append(t(ko,
-                    "One thing to double-check: I couldn't find '" + destination
-                            + "' among Korean regions — could you confirm the place name? ",
-                    "한 가지 확인해 주세요: '" + destination
+                    "One thing to double-check: I couldn't find '" + place + "' among Korean regions for the "
+                            + labelEn + " — could you confirm the place name? ",
+                    "한 가지 확인해 주세요: " + labelKo + " '" + place
                             + "'을(를) 국내 지역에서 찾지 못했어요 — 지역명을 확인해 주시겠어요? "));
         }
     }

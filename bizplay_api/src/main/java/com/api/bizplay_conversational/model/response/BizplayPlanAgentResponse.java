@@ -31,6 +31,8 @@ public class BizplayPlanAgentResponse {
     private List<Long> travelerIds;
     /** Destination held by the agent (in the save body it rides the BSTR_PERIOD selections). */
     private String destination;
+    /** Departure place (출발지) held by the agent — no slot in the save body; place-validated. */
+    private String origin;
     /** EXACTLY the plan-draft request-body array — the retrieved form's structure, values only. */
     private JsonNode draftJson;
     private LocalDateTime createdDate;

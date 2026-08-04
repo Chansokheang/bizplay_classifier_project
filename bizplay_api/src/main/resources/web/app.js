@@ -575,6 +575,7 @@ function openAp() {
   window.scrollTo(0, 0);
   apLoad();
   caLoad();
+  mcpLoad();
 }
 function closeAp() { document.body.classList.remove("ap-open"); }
 
@@ -774,7 +775,7 @@ async function caLoad() {
     const q = `?corpNo=${encodeURIComponent(CORP_NO)}`;
     const [aRes, tRes] = await Promise.all([
       fetch(`${AGENT_API}/custom-agents${q}`),
-      fetch(`${AGENT_API}/custom-agents/tools`),
+      fetch(`${AGENT_API}/custom-agents/tools?corpNo=${encodeURIComponent(CORP_NO)}`),
     ]);
     const aJson = await aRes.json();
     const tJson = await tRes.json();
@@ -806,13 +807,59 @@ function caFill(a) {
   $("caDesc").value = a ? (a.description || "") : "";
   $("caPrompt").value = a ? (a.prompt || "") : "";
   $("caEnabled").checked = a ? a.enabled !== false : true;
-  $("caTools").innerHTML = Object.entries(caToolCatalog).map(([key, desc]) => `
-    <label class="ca-tool"><input type="checkbox" value="${esc(key)}" ${a && (a.tools || []).includes(key) ? "checked" : ""} />
-      <span><strong>${esc(key)}</strong> — ${esc(desc)}</span></label>`).join("");
+  renderCaTools(new Set(a ? (a.tools || []) : []));
   $("caDeleteBtn").classList.toggle("hidden", !a);
   $("caMsg").textContent = "";
   $("caTestOut").classList.add("hidden");
   renderCaList();
+}
+
+/* Tool picker: built-in tools stay flat; MCP tools fold into one group per server so a
+ * long registry doesn't swamp the form. Groups with a selected tool open by default. */
+function renderCaTools(picked) {
+  const builtIn = [];
+  const byServer = new Map();
+  Object.entries(caToolCatalog).forEach(([key, desc]) => {
+    if (key.startsWith("mcp:")) {
+      const rest = key.slice(4);                     // "server:tool" (server names have no colons)
+      const server = rest.slice(0, rest.indexOf(":"));
+      const tool = rest.slice(rest.indexOf(":") + 1);
+      if (!byServer.has(server)) byServer.set(server, []);
+      byServer.get(server).push({
+        key, tool,
+        untrusted: /NOT TRUSTED/.test(desc),
+        desc: desc.replace(/^\[MCP[^\]]*\]\s*/, ""),
+      });
+    } else {
+      builtIn.push({ key, tool: key, desc });
+    }
+  });
+  const row = (t) => `
+    <label class="ca-tool"><input type="checkbox" value="${esc(t.key)}" ${picked.has(t.key) ? "checked" : ""} />
+      <span><strong>${esc(t.tool)}</strong> — <span class="ca-tool-desc">${esc(t.desc)}</span></span></label>`;
+  let html = builtIn.map(row).join("");
+  byServer.forEach((tools, server) => {
+    const sel = tools.filter((t) => picked.has(t.key)).length;
+    const untrusted = tools.some((t) => t.untrusted);
+    html += `
+    <details class="ca-mcp-group" ${sel ? "open" : ""} data-mcp-server="${esc(server)}">
+      <summary><strong>MCP · ${esc(server)}</strong>
+        ${untrusted ? `<span class="badge-src badge-off">not trusted</span>` : ""}
+        <span class="ca-mcp-count">${tools.length} tool${tools.length === 1 ? "" : "s"}${sel ? ` · ${sel} selected` : ""}</span>
+      </summary>
+      ${tools.map(row).join("")}
+    </details>`;
+  });
+  $("caTools").innerHTML = html;
+  // Keep each group's "· N selected" live as boxes are (un)ticked.
+  $("caTools").onchange = () => {
+    $("caTools").querySelectorAll(".ca-mcp-group").forEach((g) => {
+      const total = g.querySelectorAll("input").length;
+      const sel = g.querySelectorAll("input:checked").length;
+      g.querySelector(".ca-mcp-count").textContent =
+        `${total} tool${total === 1 ? "" : "s"}${sel ? ` · ${sel} selected` : ""}`;
+    });
+  };
 }
 
 async function caSave() {
@@ -884,6 +931,120 @@ function initCa() {
   });
 }
 
+
+/* ---- MCP servers: per-corp registry; tools feed the custom-agent builder ---- */
+let mcpData = [];
+
+function mcpUrlFor(name) {
+  return `${AGENT_API}/mcp-servers${name ? "/" + encodeURIComponent(name) : ""}?corpNo=${encodeURIComponent(CORP_NO)}`;
+}
+
+async function mcpLoad() {
+  try {
+    const res = await fetch(mcpUrlFor(null));
+    const json = await res.json();
+    if (!res.ok) throw apiError(json, res);
+    mcpData = json.data || json.payload || [];
+    renderMcpList();
+  } catch (e) {
+    $("mcpMsg").textContent = friendlyError(e.message);
+  }
+}
+
+function renderMcpList() {
+  $("mcpList").innerHTML = mcpData.length ? mcpData.map((s) => `
+    <div class="mcp-row" data-mcp="${esc(s.name)}">
+      <span class="ap-md-dot ${s.enabled ? "on" : ""}"></span>
+      <span class="mcp-name">${esc(s.name)}</span>
+      <span class="mcp-url" title="${esc(s.url)}">${esc(s.url)}</span>
+      <label class="mcp-trust ${s.trusted ? "on" : ""}" title="Tools execute only when trusted">
+        <input type="checkbox" data-mcp-trust="${esc(s.name)}" ${s.trusted ? "checked" : ""} /> trusted
+      </label>
+      <button class="btn btn-quiet btn-sm" data-mcp-test="${esc(s.name)}">Connection test</button>
+      <button class="ap-row-x" data-mcp-del="${esc(s.name)}" title="Remove">✕</button>
+      <div class="mcp-status" data-mcp-status="${esc(s.name)}"></div>
+    </div>`).join("")
+    : `<p class="card-note">No MCP servers yet — add one below.</p>`;
+}
+
+async function mcpAdd() {
+  const name = $("mcpName").value.trim();
+  const url = $("mcpUrl").value.trim();
+  if (!name || !url) { $("mcpMsg").textContent = "Name and URL are required."; return; }
+  try {
+    const res = await fetch(mcpUrlFor(name), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, authHeader: $("mcpAuth").value.trim() || null, trusted: false, enabled: true }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast(`MCP server “${name}” registered — run the connection test, then mark it trusted.`, "ok");
+    $("mcpName").value = ""; $("mcpUrl").value = ""; $("mcpAuth").value = "";
+    $("mcpMsg").textContent = "";
+    mcpLoad();
+    caLoad();   // tool list may change
+  } catch (e) {
+    $("mcpMsg").textContent = friendlyError(e.message);
+  }
+}
+
+async function mcpTest(name) {
+  const status = document.querySelector(`[data-mcp-status="${name}"]`);
+  status.innerHTML = `<span class="spin"></span> Testing…`;
+  try {
+    const res = await fetch(`${AGENT_API}/mcp-servers/${encodeURIComponent(name)}/test?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "POST" });
+    const json = await res.json();
+    const d = json.data || json.payload || {};
+    if (d.ok) {
+      status.innerHTML = `<span class="mcp-ok">✓ ${esc(d.serverInfo || "connected")}</span> — tools: `
+        + (d.tools || []).map((t) => `<code>${esc(t.name)}</code>`).join(", ");
+      caLoad();
+    } else {
+      status.innerHTML = `<span class="mcp-bad">✕ Connection failure (${esc(d.error || "unreachable")})</span>`;
+    }
+  } catch (e) {
+    status.innerHTML = `<span class="mcp-bad">✕ ${esc(friendlyError(e.message))}</span>`;
+  }
+}
+
+async function mcpTrust(name, trusted, checkbox) {
+  const s = mcpData.find((x) => x.name === name);
+  if (!s) return;
+  try {
+    const res = await fetch(mcpUrlFor(name), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: s.url, trusted, enabled: s.enabled }),
+    });
+    if (!res.ok) throw new Error("Update failed.");
+    toast(trusted ? `“${name}” marked trusted — its tools can now execute.` : `“${name}” trust revoked.`, "ok");
+    mcpLoad();
+    caLoad();
+  } catch (e) {
+    checkbox.checked = !trusted;
+    toast(friendlyError(e.message), "err");
+  }
+}
+
+async function mcpDelete(name) {
+  await fetch(mcpUrlFor(name), { method: "DELETE" });
+  toast(`MCP server “${name}” removed.`, "ok");
+  mcpLoad();
+  caLoad();
+}
+
+function initMcp() {
+  $("mcpAddBtn").addEventListener("click", mcpAdd);
+  $("mcpList").addEventListener("click", (ev) => {
+    const t = ev.target.closest("[data-mcp-test]");
+    if (t) { mcpTest(t.getAttribute("data-mcp-test")); return; }
+    const d = ev.target.closest("[data-mcp-del]");
+    if (d) mcpDelete(d.getAttribute("data-mcp-del"));
+  });
+  $("mcpList").addEventListener("change", (ev) => {
+    const c = ev.target.closest("[data-mcp-trust]");
+    if (c) mcpTrust(c.getAttribute("data-mcp-trust"), c.checked, c);
+  });
+}
 
 function initAp() {
   $("openApBtn").addEventListener("click", openAp);
@@ -3256,7 +3417,13 @@ async function sendAgent(opts) {
   // clicks send composed text that may contain Korean template/staff names
   // (e.g. "Trip type: 테스트(유성린)") and must not flip an English conversation.
   const keepLang = !!(opts && opts.keepLang === true);
-  if (message && !keepLang) chatLang = /[가-힣]/.test(message) ? "ko" : "en";
+  // Proportion, not presence: "Which department is 김도하 in" is an English
+  // sentence quoting a Korean name — it must not flip the conversation to Korean.
+  if (message && !keepLang) {
+    const hangul = (message.match(/[가-힣]/g) || []).length;
+    const latin = (message.match(/[A-Za-z]/g) || []).length;
+    chatLang = hangul > 0 && hangul * 3 > latin ? "ko" : "en";
+  }
   if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
 
   // "Show all" / "전체 보여줘": re-present every preview at the bottom — local, no LLM.
@@ -4449,6 +4616,25 @@ function fmtMoney(n) { return "₩" + Math.round(n).toLocaleString(); }
 /* Money cell that shows "—" when the field is truly absent (0 is a real value). */
 function moneyCell(v) { return (v === null || v === undefined || v === "") ? "—" : fmtMoney(num(v)); }
 function txtCell(v) { return (v === null || v === undefined || v === "") ? "—" : esc(String(v)); }
+
+/* ================================================================
+ *  EXPENSE REPORTS (structured) — list table + Create Report modal
+ *  list:   GET  /agent-conversations/agents/expense-report/sessions
+ *  parse:  POST /agent-conversations/agents/expense-report (planId + fileIds)
+ *  submit: POST /api/v1/reports
+ * ================================================================ */
+const REPORTS_API = AGENT_API + "/agents/expense-report";   // agent draft/session flow (create + resume)
+const EXPENSE_API = API_ORIGIN + "/api/v1/reports";          // persisted/posted report lines
+const SECTIONS = [
+  { key: "CostInformation", label: "Cost", ko: "비용" },
+  { key: "TransportationInformation", label: "Transportation", ko: "교통비" },
+  { key: "Etc", label: "Etc", ko: "기타" },
+];
+const rc = { planId: null, plan: null, sessionId: null, draft: null, uploading: false };
+
+/* ---- Reports table: GET /api/v1/reports returns one report per row
+        (header + its lines[]). Each row is keyed by the report id. ---- */
+let reportsCache = [];   // [{ key (=report id), tripPlanId, sessionId, department, approvalStatus, lineCount, total, date, lines, plan, title }]
 
 function reportLineAmount(line) {
   const e = line.costExpense || line.transportationExpense || {};
@@ -6075,4 +6261,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); initMcp(); });

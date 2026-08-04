@@ -109,6 +109,10 @@ public class FormSkeletonServiceImple implements FormSkeletonService {
         if (paper.path("bstrDestinationUsed").asBoolean(false)) {
             fields.add(FieldSpec.builder()
                     .key("basic:DESTINATION").label("출장지").type("DESTINATION").required(true).build());
+            // Origin (출발지) has no slot in the save body either — captured to agent state when the
+            // user gives it ("from Seoul to Busan"), place-validated, never demanded (optional).
+            fields.add(FieldSpec.builder()
+                    .key("basic:ORIGIN").label("출발지").type("ORIGIN").required(false).build());
         }
         return fields;
     }

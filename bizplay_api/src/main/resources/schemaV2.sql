@@ -218,6 +218,20 @@ CREATE TABLE conversational_custom_agent (
                                           PRIMARY KEY (corp_no, name)
 );
 
+-- Corp-registered MCP servers: their tools surface to custom agents as mcp:<server>:<tool>;
+-- calls run only once an admin marks the server trusted. URLs are SSRF-guarded by the app.
+CREATE TABLE conversational_mcp_server (
+                                          corp_no VARCHAR(50) NOT NULL,
+                                          name VARCHAR(100) NOT NULL,
+                                          url VARCHAR(500) NOT NULL,
+                                          auth_header VARCHAR(500),
+                                          trusted BOOLEAN NOT NULL DEFAULT FALSE,
+                                          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                                          created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                                          PRIMARY KEY (corp_no, name)
+);
+
 CREATE TABLE conversational_trip_plan (
                                           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                           corp_no VARCHAR(50) NOT NULL REFERENCES corp(corp_no) ON UPDATE CASCADE ON DELETE RESTRICT,

@@ -25,7 +25,7 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             that are not listed.
             Return ONLY JSON, no prose, no markdown: an object whose keys are field keys from the
             definition and whose values follow the field's type:
-            - BSTR_PERIOD: {"start":"YYYY-MM-DD","end":"YYYY-MM-DD","destination":<place or null>,"memo":<string or null>}
+            - BSTR_PERIOD: {"start":"YYYY-MM-DD","end":"YYYY-MM-DD","destination":<place or null>,"origin":<place or null>,"memo":<string or null>}
             - EDUCATION_INFO (교육정보): {"구분":"사내교육"|"사외교육","교육과정":<string>,"교육클래스":<string>,
               "교육시작일":"YYYY-MM-DD","교육종료일":"YYYY-MM-DD","교육기관":<string>,"내용":<string>}
               — include only the keys the message actually gives
@@ -40,6 +40,7 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
               subject exists; otherwise omit)
             - BASIC_CONTENT: a 1-2 sentence description string of the trip's purpose/work
             - DESTINATION: the trip destination place string
+            - ORIGIN: the departure place string (where the trip starts FROM)
             - anything else (HTML or unknown types): a plain string
             Rules:
             - Include ONLY keys the message actually gives information for. Omit everything unknown.
@@ -54,6 +55,9 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             - DESTINATION (출장지) only when the user EXPLICITLY names a place they travel TO.
               Company/organization names (e.g. "파트너사", "고객사") and words that are part of the
               trip description are NOT destinations — omit the key instead of reusing them.
+            - ORIGIN (출발지) only when the user EXPLICITLY names the place they depart FROM
+              ("from Seoul to Busan" → origin Seoul; "서울에서 부산으로" → origin 서울). Never guess
+              an origin from the company location or the user's profile — omit the key instead.
             /no_think
             """;
 

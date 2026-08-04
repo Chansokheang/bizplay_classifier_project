@@ -34,6 +34,7 @@ import java.util.Map;
 public class CustomAgentController {
 
     private final CustomAgentService customAgentService;
+    private final com.api.bizplay_conversational.service.mcpService.McpClientService mcpClientService;
 
     @Operation(summary = "List one corp's custom agents")
     @GetMapping
@@ -42,10 +43,19 @@ public class CustomAgentController {
         return ResponseEntity.ok(ApiResponse.ok(customAgentService.list(corpNo)));
     }
 
-    @Operation(summary = "The built-in tool allowlist (key -> description)")
+    @Operation(summary = "The tool allowlist: built-ins + the corp's MCP-server tools")
     @GetMapping("/tools")
-    public ResponseEntity<ApiResponse<Map<String, String>>> tools() {
-        return ResponseEntity.ok(ApiResponse.ok(customAgentService.toolCatalog()));
+    public ResponseEntity<ApiResponse<Map<String, String>>> tools(
+            @RequestParam(value = "corpNo", required = false) String corpNo) {
+        Map<String, String> out = new java.util.LinkedHashMap<>(customAgentService.toolCatalog());
+        if (corpNo != null && !corpNo.isBlank()) {
+            for (var t : mcpClientService.listTools(corpNo)) {
+                out.put("mcp:" + t.server() + ":" + t.name(),
+                        "[MCP · " + t.server() + (t.trusted() ? "" : " · NOT TRUSTED yet") + "] "
+                                + (t.description() == null || t.description().isBlank() ? "external tool" : t.description()));
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.ok(out));
     }
 
     @Operation(summary = "Create/update a custom agent")

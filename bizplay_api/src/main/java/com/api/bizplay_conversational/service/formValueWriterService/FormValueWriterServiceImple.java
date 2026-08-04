@@ -128,6 +128,14 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
                 refreshPeriodSelections(document, state);
                 return label + " = " + v;
             }
+            case "basic:ORIGIN" -> {
+                String v = text(value);
+                if (v == null) return null;
+                // Like the destination, the departure place has no slot in the save body —
+                // it lives in agent state (place-validated, shown in previews).
+                state.put("origin", v);
+                return label + " = " + v;
+            }
             case "basic:BASIC_TRAVELER" -> {
                 // Traveler NAMES have no slot in the body (it is one document per corporationUserId).
                 // Held in agent state until the BizPlay user-search API can resolve ids.
@@ -471,6 +479,10 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         if (destination != null) {
             state.put("destination", destination);
         }
+        String origin = text(value.path("origin"));
+        if (origin != null) {
+            state.put("origin", origin);
+        }
         if (memo != null) {
             state.put("periodMemo", memo);
         }
@@ -570,6 +582,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             case "basic:BASIC_TITLE" -> notBlank(document.path("title"));
             case "basic:BASIC_CONTENT" -> notBlank(document.path("content"));
             case "basic:DESTINATION" -> notBlank(state.path("destination"));
+            case "basic:ORIGIN" -> notBlank(state.path("origin"));
             case "basic:BASIC_TRAVELER" -> state.path("travelers").size() > 0;
             default -> {
                 if (!key.startsWith("item:")) {

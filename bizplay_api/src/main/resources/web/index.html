@@ -140,6 +140,31 @@
         <div id="apAgentList" class="ap-md-list"></div>
       </div>
 
+      <div class="ap-card">
+        <h3 class="ap-card-title"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg> MCP servers</h3>
+        <p class="ap-card-sub">Connect this corporation's own MCP servers — their tools become available to custom agents below. Tools only EXECUTE after you mark the server as trusted; until then they are listed but refused.</p>
+        <div id="mcpList" class="mcp-list"></div>
+        <div class="grid-2 form-rows">
+          <div class="field">
+            <label>Name <span class="req">*</span></label>
+            <input type="text" id="mcpName" maxlength="50" placeholder="e.g. hotel-booking" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>MCP URL <span class="req">*</span> <span class="hint-inline">(Streamable HTTP endpoint)</span></label>
+            <input type="text" id="mcpUrl" maxlength="500" placeholder="https://mcp.mycorp.com/mcp" autocomplete="off" />
+          </div>
+          <div class="field span-2">
+            <label>Authorization header <span class="hint-inline">(optional, e.g. "Bearer xyz")</span></label>
+            <input type="text" id="mcpAuth" maxlength="500" placeholder="Leave blank if the server needs no auth" autocomplete="off" />
+          </div>
+        </div>
+        <div class="llm-form-actions">
+          <span id="mcpMsg" class="val-summary"></span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary btn-sm" id="mcpAddBtn">Add server</button>
+        </div>
+      </div>
+
       <h3 class="ap-section-title"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Custom agents <span class="hint-inline">(build your own)</span></h3>
       <p class="ap-card-sub">Create a new sub-agent for this corporation: describe when it should take over a chat message, give it a prompt, and pick which read-only tools it may use. The chat routes matching messages to it automatically.</p>
       <div class="ap-md">
