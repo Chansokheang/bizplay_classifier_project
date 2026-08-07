@@ -219,12 +219,14 @@ public class AgentConversationController {
         return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.saveDraft(sessionId, draftJson)));
     }
 
-    @PostMapping("/agents/trip-plan")
-    public ResponseEntity<ApiResponse<TripPlanAgentResponse>> chatTripPlanAgent(
-            @Valid @RequestBody TripPlanAgentRequest request) {
-//        log.info("POST /api/v1/agent-conversations/trip-plan - corpNo={}", request.getCorpNo());
-        return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.chat(request)));
-    }
+    // RETIRED (kept for reference, do not delete): the old PoC trip-plan agent endpoint.
+    // The Chat UI now always uses the live BizPlay form-driven agent
+    // (POST /api/v1/agent-conversations/bizplay/agents/plan).
+    // @PostMapping("/agents/trip-plan")
+    // public ResponseEntity<ApiResponse<TripPlanAgentResponse>> chatTripPlanAgent(
+    //         @Valid @RequestBody TripPlanAgentRequest request) {
+    //     return ResponseEntity.ok(ApiResponse.ok(tripPlanAgentService.chat(request)));
+    // }
 
     // --- Expense Report ("After Business Trip") Agent --------------------------------
 

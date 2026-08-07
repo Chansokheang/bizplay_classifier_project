@@ -69,9 +69,42 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
 
     @Override
     public JsonNode getPapers(long purposeId, Long segmentId, String token) {
-        String url = baseUrl() + "/api/v2/paper/purpose/" + purposeId
-                + (segmentId != null ? "?segmentId=" + segmentId : "");
-        return getCached("papers:" + purposeId + ":" + segmentId, url, token);
+        String query = segmentId != null ? "?segmentId=" + segmentId : "";
+        // Discovery call: the untyped path returns the UNION of this purpose's papers, each
+        // carrying its own bstrType (DOMESTIC | OVERSEA).
+        JsonNode papers = getCached("papers:" + purposeId + ":" + segmentId,
+                baseUrl() + "/api/v2/paper/purpose/" + purposeId + query, token);
+        // The typed path is what the real UI calls: it FILTERS to that trip area's papers and
+        // fills in area-dependent configuration the untyped variant leaves null (period-time
+        // rules, route reservation settings). Take the type from the plan paper's own answer —
+        // never guess it, since a wrong type returns a different paper set entirely.
+        String bstrType = planPaperBstrType(papers);
+        if (bstrType == null) {
+            return papers;
+        }
+        try {
+            JsonNode typed = getCached("papers:" + bstrType + ":" + purposeId + ":" + segmentId,
+                    baseUrl() + "/api/v2/paper/purpose/" + bstrType + "/" + purposeId + query, token);
+            return planPaperBstrType(typed) != null ? typed : papers;
+        } catch (RuntimeException e) {
+            log.warn("Typed paper lookup failed for {}/{} — using the untyped definition: {}",
+                    bstrType, purposeId, e.getMessage());
+            return papers;
+        }
+    }
+
+    /** bstrType of the BSTR_PLAN paper in a papers array; null when there is no plan paper. */
+    private String planPaperBstrType(JsonNode papers) {
+        if (papers == null || !papers.isArray()) {
+            return null;
+        }
+        for (JsonNode paper : papers) {
+            if ("BSTR_PLAN".equals(paper.path("paperKind").path("paperKindType").asText())) {
+                String type = paper.path("bstrType").asText(null);
+                return (type == null || type.isBlank()) ? null : type;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -113,6 +146,62 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         } catch (Exception e) {
             log.warn("BizPlay plan-draft save failed: {}", e.getMessage());
             throw new IllegalStateException("BizPlay plan-draft save failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
+    public JsonNode getPlanList(long travelerId, String startDate, String endDate, String token) {
+        String url = baseUrl() + "/api/v2/approval/bstr/plan/list?travelerId=" + travelerId
+                + "&searchPeriodType=BSTR_START_DATE&startDate=" + startDate + "&endDate=" + endDate;
+        // Not cached: the list changes as plans are drafted; the pick must see fresh rows.
+        return get(url, token);
+    }
+
+    @Override
+    public JsonNode getPlanDetail(long approvalId, String token) {
+        String url = baseUrl() + "/api/v2/approval/bstr/" + approvalId;
+        return get(url, token);
+    }
+
+    @Override
+    public JsonNode getUnattachedReceipts(long corpUserId, String startDate, String endDate,
+                                          java.util.List<String> cardTypes, String token) {
+        String types = (cardTypes == null || cardTypes.isEmpty())
+                ? "CORP" : String.join("%2C", cardTypes);
+        String url = baseUrl() + "/api/v2/receipt/" + properties.getReceiptProductCode() + "/not-attached/stream"
+                + "?startDate=" + startDate + "&endDate=" + endDate
+                + "&receiptStatusTypeList=YET%2CISSUED"
+                + "&corpUserIds=" + corpUserId
+                + "&cardTypeList=" + types
+                + "&excludeExpenseAttached=true";
+        String bearer = resolveToken(token);
+        try {
+            String raw = restClient.get()
+                    .uri(java.net.URI.create(url))   // pre-encoded commas must not be re-encoded
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .retrieve()
+                    .body(String.class);
+            // The endpoint streams CONCATENATED root-level JSON objects — read them in sequence.
+            com.fasterxml.jackson.databind.node.ArrayNode receipts = objectMapper.createArrayNode();
+            if (raw != null && !raw.isBlank()) {
+                try (com.fasterxml.jackson.core.JsonParser p = objectMapper.getFactory().createParser(raw)) {
+                    java.util.Iterator<JsonNode> it = objectMapper.readValues(p, JsonNode.class);
+                    while (it.hasNext()) {
+                        JsonNode n = it.next();
+                        if (n != null && n.isObject()) {
+                            receipts.add(n);
+                        } else if (n != null && n.isArray()) {
+                            receipts.addAll((com.fasterxml.jackson.databind.node.ArrayNode) n);
+                        }
+                    }
+                }
+            }
+            return receipts;
+        } catch (Exception e) {
+            log.warn("BizPlay receipt stream failed: GET {} -> {}", url, e.getMessage());
+            throw new IllegalStateException("BizPlay receipt lookup failed: " + rootMessage(e));
         }
     }
 

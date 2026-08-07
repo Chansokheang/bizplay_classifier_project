@@ -1218,7 +1218,11 @@ const TRIP_TYPES = {
 const BZ_API_BASE = () => API_ORIGIN + "/api/v1/agent-conversations/bizplay";
 let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId") || "30447";
 /* The signed-in demo user — "I"/"me" in chat defaults to this person. */
-let CURRENT_USER_NAME = localStorage.getItem("bizplay.userName") || "김도하";
+/* Who "I"/"me" refers to in chat. MUST be the same person as BZ_CORP_USER_ID — that id is the
+ * drafter of every document — otherwise "plan a trip for me" drafts as one user and travels as
+ * another. Seeded from the roster once it loads (bzResolveCurrentUser); the literal here is only
+ * a pre-roster placeholder, and an explicit localStorage value always wins. */
+let CURRENT_USER_NAME = localStorage.getItem("bizplay.userName") || "";
 let bzCatalog = null;        // { purposeName: { purposeId, segments: [{segmentId, segmentName, label}] } }
 const bzFormCache = {};      // "purposeId:segmentId" -> form response (paperId, paperName, fields)
 let bzActiveCfg = null;      // extra-field cfg generated from the live form (extraFieldsSummary uses it)
@@ -1671,7 +1675,7 @@ function planMatchesSearch(p, q) {
 
 async function loadPlans() {
   const body = $("plansBody");
-  body.innerHTML = loadingRow(10);
+  body.innerHTML = loadingRow(11);
   beginLoad();
   try {
     const res = await fetch(`${API}?corpNo=${encodeURIComponent(CORP_NO)}`);
@@ -1682,7 +1686,7 @@ async function loadPlans() {
     animateRowsIn("plansBody");
   } catch (e) {
     plansCache = [];
-    body.innerHTML = emptyRow(10, { icon: "alert", title: "Couldn’t load plans", sub: esc(friendlyError(e.message)) });
+    body.innerHTML = emptyRow(11, { icon: "alert", title: "Couldn’t load plans", sub: esc(friendlyError(e.message)) });
     updateChipCounts();
   } finally {
     endLoad();
@@ -1724,9 +1728,10 @@ function renderPlans(plans) {
   const body = $("plansBody");
   if (!plans.length) {
     body.innerHTML = plansCache.length
-      ? emptyRow(10, { icon: "search", title: "No plans match this filter", sub: "Try a different search or status chip." })
-      : emptyRow(10, { icon: "inbox", title: "No business trip plans yet", sub: "Create your first plan with the agent or manually.",
-          action: `<button class="btn btn-primary btn-sm" onclick="openAgent()">${svgIcon("sparkles")} Create with Agent</button>` });
+      ? emptyRow(11, { icon: "search", title: "No plans match this filter", sub: "Try a different search or status chip." })
+      : emptyRow(11, { icon: "inbox", title: "No business trip plans yet", sub: "Create your first plan in the chat.",
+          // RETIRED: hybrid entry — was onclick="openAgent()" ("Create with Agent").
+          action: `<button class="btn btn-primary btn-sm" onclick="openChatMode()">${svgIcon("chat")} Chat</button>` });
     updateSelectionBar();
     return;
   }
@@ -1755,9 +1760,39 @@ function renderPlans(plans) {
       <td><span class="purpose-tag" title="${esc(p.purpose || "")}">${esc(shortPurpose(p.purpose))}</span></td>
       <td class="c-period" title="${esc(periodFull)}">${esc(period)}</td>
       <td title="${esc(orig + " → " + dest)}"><span class="route-line route-pass">${route}</span></td>
+      <td class="c-json"><button class="btn-json" data-json="${esc(p.id)}" title="Download this plan's JSON">${svgIcon("download")}</button></td>
     </tr>`;
   }).join("");
   updateSelectionBar();
+}
+
+/* Download one plan's document JSON. Prefers the BizPlay-shaped draft held by the linked agent
+ * session (the ③ save body); falls back to the plan record when a row has no session. */
+async function downloadPlanJson(planId) {
+  const plan = plansCache.find((p) => String(p.id) === String(planId));
+  if (!plan) { toast("That plan is no longer in the list.", "err"); return; }
+  let payload = null, label = "plan";
+  try {
+    if (plan.agentSessionId) {
+      const res = await fetch(`${AGENT_API}/sessions/${encodeURIComponent(plan.agentSessionId)}`);
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const d = (json && (json.data || json.payload)) || {};
+        if (d.draftJson) { payload = d.draftJson; label = "draft"; }
+      }
+    }
+  } catch (e) {
+    console.warn("[bizplay] draft fetch failed, falling back to the plan record:", e.message);
+  }
+  if (!payload) payload = plan;   // no session (or no draft yet) — the row's own record
+  const safe = String(plan.title || planId).replace(/[^\w가-힣.-]+/g, "_").slice(0, 60);
+  const name = `${label}_${safe || planId}.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Downloaded ${name}`, "ok");
 }
 
 /* ---------------------------------------------------------------- *
@@ -2329,7 +2364,8 @@ function init() {
 
   $("locations").innerHTML = LOCATIONS.map((l) => `<option value="${esc(l)}">`).join("");
 
-  $("openCreateBtn").addEventListener("click", openCreate);
+  // RETIRED: manual create-plan modal entry (button commented out in index.html).
+  // $("openCreateBtn").addEventListener("click", openCreate);
   $("closeSheetBtn").addEventListener("click", closeCreate);
   $("addTravelerBtn").addEventListener("click", addTraveler);
   $("addUrlBtn").addEventListener("click", addUrl);
@@ -2446,6 +2482,9 @@ function init() {
   // Row click -> detail (ignore clicks on the checkbox cell)
   $("plansBody").addEventListener("click", (ev) => {
     if (ev.target.closest(".c-check")) return;
+    // The JSON button must download, not open the row's detail panel.
+    const dl = ev.target.closest("[data-json]");
+    if (dl) { ev.stopPropagation(); downloadPlanJson(dl.getAttribute("data-json")); return; }
     const tr = ev.target.closest(".row-click");
     if (!tr) return;
     openDetail(tr.getAttribute("data-plan"));
@@ -2483,7 +2522,8 @@ function init() {
   $("detailDeleteBtn").addEventListener("click", deleteCurrentPlan);
 
   // --- Resume ---
-  $("openResumeBtn").addEventListener("click", openResume);
+  // RETIRED: "Resume draft" resumed old PoC trip-plan sessions (button commented out).
+  // $("openResumeBtn").addEventListener("click", openResume);
   $("resumeCloseBtn").addEventListener("click", closeResume);
   $("resumeList").addEventListener("click", (ev) => {
     const it = ev.target.closest("[data-sid]");
@@ -2491,8 +2531,10 @@ function init() {
   });
 
   // --- Agent chat (lives inside the Create Trip Plan modal) ---
-  $("openAgentBtn").addEventListener("click", openAgent);
+  // RETIRED: "Create with Agent" hybrid (form + chat) entry (button commented out).
+  // $("openAgentBtn").addEventListener("click", openAgent);
   $("openChatBtn").addEventListener("click", openChatMode);
+  $("openSettleChatBtn").addEventListener("click", openSettlementChat);
   $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
@@ -2737,6 +2779,7 @@ const agent = {
   mode: "plan",   // "plan" | "report"
   planId: null,   // for report mode: the trip plan being reported on
   live: false,    // true = session runs on the BizPlay form-driven agent (/bizplay/agents/plan)
+  settle: false,  // true = session runs on the settlement agent (/bizplay/agents/settlement)
 };
 
 function resetAgent() {
@@ -2748,6 +2791,7 @@ function resetAgent() {
   agent.mode = "plan";
   agent.planId = null;
   agent.live = false;
+  agent.settle = false;
   $("agentInput").value = "";
   $("agentFileInput").value = "";
   renderAgentFiles();
@@ -2904,8 +2948,8 @@ function formContextPrefix() {
   const lang = chatLang === "ko"
     ? "Respond in Korean only, no English."
     : "Respond in English only, no Korean.";
-  return "(Current user: " + CURRENT_USER_NAME + " — \"I\"/\"me\" refers to them. Form state: "
-    + (parts.join("; ") || "empty")
+  return (CURRENT_USER_NAME ? "(Current user: " + CURRENT_USER_NAME + " — \"I\"/\"me\" refers to them. " : "(")
+    + "Form state: " + (parts.join("; ") || "empty")
     + (missing.length ? ". Still needed: " + missing.join(", ") : "")
     + ". " + lang + ") ";
 }
@@ -2914,9 +2958,9 @@ function formContextPrefix() {
  * out of the thread while the follow-up questions collect the rest. */
 /* "show all" / "preview all" / "전체 보여줘": re-present every section preview
  * (and the approval line) at the current point of the conversation. */
-function showAllPreviews() {
+function showAllPreviews(quiet) {
   const thread = $("agentThread");
-  appendMsg("assistant", T("Here's the whole plan so far:", "지금까지의 계획 전체예요:"));
+  if (!quiet) appendMsg("assistant", T("Here's the whole plan so far:", "지금까지의 계획 전체예요:"));
   ensureWizardSections();   // refresh values first
   ["info", "details", "extra", "trav"].forEach((k) => {
     const card = prevCards[k];
@@ -3001,6 +3045,64 @@ function openChatMode() {
   $("createTitle").textContent = "Create Plan — Chat";
   renderChatHero();                               // POC-style opener: hero + example prompts
   loadStarterMessage();                           // server-customized opener, swapped in when fetched
+}
+
+/* "Settle in Chat" — the settlement agent (fixed chip-driven flow, all server-side).
+ * The UI only renders reply + chips; each chip click sends its sendText back as the
+ * next message. The agent speaks first, so we auto-send the opener turn. */
+function openSettlementChat() {
+  openCreate();                                   // full reset (also clears agent state)
+  chatOnly = true;
+  wizAsked = null;
+  $("createBody").classList.add("chat-only");
+  $("chatToggleBtn").classList.add("hidden");
+  setChatPane(true);
+  $("createTitle").textContent = T("Settle Expenses — Chat", "채팅으로 출장 정산");
+  $("createSub").textContent = T(
+    "Pick the finished trip, the evidence period and the card receipts — the agent assembles the settlement.",
+    "정산할 출장과 증빙 기간, 카드 영수증을 고르면 에이전트가 정산서를 만들어 드려요.");
+  $("agentThread").innerHTML = "";                // no trip hero — settlement asks its own questions
+  agent.settle = true;
+  $("agentInput").value = LANG === "ko"
+    ? "출장 정산을 시작할게요"
+    : "I want to settle my business-trip expenses";
+  sendAgent({ keepLang: true });
+}
+
+/* Period questions in the settlement flow reuse the plan wizard's click-range
+ * calendar — typing dates ("last month", "2026-07-01 ~ 2026-07-31") still works;
+ * the calendar is an alternative, and past days are pickable here. */
+function settlementDateAsk() {
+  guideDates(
+    T("Or pick the period on the calendar:", "달력에서 기간을 선택하셔도 돼요:"),
+    (start, end) => {
+      $("agentInput").value = `${start} ~ ${end}`;
+      sendAgent({ keepLang: true });   // machine-formatted dates, not the user's language
+    },
+    { allowPast: true });
+}
+
+/* Final settlement summary — read-only card. Provider save is NOT implemented yet,
+ * so the flow deliberately ends here with no save button. */
+function settlementSummaryCard(draft) {
+  const doc = (Array.isArray(draft) && draft[0]) || {};
+  const receipts = doc.bstrReceipts || [];
+  const won = (v) => "₩" + Math.round(num(v)).toLocaleString();
+  const rows = receipts.map((r) => pcRow(
+    `${r.mestName || "?"} · ${r.approvalDate || ""}`,
+    `${won(r.approvalAmount)}${r.bstrReceiptType ? " · " + r.bstrReceiptType : ""}`)).join("");
+  const body = rows
+    + pcRow(T("Receipts", "영수증"), String(receipts.length))
+    + pcRow(T("Total", "총액"), won(doc.totalBstrAmount))
+    + pcRow(T("Reimbursable", "개인 정산"), won(doc.totalSettleAmount));
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant chat-section";
+  wrap.innerHTML = `<div class="prev-card">
+      <div class="pc-head"><span class="b-ico">${svgIcon("import")}</span> ${esc(T("Settlement summary", "정산 요약"))}</div>
+      <div class="pc-body">${body}</div></div>`;
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
 }
 
 /* Natural-language example prompts, POC-flow style, tuned to plan creation. */
@@ -3123,7 +3225,10 @@ function guideAsk(prompt) {
 
 /* Inline range calendar: click the start day, then the end day (same day twice =
  * a one-day trip) — the range highlights and confirms itself, no typing, no OK. */
-function guideDates(prompt, onSubmit) {
+function guideDates(prompt, onSubmit, opts) {
+  // allowPast: settlement searches PAST trips — the plan wizard's "no past days"
+  // rule (and its locked prev-month arrow) must not apply there.
+  const allowPast = !!(opts && opts.allowPast);
   const now = new Date();
   let view = new Date(now.getFullYear(), now.getMonth(), 1);
   let selStart = null, selEnd = null;   // ISO "YYYY-MM-DD"
@@ -3149,7 +3254,7 @@ function guideDates(prompt, onSubmit) {
       for (let d = 1; d <= days; d++) {
         const v = iso(y, m, d);
         const dow = (lead + d - 1) % 7;
-        const past = v < todayIso;
+        const past = !allowPast && v < todayIso;
         const cls = ["cal-d"];
         if (dow === 0) cls.push("cal-sun");
         if (dow === 6) cls.push("cal-sat");
@@ -3161,7 +3266,7 @@ function guideDates(prompt, onSubmit) {
       const atCurrentMonth = y === now.getFullYear() && m === now.getMonth();
       cal.innerHTML = `
         <div class="cal-head">
-          <button type="button" class="cal-nav" data-nav="-1" aria-label="Previous month"${atCurrentMonth ? " disabled" : ""}>‹</button>
+          <button type="button" class="cal-nav" data-nav="-1" aria-label="Previous month"${!allowPast && atCurrentMonth ? " disabled" : ""}>‹</button>
           <span class="cal-title">${title}</span>
           <button type="button" class="cal-nav" data-nav="1" aria-label="Next month">›</button>
         </div>
@@ -3426,20 +3531,24 @@ async function sendAgent(opts) {
   }
   if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
 
-  // "Show all" / "전체 보여줘": re-present every preview at the bottom — local, no LLM.
-  if (chatOnly && message && message.length <= 40
-      && (/(show|preview|see|view|summar)\w*\s.*(all|plan|everything|summary|form)|^(show|preview) all$/i.test(message)
-          || /(전체|계획|요약|다)\s*(를|을)?\s*(보여|볼래|미리보기)|미리보기/.test(message))
-      && Object.values(prevCards).some((c) => c && c.isConnected)) {
-    appendMsg("user", message);
-    $("agentInput").value = "";
-    showAllPreviews();
-    return;
-  }
+  // RETIRED: predefined "show all" phrase-matching - we don't guess what users might ask.
+  // Draft questions go to the backend's dynamic draft-QA (intent DRAFT_QUERY), which answers
+  // ANY phrasing over any subset of the draft; for view-style requests the UI re-presents
+  // the preview cards below the answer (see the DRAFT_QUERY branch in the reply handler).
+  // // "Show all" / "전체 보여줘": re-present every preview at the bottom — local, no LLM.
+  // if (chatOnly && message && message.length <= 40
+  // && (/(show|preview|see|view|summar)\w*\s.*(all|plan|everything|summary|form)|^(show|preview) all$/i.test(message)
+  // || /(전체|계획|요약|다)\s*(를|을)?\s*(보여|볼래|미리보기)|미리보기/.test(message))
+  // && Object.values(prevCards).some((c) => c && c.isConnected)) {
+  // appendMsg("user", message);
+  // $("agentInput").value = "";
+  // showAllPreviews();
+  // return;
+  // }
 
   // "Save it" / "저장해 줘" in chat runs the real save flow instead of a chat turn —
   // saving is only ever user-initiated (there is no save button in chat mode).
-  const saveIntent = chatOnly && message && message.length <= 40 && /\bsave\b|\bsubmit\b|저장/i.test(message);
+  const saveIntent = chatOnly && !agent.settle && message && message.length <= 40 && /\bsave\b|\bsubmit\b|저장/i.test(message);
   if (saveIntent
       && !wizardIncomplete() && (!agent.live || agent.status === "READY_FOR_REVIEW")) {
     appendMsg("user", message);
@@ -3449,6 +3558,35 @@ async function sendAgent(opts) {
       else bzOpenApprovalFlow();
     } else completeCreate();
     return;
+  }
+  // Mid-approval line edits ("remove 합의", "remove 김철수") are a UI-only concern — the
+  // approval line lives in the browser until save, so sending them to the form agent
+  // yields a nonsense reply and a stale card. Handle them here.
+  const apprActive = chatOnly && agent.live && bzApproval.lines.length
+    && document.querySelector("#agentThread .chat-appr-card");
+  if (apprActive && message && message.length <= 40
+      && /\b(remove|delete|drop)\b|빼|삭제|제거|취소/i.test(message)) {
+    // Name match first; else match a role word ("합의") — with "결재선"/"approval line"
+    // stripped so the phrase itself can't masquerade as the 결재 role.
+    let idx = bzApproval.lines.findIndex((l) => message.toLowerCase().includes(l.name.toLowerCase()));
+    if (idx < 0) {
+      const rest = message.replace(/결재선|approval\s*line/gi, "");
+      const kindWords = { APPROVAL: /결재|approval/i, AGREE: /합의|agree/i,
+                          ACCEPT: /수신|receive|accept/i, REFERENCE: /참조|reference/i };
+      const kind = Object.keys(kindWords).find((k) => kindWords[k].test(rest));
+      if (kind) idx = bzApproval.lines.findIndex((l) => l.kind === kind);
+    }
+    if (idx >= 0) {
+      const gone = bzApproval.lines.splice(idx, 1)[0];
+      appendMsg("user", message);
+      $("agentInput").value = "";
+      const kindKo = (BZ_LINE_KINDS.find((k) => k[0] === gone.kind) || [])[1] || gone.kind;
+      appendMsg("assistant", T(`Removed ${gone.name} (${kindKo}) from the approval line.`,
+        `결재선에서 ${gone.name} 님(${kindKo})을 뺐어요.`));
+      bzChatApprovalCard();     // re-render + ride down with the newest message
+      bzChatAskApprover();
+      return;
+    }
   }
   // Optimistic user bubble (text + any file chips)
   appendMsg("user", message, { files: agent.pending.map((f) => f.filename) });
@@ -3463,16 +3601,30 @@ async function sendAgent(opts) {
     // A NEW plan session goes to the BizPlay form-driven agent when the live
     // catalog is up. Files ride along too — the live agent runs the same
     // spreadsheet/PDF sub-agents as the PoC flow.
-    if (!agent.sessionId && agent.mode === "plan") {
-      agent.live = !!bzCatalog;
+    // RETIRED: the PoC trip-plan fallback. Plan chats now ALWAYS use the live BizPlay
+    // agent (an unreachable catalog surfaces as an error instead of silently degrading).
+    // if (!agent.sessionId && agent.mode === "plan") {
+    //   agent.live = !!bzCatalog;
+    // }
+    if (agent.mode === "plan") {
+      agent.live = true;
     }
+    // A NEW chat that asks for settlement (정산) rides the settlement agent — and the
+    // whole session stays there (period question -> plan pick -> evidence attach).
+    if (!agent.sessionId && /정산|settle/i.test(message || "")) agent.settle = true;
     let url, body;
-    if (agent.live) {
+    if (agent.settle) {
+      url = `${BZ_API_BASE()}/agents/settlement`;
+      body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+      if (agent.sessionId) body.sessionId = agent.sessionId;
+    } else if (agent.live) {
       url = `${BZ_API_BASE()}/agents/plan`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
       if (fileIds.length) body.fileIds = fileIds;
       if (agent.sessionId) body.sessionId = agent.sessionId;
     } else {
+      // Expense-report chats still ride the report agent; the trip-plan PoC endpoint
+      // is no longer reachable from here (plan mode is forced live above).
       body = { corpNo: CORP_NO, message: message || null, fileIds };
       if (agent.sessionId) body.sessionId = agent.sessionId;
       // A new report session must reference the plan it reports on.
@@ -3482,7 +3634,8 @@ async function sendAgent(opts) {
     }
     // Chat mode: prepend the local form state so the agent doesn't re-ask for
     // fields the user already filled via wizard chips (shown bubble stays clean).
-    if (chatOnly && body.message) body.message = formContextPrefix() + body.message;
+    // Settlement chats skip it — the trip-form context is another flow's state.
+    if (chatOnly && body.message && !agent.settle) body.message = formContextPrefix() + body.message;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3500,7 +3653,9 @@ async function sendAgent(opts) {
     // the agent's message -> any follow-up chips. (A form-apply failure must not
     // swallow the reply, hence the try.)
     try {
-      if (agent.live) {
+      if (agent.settle) {
+        // Settlement drafts are not trip-form shaped — nothing to mirror into the wizard.
+      } else if (agent.live) {
         await applyBizplayTurnToForm(data);        // ③-shaped draft -> the designed form
       } else {
         applyDraftToForm(agent.draft);             // PoC draft -> the designed form
@@ -3525,11 +3680,31 @@ async function sendAgent(opts) {
     });
     const hasChoices = !!(data.pendingChoices && data.pendingChoices.length);
     if (chatOnly) {
-      if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
+      // Dynamic draft-QA answered a view-style request: put the preview cards (and the
+      // approval card, if the flow reached it) right below the text answer.
+      if (data.intent === "DRAFT_QUERY"
+          && /show|preview|display|all|보여|전체|요약|정리|summar/i.test(message || "")) {
+        showAllPreviews(true);
+      }
+      // Settlement chats drive their own question flow — never the trip-form wizard.
+      // Period questions get the same click-range calendar as the plan wizard (past
+      // days allowed — settled trips already happened); the flow closes with a
+      // read-only summary card (provider save is not implemented yet: no save button).
+      if (agent.settle) {
+        if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
+        const wantsDates = data.intent === "AWAIT_PERIOD" || data.intent === "EVIDENCE_PERIOD_PENDING"
+          || (data.pendingChoices || []).some((g) => g.kind === "EVIDENCE_PERIOD");
+        if (wantsDates) settlementDateAsk();
+        else if (data.intent === "SETTLEMENT_READY") settlementSummaryCard(data.draftJson);
+      }
+      else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
       else if (wizardIncomplete() || wizardHasPendingExtra()) nextWizardStep();
       // Mid-approval correction: the section previews just updated — continue the
-      // approval conversation at the bottom instead of going quiet.
-      else if (agent.live && document.querySelector("#agentThread .chat-appr-card, #agentThread .appr-row")) bzChatAskApprover();
+      // approval conversation at the bottom instead of going quiet. But when the agent
+      // itself just asked something (a clarify question ends with "?"), let the user
+      // answer first — stacking the approval ask on top buries the question.
+      else if (agent.live && document.querySelector("#agentThread .chat-appr-card, #agentThread .appr-row")
+               && !/\?\s*$/.test((data.reply || "").trim())) bzChatAskApprover();
       // Everything arrived in one turn: the backend reply already announced the
       // approval-line step — start it without a duplicate completion bubble.
       else appendCreateAction(agent.live && !!data.reply);
@@ -3722,7 +3897,7 @@ function appendMsg(role, text, meta = {}) {
         row.appendChild(btn);
       };
       // "I"/"me"-style ambiguity defaults to the signed-in user, offered first.
-      if (g.name && /^(i|me|myself|나|저|본인)$/i.test(String(g.name).trim())) {
+      if (CURRENT_USER_NAME && g.name && /^(i|me|myself|나|저|본인)$/i.test(String(g.name).trim())) {
         addChip(`${CURRENT_USER_NAME} · that’s me`, `The traveler is ${CURRENT_USER_NAME}.`);
       }
       (g.options || []).forEach((opt) => {
@@ -3959,7 +4134,16 @@ async function bzLoadRoster() {
       position: u.positionName || u.position || "",
     };
   }).filter((u) => u.id != null && u.name);
+  bzResolveCurrentUser();
   return bzApproval.roster;
+}
+
+/* Bind "I"/"me" to the corp user we actually draft as. Without this the chat could tell the
+ * agent one name while the documents carry another user's id. */
+function bzResolveCurrentUser() {
+  if (localStorage.getItem("bizplay.userName")) return;   // explicit override wins
+  const me = bzApproval.roster.find((u) => String(u.id) === String(BZ_CORP_USER_ID));
+  if (me && me.name) CURRENT_USER_NAME = me.name;
 }
 
 async function bzOpenApprovalFlow(manual) {
@@ -6029,7 +6213,10 @@ async function fetchMasterData() {
 
 /* Background refresh (app start / corp switch) — errors keep the seed fallback. */
 async function loadMasterDataSilent() {
-  try { await fetchMasterData(); } catch { mdDepts = []; mdStaff = []; }
+  // RETIRED: /api/v1/staff and /api/v1/departments are no longer served — traveler data
+  // comes from the external BizPlay API. Skip the fetch instead of collecting 404s.
+  mdDepts = []; mdStaff = [];
+  // try { await fetchMasterData(); } catch { mdDepts = []; mdStaff = []; }
 }
 
 async function loadMasterData() {
@@ -6220,7 +6407,8 @@ async function mdDeleteStaff(id) {
 }
 
 function initMasterData() {
-  $("openMasterBtn").addEventListener("click", openMaster);
+  // RETIRED: local Staff & Departments admin (button commented out in index.html).
+  // $("openMasterBtn").addEventListener("click", openMaster);
   $("masterCloseBtn").addEventListener("click", closeMaster);
   $("masterCloseBtn2").addEventListener("click", closeMaster);
   $("masterOverlay").addEventListener("click", (ev) => { if (ev.target === $("masterOverlay")) closeMaster(); });

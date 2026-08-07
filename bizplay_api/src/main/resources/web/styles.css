@@ -643,6 +643,18 @@ body.ap-open #apPage { display: block; }
 .grid th:first-child, .grid td:first-child { text-align: center; padding: 12px 6px; overflow: visible; }
 /* row-number ("No") column: centered, muted, tabular */
 .grid .c-no { text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* per-row JSON download: a quiet icon button that only colours on hover */
+.grid .c-json { width: 52px; text-align: center; overflow: visible; }
+.btn-json {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--muted); cursor: pointer;
+  transition: color .12s ease, border-color .12s ease, background-color .12s ease;
+}
+.btn-json:hover { color: var(--brand, #1e40af); border-color: var(--brand, #1e40af); background: #f5f8ff; }
+.btn-json:focus-visible { outline: 2px solid var(--brand, #1e40af); outline-offset: 1px; }
+.btn-json .ico { width: 15px; height: 15px; }
 .grid tbody td { border-bottom: 1px solid var(--line-soft); color: var(--soft); }
 .grid tbody tr { transition: background-color .12s ease; }
 .grid tbody tr:last-child td { border-bottom: none; }

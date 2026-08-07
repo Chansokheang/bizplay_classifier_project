@@ -23,10 +23,18 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * RETIRED (kept for reference, do not delete): the local department roster is no longer
+ * managed through the API — traveler data comes from the external BizPlay API
+ * (/api/v1/agent-conversations/bizplay/corporation-users). The @RestController /
+ * @RequestMapping annotations are commented out so Spring never registers these
+ * endpoints (they also disappear from Swagger). The conversational_department table
+ * itself stays — the database-lookup agent still reads it.
+ */
 @Slf4j
 @Tag(name = "Departments", description = "Manage conversational departments")
-@RestController
-@RequestMapping("/api/v1/departments")
+// @RestController
+// @RequestMapping("/api/v1/departments")
 @RequiredArgsConstructor
 public class DepartmentController {
 

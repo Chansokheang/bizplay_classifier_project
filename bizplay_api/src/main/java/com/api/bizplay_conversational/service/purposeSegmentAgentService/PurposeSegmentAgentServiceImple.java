@@ -31,6 +31,11 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
             Rules:
             - "best" only when the message clearly implies one option (e.g. an overseas destination
               -> an overseas purpose). Otherwise best=null and list plausible options in "alternatives".
+            - A bare destination IS a valid answer: a Korean city/region (부산, Busan, 대전...) implies
+              the domestic (국내) purpose; a foreign city/country (Osaka, 오사카, Tokyo...) implies the
+              overseas (해외) purpose. If the destination alone doesn't distinguish that purpose's
+              sub-types, set "best" to its most GENERAL sub-type (일반 or the plain unqualified one)
+              instead of asking again.
             - If the message says nothing about the trip type, best=null and alternatives=[] (the user
               will be shown the full list).
             - Numbers must come from the catalog. Do not invent options.

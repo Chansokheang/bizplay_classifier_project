@@ -44,6 +44,7 @@ public class BizplayFormController {
     private final PurposeSegmentAgentService purposeSegmentAgentService;
     private final FormSkeletonService formSkeletonService;
     private final BizplayPlanAgentService bizplayPlanAgentService;
+    private final com.api.bizplay_conversational.service.bizplaySettlementAgentService.BizplaySettlementAgentService bizplaySettlementAgentService;
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
@@ -75,6 +76,18 @@ public class BizplayFormController {
         log.info("POST /bizplay/agents/plan - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
         return ResponseEntity.ok(ApiResponse.ok(bizplayPlanAgentService.chat(request, token)));
+    }
+
+    @Operation(summary = "Chat turn of the settlement (출장정산) agent: period question -> plan search "
+            + "(④) -> plan import (⑤) -> evidence period/card-type questions -> receipt attach (⑥). "
+            + "The session draft_json holds the sample-shaped settlement document.")
+    @PostMapping("/agents/settlement")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> settlementChat(
+            @RequestBody BizplayPlanAgentRequest request,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("POST /bizplay/agents/settlement - corpNo={}, corpUserId={}, sessionId={}",
+                request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.chat(request, token)));
     }
 
     @Operation(summary = "Create this plan: POST the session's draft_json to BizPlay (DRAFT_ONLY save). "

@@ -85,7 +85,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             throw new IllegalArgumentException("corpNo is required.");
         }
         if (request.getCorpUserId() == null || request.getCorpUserId().isBlank()) {
-            throw new IllegalArgumentException("corpUserId is required.");
+            // Demo/default drafter — the document's draftUserId and row 0 come from this user.
+            request.setCorpUserId(bizplayProperties.getDefaultCorpUserId());
         }
         // Sub-agents resolve their (possibly corp-customized) prompts through this context.
         com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(request.getCorpNo());
@@ -118,11 +119,42 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
         // User-defined custom sub-agents get first claim on the turn (router matches the
         // message against each agent's "when to use"; null = nobody claimed it).
-        if (!message.isBlank()) {
+        // EXCEPT short mid-session messages without a question mark: those are almost
+        // always answers to the form's pending question ("domestic", "부산", a name) —
+        // offering them to the router misroutes them to whichever agent sounds closest.
+        boolean midSession = request.getSessionId() != null && !request.getSessionId().isBlank();
+        boolean shortAnswer = !message.contains("?")
+                && (message.length() < 20 || message.split("\\s+").length <= 3);
+        // Chip tokens are OUR OWN generated text ("Trip type: <purpose> / <segment>"), not a user
+        // request — routing them can hand the turn to an unrelated custom agent whose name happens
+        // to resemble the purpose (e.g. a per-diem agent claiming "귀향교통비").
+        boolean chipToken = message.toLowerCase().startsWith("trip type:");
+        if (!message.isBlank() && !chipToken && !(midSession && shortAnswer)) {
             CustomAgentService.RoutedReply custom = customAgentService.tryHandle(request.getCorpNo(), message);
             if (custom != null) {
                 return sideTurn(request, message, custom.reply(), "CUSTOM_AGENT",
                         List.of("CUSTOM:" + custom.agentName()));
+            }
+        }
+        // Draft Q&A: on an ACTIVE session, questions about the plan ("show me all the details",
+        // "who are the travelers?", "언제 가는 걸로 돼 있어?") answer from the DRAFT itself —
+        // any subset, any phrasing. Must run BEFORE the DATA_QUERY route, which would otherwise
+        // dump unrelated database rows for the same questions.
+        String bareMessage = stripChatContext(message);
+        if (midSession && isDraftQuestion(bareMessage)) {
+            ConversationalAgentSession qaSession = resolveSession(request);
+            ArrayNode qaDocs = documents(qaSession);
+            if (!qaDocs.isEmpty()) {
+                ObjectNode slim = loadState(qaSession).deepCopy();
+                // Internal bookkeeping is not user data — the summary must read like the form.
+                for (String k : new String[]{"fields", "staged", "validatedDestination",
+                        "validatedOrigin", "lang", "travelerIds", "pendingTravelers"}) {
+                    slim.remove(k);
+                }
+                String context = "STATE: " + slim + "\nDOCUMENT: "
+                        + truncate(qaDocs.get(0).toString(), 3500);
+                String answer = formFollowUpAgentService.answerDraftQuestion(context, bareMessage, ko);
+                return sideTurn(request, message, answer, "DRAFT_QUERY", List.of("FOLLOW_UP_AGENT"));
             }
         }
         if ("DATA_QUERY".equals(guard.category()) && agentPromptService.isModuleEnabled("database-lookup")) {
@@ -134,6 +166,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         ArrayNode documents = documents(session);
 
         String intent;
+        String clarify = null;   // set when the user's input was indefinite — we ask, not guess
         List<String> subAgents = new ArrayList<>();
         List<TripPlanAgentResponse.PendingChoice> pendingChoices = null;
         StringBuilder reply = new StringBuilder();
@@ -170,14 +203,26 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         "Great — I've started a \"" + chosen.getLabel() + "\" plan for you. ",
                         "좋아요 — \"" + chosen.getLabel() + "\" 출장 계획을 시작할게요. "));
                 // Map everything said so far (staged turns + this message) onto the fresh form.
-                fillFields(document, state, stagedPlus(state, turnText), subAgents, reply, ko);
+                clarify = fillFields(document, state, stagedPlus(state, turnText), subAgents, reply, ko);
+                // Deterministic assist: when the purpose was inferred from a bare place answer
+                // ("Busan" / "부산" to "where are you going?"), the mapper LLM sometimes misses
+                // it. A short standalone token that isn't a trip-type word IS the destination.
+                String answer = message.trim();
+                if (!state.hasNonNull("destination") && !answer.isBlank()
+                        && answer.length() <= 20 && answer.split("\\s+").length <= 2
+                        && !answer.matches("(?iu).*(출장|국내|해외|일반|장기|시내|domestic|overseas|international|trip|general).*")
+                        && !chosen.getLabel().contains(answer)) {
+                    state.put("destination", answer);
+                }
             } else {
                 intent = "PURPOSE_SELECTION";
                 state.withArray("staged").add(turnText);
                 pendingChoices = List.of(toPendingChoice(res.getCandidates()));
                 reply.append(t(ko,
-                        "What kind of trip are you planning? Pick the one that fits below. ",
-                        "어떤 성격의 출장인가요? 아래에서 맞는 유형을 골라 주세요. "));
+                        "What kind of trip are you planning? Pick the one that fits below — "
+                                + "or just tell me where you're going and I'll pick for you. ",
+                        "어떤 성격의 출장인가요? 아래에서 골라 주셔도 되고, "
+                                + "목적지만 말씀해 주시면 제가 맞는 유형을 골라 드릴게요. "));
             }
         } else {
             java.util.regex.Matcher pick = TRAVELER_PICK.matcher(message);
@@ -188,7 +233,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             } else {
                 // Form already loaded: every turn is field completion on documents[0].
                 intent = "FIELD_COMPLETION";
-                fillFields((ObjectNode) documents.get(0), state, turnText, subAgents, reply, ko);
+                clarify = fillFields((ObjectNode) documents.get(0), state, turnText, subAgents, reply, ko);
             }
         }
 
@@ -209,8 +254,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
         // --- Validation + Sub-agent [D]: follow-up question ---------------------------------------
         List<String> missing = List.of();
-        if (!documents.isEmpty()) {
+        if (!documents.isEmpty() && clarify != null) {
+            // Indefinite input ("sometime next week"): ask for the exact value instead of
+            // pretending the turn changed something or repeating the ready message.
+            session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
+            reply.append(clarify).append(' ');
+        } else if (!documents.isEmpty()) {
             missing = requiredGaps(documents.get(0), state);
+            // Before ASKING for something, re-read this turn's text for that one field: the broad
+            // mapper occasionally returns nothing for a sentence that plainly contains the value
+            // ("a trip to Busan next Tuesday"), and asking for what the user just said reads broken.
+            missing = retryMissingField((ObjectNode) documents.get(0), state, turnText, missing, subAgents);
             if (missing.isEmpty()) {
                 session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
                 reply.append(t(ko,
@@ -218,15 +272,25 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         "양식은 모두 채워졌어요 — 마지막으로 결재선만 정하면 돼요."));
             } else {
                 session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
+                // ONE required field per turn: a wall of questions makes users skip some and
+                // answer others out of order. The remaining gaps stay in missingFields for the
+                // UI's progress display, but the agent only ASKS for the first one. Remember
+                // WHICH field, so next turn's bare answer can be bound to it deterministically.
+                List<String> askNow = List.of(missing.get(0));
+                rememberPendingAsk(state, missing.get(0));
+                String more = missing.size() > 1
+                        ? t(ko, " (" + (missing.size() - 1) + " more to go after this)",
+                                " (이후 " + (missing.size() - 1) + "개 더 남았어요)")
+                        : "";
                 if (agentPromptService.isModuleEnabled("form-follow-up")) {
                     reply.append(formFollowUpAgentService.composeFollowUp(
-                            state.path("paperName").asText(null), missing, ko));
+                            state.path("paperName").asText(null), askNow, ko)).append(more);
                     subAgents.add("FOLLOW_UP_AGENT");
                 } else {
                     // Module off: deterministic ask, no LLM call.
                     reply.append(t(ko,
-                            "Could you tell me: " + String.join(", ", missing) + "?",
-                            "다음 정보를 알려 주시겠어요: " + String.join(", ", missing) + "?"));
+                            "Could you tell me: " + askNow.get(0) + "?" + more,
+                            askNow.get(0) + "을(를) 알려 주시겠어요?" + more));
                 }
             }
         }
@@ -332,7 +396,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             com.api.bizplay_conversational.model.request.BizplayManualPlanRequest request,
             String bizplayToken) {
         if (request.getCorpUserId() == null || request.getCorpUserId().isBlank()) {
-            throw new IllegalArgumentException("corpUserId is required.");
+            request.setCorpUserId(bizplayProperties.getDefaultCorpUserId());
         }
         // Per-corp settings (BizPlay endpoint / product code) resolve through this context.
         com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(request.getCorpNo());
@@ -422,7 +486,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * session's draft_json is replaced with the documents that were ACTUALLY posted — the stored
      * draft and the created BizPlay document can never diverge again.
      */
-    private void syncSessionAfterManualSave(String agentSessionId, ArrayNode documents, String reply) {
+    private void syncSessionAfterManualSave(String agentSessionId, JsonNode documents, String reply) {
         if (agentSessionId == null || agentSessionId.isBlank()) {
             return;
         }
@@ -710,14 +774,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return missing;
     }
 
-    /** Sub-agent [C]: LLM field mapping + deterministic writes into the request-body document. */
-    private void fillFields(ObjectNode document, ObjectNode state, String text,
+    /** Sub-agent [C]: LLM field mapping + deterministic writes into the request-body document.
+     *  Returns a clarifying question when the user's input was INDEFINITE ("sometime next
+     *  week") — the caller asks it instead of pretending the turn changed something. */
+    private String fillFields(ObjectNode document, ObjectNode state, String text,
                             List<String> subAgents, StringBuilder reply, boolean ko) {
         JsonNode mapped = fieldMapperAgentService.mapFields(text, state.path("fields"));
         subAgents.add("FIELD_MAPPER_AGENT");
         List<String> applied = new ArrayList<>(
                 formValueWriterService.apply(document, state.path("fields"), state, mapped));
         applied.addAll(ensurePeriodFallback(document, state, text));
+        applied.addAll(bindPendingAnswer(document, state, text, mapped));
         state.remove("staged"); // consumed
         if (!applied.isEmpty()) {
             // The UI shows every captured value in the plan summary — the reply just talks.
@@ -725,6 +792,184 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     "I've filled in the details you gave me. ",
                     "말씀해 주신 내용을 계획에 반영했어요. "));
         }
+        String clarify = mapped.path("clarify").asText(null);
+        if (clarify != null && !clarify.isBlank()) {
+            // Language guard: a clarify in the wrong language falls back to a neutral ask.
+            boolean hasHangul = clarify.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+            if (hasHangul != ko) {
+                return t(ko, "Sure — could you give me the exact value (e.g. the specific dates)?",
+                        "네 — 정확한 값(예: 구체적인 날짜)을 알려주시겠어요?");
+            }
+            return clarify.trim();
+        }
+        return null;
+    }
+
+    /** Focused re-reads per turn — bounds the cost when a form has many required fields. */
+    private static final int MAX_FIELD_RETRIES = 4;
+
+    /**
+     * Last chance before asking: re-read THIS turn's text once per still-missing field. Mapping a
+     * whole form in one LLM call misses values that are plainly in the sentence ("a trip to Busan"
+     * leaving 출장지 empty), and asking the user for what they just said reads broken. A focused
+     * "what is <field>?" call is far more reliable. Travelers are excluded — names go through the
+     * roster resolver, never a free-text guess — and the period has its own ISO-date fallback.
+     */
+    private List<String> retryMissingField(ObjectNode document, ObjectNode state, String text,
+                                           List<String> missing, List<String> subAgents) {
+        if (missing.isEmpty() || text == null || text.isBlank()) {
+            return missing;
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        int tried = 0;
+        for (String label : missing) {
+            if (tried >= MAX_FIELD_RETRIES) {
+                break;
+            }
+            JsonNode field = fieldByLabel(state, label);
+            String type = field == null ? "" : field.path("type").asText("");
+            if (field == null || "BASIC_TRAVELER".equals(type) || "BSTR_PERIOD".equals(type)) {
+                continue;
+            }
+            tried++;
+            String value = fieldMapperAgentService.extractField(text, field);
+            if (value != null) {
+                payload.set(field.path("key").asText(), shapeValue(field, value));
+            }
+        }
+        if (payload.isEmpty()) {
+            return missing;
+        }
+        subAgents.add("FIELD_MAPPER_AGENT");
+        formValueWriterService.apply(document, state.path("fields"), state, payload);
+        return requiredGaps(document, state);
+    }
+
+    private JsonNode fieldByLabel(ObjectNode state, String label) {
+        for (JsonNode f : state.path("fields")) {
+            if (label.equals(f.path("label").asText())) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    /** A bare value in the shape this field's writer expects. */
+    private JsonNode shapeValue(JsonNode field, String answer) {
+        if ("BASIC_TRAVELER".equals(field.path("type").asText())) {
+            ObjectNode names = objectMapper.createObjectNode();
+            names.putArray("names").add(answer);
+            return names;
+        }
+        if (field.path("options").size() > 0) {
+            return objectMapper.createObjectNode().put("choice", answer);
+        }
+        return objectMapper.getNodeFactory().textNode(answer);
+    }
+
+    /** Self-reference answers to "who is travelling?" — the speaker means themselves. */
+    private static final java.util.regex.Pattern SELF_REFERENCE = java.util.regex.Pattern.compile(
+            "(?iu)^\\W*(it'?s\\s+me|it\\s+is\\s+me|i\\s+am|i'?m|me|myself|i|just\\s+me|only\\s+me|"
+            + "나|저|본인|나만|저만|제가|내가|나요|저요)\\W*$");
+
+    /**
+     * Rewrite self-referring traveller answers ("It is me.", "본인") to the requesting user's roster
+     * name, in both the pending list and the stored state — otherwise the resolver searches the
+     * staff directory for the phrase itself and reports it as an unknown person.
+     */
+    private void replaceSelfReference(ObjectNode state, List<String> pending, JsonNode roster, String corpUserId) {
+        long me = parseLongOr(corpUserId == null ? "" : corpUserId, -1);
+        if (me <= 0) {
+            return;
+        }
+        String myName = null;
+        for (JsonNode u : roster.path("users").isArray() ? roster.path("users") : roster) {
+            long id = u.path("corporationUserId").asLong(u.path("id").asLong(-1));
+            if (id == me) {
+                myName = u.path("userName").asText(u.path("name").asText(null));
+                break;
+            }
+        }
+        if (myName == null || myName.isBlank()) {
+            return;
+        }
+        for (int i = 0; i < pending.size(); i++) {
+            if (SELF_REFERENCE.matcher(pending.get(i)).matches()) {
+                log.info("Traveller '{}' means the requesting user — resolved to {}.", pending.get(i), myName);
+                renameTraveler(state, pending.get(i), myName);
+                pending.set(i, myName);
+            }
+        }
+    }
+
+    /** Swap a held traveller name in agent state (keeps state and the pending list in step). */
+    private void renameTraveler(ObjectNode state, String from, String to) {
+        ArrayNode held = state.withArray("travelers");
+        for (int i = 0; i < held.size(); i++) {
+            if (from.equals(held.get(i).asText())) {
+                held.set(i, objectMapper.getNodeFactory().textNode(to));
+            }
+        }
+    }
+
+    /** Store the field key behind the question we are about to ask (matched by its label). */
+    private void rememberPendingAsk(ObjectNode state, String askedLabel) {
+        for (JsonNode f : state.path("fields")) {
+            if (askedLabel.equals(f.path("label").asText())) {
+                state.put("pendingAsk", f.path("key").asText());
+                return;
+            }
+        }
+        state.remove("pendingAsk");   // synthesized label (e.g. the forced period) — nothing to bind
+    }
+
+    /**
+     * The agent asks for exactly ONE required field per turn, so the next message is almost always
+     * the bare answer to it ("고객사 정기 미팅 진행합니다." to "내용을 알려 주세요"). Such an answer names
+     * no field, so the mapper LLM cannot place it — bind it deterministically to the field we just
+     * asked about, unless the mapper already filled that field or the user clearly changed subject
+     * (a question, a chip token, or a message the mapper mapped elsewhere).
+     */
+    private List<String> bindPendingAnswer(ObjectNode document, ObjectNode state, String text,
+                                           JsonNode mapped) {
+        String pendingKey = state.path("pendingAsk").asText(null);
+        if (pendingKey == null || pendingKey.isBlank() || text == null || text.isBlank()) {
+            return List.of();
+        }
+        state.remove("pendingAsk");   // consumed either way — never ask-bind twice
+        String answer = stripChatContext(text).trim();
+        if (answer.isEmpty() || answer.endsWith("?") || answer.toLowerCase().startsWith("trip type:")
+                || (mapped != null && mapped.has(pendingKey))) {
+            return List.of();   // already placed, or not an answer at all
+        }
+        JsonNode field = null;
+        for (JsonNode f : state.path("fields")) {
+            if (pendingKey.equals(f.path("key").asText())) {
+                field = f;
+                break;
+            }
+        }
+        if (field == null || isFilledField(document, state, field)) {
+            return List.of();
+        }
+        String type = field.path("type").asText("");
+        // The period needs real dates — ensurePeriodFallback already handled any it could parse.
+        if ("BSTR_PERIOD".equals(type)) {
+            return List.of();
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set(pendingKey, shapeValue(field, answer));
+        log.info("Bound bare answer to the pending question: {} = {}", pendingKey, answer);
+        return formValueWriterService.apply(document, state.path("fields"), state, payload);
+    }
+
+    /** True when this one field already holds a value (asked as required, per the writer's rules). */
+    private boolean isFilledField(ObjectNode document, ObjectNode state, JsonNode field) {
+        ObjectNode asRequired = field.deepCopy();
+        asRequired.put("required", true);
+        ArrayNode one = objectMapper.createArrayNode();
+        one.add(asRequired);
+        return formValueWriterService.missingRequired(document, one, state).isEmpty();
     }
 
     private static final java.util.regex.Pattern ISO_DATE =
@@ -829,6 +1074,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             return List.of();
         }
         JsonNode roster = bizplayGatewayService.getCorporationUsers(corporationId, token);
+        // "me"/"본인" is not a name to look up — it is the requesting user, whose id we already
+        // have. Swap it for their roster name BEFORE matching, or the search fails on the phrase.
+        replaceSelfReference(state, pending, roster, request.getCorpUserId());
         List<TravelerResolverService.Resolution> resolutions = travelerResolverService.resolve(pending, roster);
         subAgents.add("TRAVELER_RESOLVER");
 
@@ -959,6 +1207,41 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
     }
 
+    /** The web chat prepends "(Current user: … Respond in X only, no Y.) " — return just the
+     *  user's text. Anchored on the prefix's fixed language sentence, since form-state values
+     *  inside the prefix may themselves contain parentheses. */
+    private static String stripChatContext(String m) {
+        if (m != null && m.startsWith("(Current user:")) {
+            return m.replaceFirst("(?s)^\\(Current user:.*?no (Korean|English)\\.\\)\\s*", "").trim();
+        }
+        return m;
+    }
+
+    /**
+     * A question or view request about the current draft — not new information for the form.
+     * Broad on purpose: the draft-QA LLM decides WHAT to show; we only decide it's a question.
+     * Messages that also carry edits ("add 김철수 and show me the result") stay with the mapper.
+     */
+    private boolean isDraftQuestion(String m) {
+        if (m == null || m.isBlank() || m.length() > 100) {
+            return false;
+        }
+        boolean edits = m.matches("(?ius).*(add|change|set|remove|update|replace|make|추가|변경|수정|바꿔|빼|넣|삭제).*");
+        if (edits) {
+            return false;
+        }
+        boolean viewVerb = m.matches("(?ius).*(show|preview|view|display|summar|list|detail|status|so far|"
+                + "보여|알려|요약|정리|현황|상태|지금까지).*");
+        boolean question = m.contains("?")
+                && m.matches("(?ius).*(what|which|who|when|where|how|is|are|did|do|"
+                + "뭐|무엇|누구|언제|어디|몇|인가|나요|까요|어때).*");
+        return viewVerb || question;
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
     /** Read currentCorpId from the (unverified) JWT payload — enough for a roster lookup key. */
     private Long corporationIdFromToken(String token) {
         String jwt = (token != null && !token.isBlank()) ? token : bizplayProperties.getDevToken();
@@ -979,14 +1262,23 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
     }
 
+
     /** Keys the captured save body carries ONLY on the drafter's (first) document. */
     private static final String[] DRAFTER_ONLY_KEYS = {"bstrStatusType", "externalLinks", "totalBstrAmount"};
 
     /**
-     * One document per traveler, mirroring the BizPlay save body: documents[0] is the master (kept
-     * current by the writers, full key set); each further traveler gets a clone WITHOUT the
-     * drafter-only keys and with their own draftUserId. Re-synced every turn so later edits to the
-     * master propagate to all travelers.
+     * One document per row of the BizPlay save body. documents[0] is ALWAYS the drafter (the
+     * requesting user), carrying the full key set and the approval lines; every other row is a
+     * clone without the drafter-only keys, with its own draftUserId and empty approval lines.
+     *
+     * Whether the drafter's row is a TRAVELER or a drafting-only marker is what bstrStatusType
+     * encodes (verified against real UI-created plans read back from the provider):
+     *   drafter travels     -> their row IS the traveler row and carries NO bstrStatusType;
+     *                          companions come back as ALONG.
+     *   drafter stays home  -> their row is an extra DRAFT_ONLY row holding the common values,
+     *                          and every actual traveler follows it.
+     * So a DRAFT_ONLY row present == the drafter is not on this trip — true even when drafting
+     * on someone else's behalf.
      */
     private void syncTravelerDocuments(ArrayNode documents, JsonNode state, String corpUserId) {
         if (documents.isEmpty()) {
@@ -1002,22 +1294,26 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (ids.isEmpty()) {
             return; // names not yet resolved -> single-document draft
         }
-        // The requesting user (drafter) leads; put them first when they are among the travelers.
         long drafter = parseLongOr(corpUserId, ids.get(0));
-        if (ids.remove(drafter)) {
-            ids.add(0, drafter);
+        boolean drafterTravels = ids.remove(drafter);
+        if (drafterTravels) {
+            // Row 0 IS the drafter's own traveler row — no drafting-only marker.
+            master.remove("bstrStatusType");
+        } else {
+            master.put("bstrStatusType", "DRAFT_ONLY");
         }
-        master.put("draftUserId", ids.get(0));
+        master.put("draftUserId", drafter);
         while (documents.size() > 1) {
             documents.remove(documents.size() - 1);
         }
         ensureDraftApprovalLine(master);
-        for (int i = 1; i < ids.size(); i++) {
+        // Remaining ids are the accompanying travelers; each clones the master's common values.
+        for (Long id : ids) {
             ObjectNode follower = master.deepCopy();
             for (String key : DRAFTER_ONLY_KEYS) {
                 follower.remove(key);
             }
-            follower.put("draftUserId", ids.get(i));
+            follower.put("draftUserId", id.longValue());
             // The capture shows approval lines ONLY on the drafter's document; followers are empty.
             follower.set("approvalLines", objectMapper.createArrayNode());
             documents.add(follower);

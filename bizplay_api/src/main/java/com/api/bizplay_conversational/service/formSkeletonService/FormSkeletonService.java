@@ -20,4 +20,17 @@ public interface FormSkeletonService {
      * @param segmentId chosen segmentId (nullable)
      */
     BizplayFormResponse buildPlanSkeleton(JsonNode papers, long purposeId, Long segmentId);
+
+    /**
+     * Build the settlement (출장정산서) skeleton from the FIRST paper in {@code papers} whose
+     * paperKind.paperKindType is EXPENSE_REPORT. The document is shaped exactly like one entry of
+     * the captured 정산서 request body — same keys, same order, evidence arrays empty — and its
+     * {@code issuedItems} carry the SLIM item echo ({itemType, id, name}) that body uses.
+     * Throws IllegalArgumentException when the purpose has no settlement paper.
+     *
+     * @param papers    the ② response (array of papers)
+     * @param purposeId the settled trip's bstrPurposeId
+     * @param segmentId the settled trip's bstrSegmentId (nullable)
+     */
+    BizplayFormResponse buildSettlementSkeleton(JsonNode papers, long purposeId, Long segmentId);
 }

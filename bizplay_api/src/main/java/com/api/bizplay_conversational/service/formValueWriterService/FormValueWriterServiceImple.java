@@ -195,7 +195,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             issued.put("value", yes ? "true" : "false");
             writeSubChoice(issued, value);
             if ("DAILY_COST".equals(itemType)) {
-                writeDailyCostRows(document, issued, yes);
+                writeDailyCostRows(document, field, issued, yes);
             }
             if ("PARTNER_SUPPORT".equals(itemType)) {
                 writePartnerDetails(issued, value);
@@ -214,11 +214,8 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             return label + " = " + code;
         }
 
-        // Options come from itemList, or from labelItems for BSTR_SELECT-style items.
-        JsonNode itemList = issued.path("item").path("itemList");
-        if (!itemList.isArray() || itemList.isEmpty()) {
-            itemList = issued.path("item").path("labelItems");
-        }
+        // Option ROWS live in the field spec — the document's issued item is slim ({id,itemType,name}).
+        JsonNode itemList = field.path("optionItems");
         String choice = value.isObject() ? text(value.path("choice")) : text(value);
         if (itemList.isArray() && itemList.size() > 0 && choice != null) {
             // Select-like (BSTR_SELECT and anything with options): pick the configured option.
@@ -400,12 +397,13 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
      * for day-confirm items (item.requestWay = PAY_DAY_CONFIRM). Rows are rebuilt from
      * the document's period; cleared when the user declines.
      */
-    private void writeDailyCostRows(ObjectNode document, ObjectNode issued, boolean yes) {
+    private void writeDailyCostRows(ObjectNode document, JsonNode field, ObjectNode issued, boolean yes) {
         if (!yes) {
             issued.set("selections", objectMapper.createArrayNode());
             return;
         }
-        if (!"PAY_DAY_CONFIRM".equals(issued.path("item").path("requestWay").asText())) {
+        // requestWay is form configuration — it rides the field spec, not the slim issued item.
+        if (!"PAY_DAY_CONFIRM".equals(field.path("requestWay").asText())) {
             return;
         }
         String start = isoDate(document.path("bstrStartDate"));
@@ -493,7 +491,7 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
             document.put("bstrEndDate", end + "T00:00:00.000Z");
         }
         writePeriodSelections(document, state, issued);
-        refreshDailyCostRows(document);
+        refreshDailyCostRows(document, state);
         String startText = isoDate(document.path("bstrStartDate"));
         String endText = isoDate(document.path("bstrEndDate"));
         return (startText == null && endText == null) ? null
@@ -501,13 +499,24 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
     }
 
     /** Period changed: day-confirm daily-cost rows follow the trip dates, so rebuild them. */
-    private void refreshDailyCostRows(ObjectNode document) {
+    private void refreshDailyCostRows(ObjectNode document, JsonNode state) {
         for (JsonNode issued : document.path("issuedItems")) {
             if ("DAILY_COST".equals(issued.path("item").path("itemType").asText())
                     && "true".equals(issued.path("value").asText())) {
-                writeDailyCostRows(document, (ObjectNode) issued, true);
+                writeDailyCostRows(document, fieldForItem(state, issued.path("item").path("id").asLong()),
+                        (ObjectNode) issued, true);
             }
         }
+    }
+
+    /** The field spec of one issued item (config lives there now that the document is slim). */
+    private JsonNode fieldForItem(JsonNode state, long itemId) {
+        for (JsonNode f : state.path("fields")) {
+            if (f.path("itemId").asLong() == itemId) {
+                return f;
+            }
+        }
+        return objectMapper.createObjectNode();
     }
 
     /** (Re)build the period item's selections from the document dates + state destination/memo. */

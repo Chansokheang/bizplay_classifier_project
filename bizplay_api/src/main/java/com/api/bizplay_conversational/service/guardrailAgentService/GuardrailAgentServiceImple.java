@@ -70,17 +70,32 @@ public class GuardrailAgentServiceImple implements GuardrailAgentService {
                     + "(reveal|show|print)[^.]{0,30}(system\\s*prompt)|\\bjailbreak\\b|"
                     + "(프롬프트|지침|지시|규칙)[^.]{0,15}(무시|잊어)|시스템\\s*프롬프트)");
 
-    private static final String DB_MUTATION_REPLY =
+    // Refusals answer in the conversation's language — never both at once.
+    private static final String DB_MUTATION_REPLY_EN =
             "I can only READ reference data (staff, departments, past plans) — I can't insert, update or "
-                    + "delete database records. 데이터 조회만 가능하며 DB 추가/수정/삭제는 지원하지 않습니다. "
-                    + "To change a plan, edit the form or tell me the new field values.";
+                    + "delete database records. To change a plan, edit the form or tell me the new field values.";
+    private static final String DB_MUTATION_REPLY_KO =
+            "참고 데이터(직원, 부서, 지난 계획)는 조회만 가능해요 — DB 추가/수정/삭제는 지원하지 않습니다. "
+                    + "계획을 바꾸려면 양식을 수정하거나 새 값을 말씀해 주세요.";
 
-    private static final String INJECTION_REPLY =
+    private static final String INJECTION_REPLY_EN =
             "I can't act on instructions that override how this assistant works. "
                     + "Let's continue with the business-trip plan — tell me who travels, where and when.";
+    private static final String INJECTION_REPLY_KO =
+            "이 도우미의 동작 방식을 바꾸려는 지시는 따를 수 없어요. "
+                    + "출장 계획을 계속 진행할게요 — 누가, 어디로, 언제 가는지 알려주세요.";
 
-    private static final String TOO_LONG_REPLY =
+    private static final String TOO_LONG_REPLY_EN =
             "That message is too long for one turn. Please shorten it (or attach the content as a file).";
+    private static final String TOO_LONG_REPLY_KO =
+            "메시지가 한 번에 처리하기엔 너무 길어요. 줄여 주시거나 파일로 첨부해 주세요.";
+
+    /** Proportion, not presence: an English sentence quoting a Korean name stays English. */
+    private static boolean korean(String message) {
+        long hangul = message.codePoints().filter(cp -> cp >= 0xAC00 && cp <= 0xD7A3).count();
+        long latin = message.codePoints().filter(Character::isAlphabetic).count() - hangul;
+        return hangul > 0 && hangul * 3 > latin;
+    }
 
     private final Map<String, ChatClient> chatClientRegistry;
     private final LlmSettingsService llmSettingsService;
@@ -107,7 +122,8 @@ public class GuardrailAgentServiceImple implements GuardrailAgentService {
             return GuardrailResult.ok();   // blank handling belongs to the orchestrators
         }
         if (message.length() > MAX_MESSAGE_LENGTH) {
-            return blockedWithLog("INPUT_TOO_LONG", TOO_LONG_REPLY, message);
+            return blockedWithLog("INPUT_TOO_LONG",
+                    korean(message) ? TOO_LONG_REPLY_KO : TOO_LONG_REPLY_EN, message);
         }
         String category = llmClassify(message);
         if (category == null) {
@@ -120,9 +136,12 @@ public class GuardrailAgentServiceImple implements GuardrailAgentService {
             log.info("Guardrail: LLM said DB_MUTATION but the message has no DB target — treating as SAFE.");
             category = "SAFE";
         }
+        boolean ko = korean(message);
         return switch (category) {
-            case "DB_MUTATION" -> blockedWithLog("DB_MUTATION", DB_MUTATION_REPLY, message);
-            case "INJECTION" -> blockedWithLog("INJECTION", INJECTION_REPLY, message);
+            case "DB_MUTATION" -> blockedWithLog("DB_MUTATION",
+                    ko ? DB_MUTATION_REPLY_KO : DB_MUTATION_REPLY_EN, message);
+            case "INJECTION" -> blockedWithLog("INJECTION",
+                    ko ? INJECTION_REPLY_KO : INJECTION_REPLY_EN, message);
             case "DATA_QUERY" -> GuardrailResult.okWith("DATA_QUERY");   // routed, not blocked
             default -> GuardrailResult.ok();
         };

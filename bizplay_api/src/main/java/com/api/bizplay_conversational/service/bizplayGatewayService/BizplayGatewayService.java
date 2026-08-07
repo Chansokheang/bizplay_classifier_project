@@ -18,6 +18,11 @@ public interface BizplayGatewayService {
     /**
      * ② All paper definitions for a purpose/segment. Cached briefly. The caller filters by
      * paperKind.paperKindType (e.g. BSTR_PLAN for plan creation).
+     *
+     * Resolves in two steps: the untyped path discovers the purpose's papers (each carrying its
+     * bstrType), then the TYPED path {@code /paper/purpose/{bstrType}/{purposeId}} — the variant
+     * the real UI calls — returns that trip area's papers with area-dependent configuration
+     * filled in. Falls back to the untyped definition if the typed call is unavailable.
      */
     JsonNode getPapers(long purposeId, Long segmentId, String token);
 
@@ -33,4 +38,23 @@ public interface BizplayGatewayService {
      * (e.g. "작성되었습니다."). Never cached.
      */
     String postPlanDraft(JsonNode documents, String token);
+
+    /**
+     * ④ Search the traveler's business-trip plans (settlement anchor candidates):
+     * GET /api/v2/approval/bstr/plan/list?travelerId=&searchPeriodType=BSTR_START_DATE
+     * &startDate=&endDate=. Returns the provider's plain array of plan summaries.
+     */
+    JsonNode getPlanList(long travelerId, String startDate, String endDate, String token);
+
+    /** ⑤ One plan's full detail by approvalId: GET /api/v2/approval/bstr/{approvalId}. */
+    JsonNode getPlanDetail(long approvalId, String token);
+
+    /**
+     * ⑥ Unattached card receipts (settlement evidence candidates):
+     * GET /api/v2/receipt/{productCode}/not-attached/stream. The endpoint returns a JSON
+     * STREAM (concatenated root-level objects, no array wrapper) — parsed here into an array.
+     * cardTypeList entries: CORP | PERSONAL | MY_DATA.
+     */
+    JsonNode getUnattachedReceipts(long corpUserId, String startDate, String endDate,
+                                   java.util.List<String> cardTypes, String token);
 }

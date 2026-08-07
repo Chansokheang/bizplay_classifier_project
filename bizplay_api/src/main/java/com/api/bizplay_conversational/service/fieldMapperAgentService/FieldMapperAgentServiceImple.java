@@ -45,14 +45,26 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             Rules:
             - Include ONLY keys the message actually gives information for. Omit everything unknown.
             - Normalize dates to YYYY-MM-DD. Do not invent names, dates, options, or places.
-            - RELATIVE dates ("next Tuesday", "tomorrow", "in two weeks") MUST be resolved to
-              YYYY-MM-DD using the Date context calendar supplied below — look the date up in the
+            - Dates must be DEFINITE. If the timing is indefinite or approximate ("sometime next
+              week", "around the 20th", "다음 달 초", "다음 주쯤"), OMIT start/end entirely —
+              never pick concrete dates the user did not commit to. Other fields from the same
+              message (destination, purpose, travelers) are still mapped normally.
+            - When the user gives an INDEFINITE value (especially asking to CHANGE something to
+              an approximate time/value), ALSO output a "clarify" key: ONE short question, in the
+              user's language, asking for the exact value — e.g. "clarify": "Sure — which days
+              next week exactly?" / "clarify": "네 — 다음 주 며칠로 바꿔 드릴까요?". Use "clarify"
+              ONLY for indefinite input, never for merely missing fields.
+            - RELATIVE but DEFINITE dates ("next Tuesday", "tomorrow", "in two weeks") MUST be
+              resolved to YYYY-MM-DD using the Date context calendar supplied below — look the date up in the
               table; never guess and never output relative words.
             - If the message mentions a trip period or ANY start/end dates, you MUST include the
               form's BSTR_PERIOD field key with {"start","end"} — never omit it.
             - BASIC_TRAVELER names must be ACTUAL PERSON NAMES. Never include group words or
               pronouns ("our team", "everyone", "we", "colleagues") — omit the key instead.
-            - DESTINATION (출장지) only when the user EXPLICITLY names a place they travel TO.
+            - The message may contain several lines (earlier context, then the newest answer last).
+              A line that is JUST a place name ("Busan", "부산") is the user answering where they
+              are going — map it to DESTINATION.
+            - Otherwise DESTINATION (출장지) only when the user EXPLICITLY names a place they travel TO.
               Company/organization names (e.g. "파트너사", "고객사") and words that are part of the
               trip description are NOT destinations — omit the key instead of reusing them.
             - ORIGIN (출발지) only when the user EXPLICITLY names the place they depart FROM
@@ -116,6 +128,51 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
         } catch (Exception e) {
             log.warn("Field mapping failed: {}", e.getMessage());
             return objectMapper.createObjectNode();
+        }
+    }
+
+    private static final String SINGLE_FIELD_PROMPT = """
+            Extract ONE value from the user's message: the value of the field described below.
+            Answer with the VALUE ALONE — no field name, no quotes, no JSON, no explanation.
+            If the message does not contain that value, answer exactly: NONE
+            Rules:
+            - Never invent a value. When unsure, answer NONE.
+            - A place is only a destination when the user says they travel TO it.
+            - If the field lists options, answer with EXACTLY one of them (or NONE).
+            /no_think
+            """;
+
+    @Override
+    public String extractField(String message, JsonNode field) {
+        if (message == null || message.isBlank() || field == null || field.isMissingNode()) {
+            return null;
+        }
+        ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
+        if (client == null) {
+            return null;
+        }
+        try {
+            StringBuilder def = new StringBuilder("Field:\n- label=").append(field.path("label").asText())
+                    .append(" | type=").append(field.path("type").asText());
+            if (field.path("options").isArray() && field.path("options").size() > 0) {
+                def.append(" | options=").append(field.path("options").toString());
+            }
+            List<Message> prompt = List.of(
+                    new SystemMessage(SINGLE_FIELD_PROMPT),
+                    new UserMessage(def + "\n\nUser message:\n" + message));
+            String raw = stripThink(client.prompt().messages(prompt).call().content());
+            if (raw == null) {
+                return null;
+            }
+            String value = raw.trim().replaceAll("^[\"'\\s]+|[\"'\\s.]+$", "");
+            if (value.isEmpty() || value.equalsIgnoreCase("NONE") || value.length() > 200) {
+                return null;
+            }
+            log.info("Focused re-read of '{}' produced: {}", field.path("label").asText(), value);
+            return value;
+        } catch (Exception e) {
+            log.warn("Focused field extraction failed: {}", e.getMessage());
+            return null;
         }
     }
 

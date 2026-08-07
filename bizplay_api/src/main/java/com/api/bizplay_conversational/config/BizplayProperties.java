@@ -26,6 +26,21 @@ public class BizplayProperties {
     /** Cache TTL (seconds) for purpose catalogs and paper definitions. */
     private long cacheTtlSeconds = 300;
 
+    /**
+     * Default DRAFTER (BizPlay corporationUserId) used when a request omits corpUserId — the demo
+     * runs as one static user. In production the caller passes the logged-in user's id; this is
+     * only the fallback so the flow works without a session. Matches the dev token's
+     * currentCorpUserId so the API identity and the document's draftUserId agree.
+     */
+    private String defaultCorpUserId = "30447";
+
     /** Product/tenant segment of the draft-save path: /api/v2/approval/{productCode}/bstr/plan/draft. */
     private String productCode = "seah";
+
+    /**
+     * Product segment of the receipt endpoints: /api/v2/receipt/{receiptProductCode}/….
+     * Independent from {@link #productCode} — on cloud-dev the draft save rides "bics"
+     * while the receipt stream only exists under "seah" (captured from the real UI).
+     */
+    private String receiptProductCode = "seah";
 }

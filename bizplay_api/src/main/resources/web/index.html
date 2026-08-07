@@ -34,6 +34,7 @@
     <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
     <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2"/><path d="M15 2v2"/><path d="M9 20v2"/><path d="M15 20v2"/><path d="M20 9h2"/><path d="M20 14h2"/><path d="M2 9h2"/><path d="M2 14h2"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
     <symbol id="i-plane" viewBox="0 0 24 24"><path d="M14.54 21.69a.5.5 0 0 0 .93-.03l6.5-19a.5.5 0 0 0-.63-.63l-19 6.5a.5.5 0 0 0-.03.93l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="m21.85 2.15-10.94 10.94"/></symbol>
   </svg>
 
@@ -216,13 +217,19 @@
     <div class="list-head">
       <span class="list-meta"><strong id="rowCount">0 entries</strong> · sorted by most recent</span>
       <div class="head-actions">
-        <!-- "Create with Agent" moved inside the create modal (the ✦ Agent toggle);
-             kept hidden so openAgent() and its wiring stay intact. -->
+        <!-- RETIRED (kept for reference, do not delete): manual/hybrid create-plan entries.
+             Only the pure Chat agent flow remains — the manual form modal, the "Create with
+             Agent" hybrid, and "Resume draft" (which resumes old PoC sessions) are disabled.
         <button id="openAgentBtn" class="btn btn-primary hidden" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg> Create with Agent</button>
         <button id="openResumeBtn" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Resume draft</button>
         <button id="openCreateBtn" class="btn btn-primary">+ Create Plan</button>
-        <button id="openChatBtn" class="btn btn-quiet" title="Build the plan in a pure chat — the form renders inside the conversation"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Chat</button>
+        -->
+        <button id="openChatBtn" class="btn btn-primary" title="Build the plan in a pure chat — the form renders inside the conversation"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Chat</button>
+        <!-- RETIRED (kept for reference, do not delete): local staff/department management —
+             the /api/v1/staff and /api/v1/departments endpoints are retired; traveler data
+             comes from the external BizPlay API.
         <button id="openMasterBtn" class="btn btn-quiet" title="Manage the departments and staff used in trip plans"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Staff &amp; Departments</button>
+        -->
       </div>
     </div>
 
@@ -266,7 +273,7 @@
             <th><input type="checkbox" id="selectAllChk" class="chk" aria-label="Select all rows" /></th>
             <th class="c-no">No</th>
             <th>Document</th><th>Title</th><th>Author</th><th>Traveler</th>
-            <th>Dept.</th><th>Purpose</th><th>Period</th><th>Route</th>
+            <th>Dept.</th><th>Purpose</th><th>Period</th><th>Route</th><th class="c-json">JSON</th>
           </tr>
         </thead>
         <tbody id="plansBody">
@@ -335,6 +342,7 @@
         <span class="list-meta"><strong id="reportCount">0</strong> expense reports</span>
         <div class="head-actions">
           <button id="reportRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
+          <button id="openSettleChatBtn" class="btn btn-quiet" title="Settle a finished trip in chat — pick the plan, evidence period and receipts"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Settle in Chat</button>
           <button id="openReportCreateBtn" class="btn btn-primary">+ Create Report</button>
         </div>
       </div>

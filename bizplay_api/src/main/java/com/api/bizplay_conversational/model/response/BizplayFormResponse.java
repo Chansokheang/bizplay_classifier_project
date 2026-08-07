@@ -42,6 +42,14 @@ public class BizplayFormResponse {
         /** Options for select-like items (name shown to user; erpCode kept for the payload). */
         private List<String> options;
         /**
+         * Full option rows ({id, name, erpCode}) for select-like items. The save document's
+         * issuedItems carry only the SLIM item ({id, itemType, name} — draft_only.json format),
+         * so the selection encodings the writer needs live here in the field spec instead.
+         */
+        private JsonNode optionItems;
+        /** DAILY_COST request way (e.g. PAY_DAY_CONFIRM → one selections row per trip day). */
+        private String requestWay;
+        /**
          * BizPlay placement rule (paperItemOrderDto.travelerItemUsed): {@code true} = the item
          * renders INSIDE EACH TRAVELER card (one value per traveler); {@code false} = it renders
          * once at form level in the custom-items section.

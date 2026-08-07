@@ -16,4 +16,13 @@ public interface FieldMapperAgentService {
      * @return object node {"<fieldKey>": <normalized value>} — empty when nothing was extracted
      */
     JsonNode mapFields(String message, JsonNode fields);
+
+    /**
+     * Focused re-read for ONE field, used when the broad mapping missed something the user
+     * clearly said ("...trip to Busan..." with no destination extracted). Asking about a single
+     * named field is far more reliable than mapping the whole form at once.
+     *
+     * @return the extracted value, or null when the message genuinely does not contain it.
+     */
+    String extractField(String message, JsonNode field);
 }
