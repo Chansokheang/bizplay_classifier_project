@@ -151,6 +151,28 @@ public class BizplayFormController {
                 sessionId, corpNo, fields, detail, imageBytes, imageName, token)));
     }
 
+    @Operation(summary = "Transport terminals/stations for the manual-expense depart/arrival dropdowns. "
+            + "Optional vehicleType filter (AIR = airports, KTX = rail stations, BUS = bus terminals). "
+            + "Returns [{id, name}].")
+    @GetMapping("/agents/settlement/terminals")
+    public ResponseEntity<ApiResponse<List<java.util.Map<String, Object>>>> settlementTerminals(
+            @RequestParam(value = "vehicleType", required = false) String vehicleType,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/agents/settlement/terminals - vehicleType={}", vehicleType);
+        JsonNode all = bizplayGatewayService.getEtcCardTerminals(token);
+        List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        if (all != null && all.isArray()) {
+            for (JsonNode t : all) {
+                if (vehicleType != null && !vehicleType.isBlank()
+                        && !vehicleType.equalsIgnoreCase(t.path("vehicleType").asText())) {
+                    continue;
+                }
+                out.add(java.util.Map.of("id", t.path("id").asLong(), "name", t.path("name").asText("")));
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.ok(out));
+    }
+
     // --- settlement conversation starter (per-corp greeting + example prompts) --------------
 
     @Operation(summary = "Get this corp's settlement conversation starter — the chat greeting and "

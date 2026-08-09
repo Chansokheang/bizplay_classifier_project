@@ -96,6 +96,13 @@ public interface BizplayGatewayService {
     JsonNode getTranKindList(String token);
 
     /**
+     * Transport terminals/stations (교통수단 별 역이름 목록): GET /api/v2/receipt/etc-card/terminal —
+     * TerminalDto[] ({@code id, vehicleType, name, mode}) for the depart/arrival dropdowns. Cached.
+     * AIR entries are airports, KTX entries are all rail stations, BUS entries are bus terminals.
+     */
+    JsonNode getEtcCardTerminals(String token);
+
+    /**
      * ⑧ Update a created etc receipt's ADDITIONAL detail (기타증빙 단건 수정): PATCH
      * /api/v2/receipt-etc/{receiptId} with a ReceiptEtcDto body (etcReceiptType, usedStartDate/End,
      * vehicleType, depart/arrival, …). Optional — only called when the user supplies extra info.

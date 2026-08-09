@@ -297,6 +297,11 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getEtcCardTerminals(String token) {
+        return getCached("terminals", buildUrl(endpoints.getEtcCardTerminal()), token);
+    }
+
+    @Override
     public String patchEtcReceiptDetail(long receiptId, JsonNode detail, String token) {
         if (detail == null || !detail.isObject()) {
             throw new IllegalArgumentException("Receipt detail is required.");

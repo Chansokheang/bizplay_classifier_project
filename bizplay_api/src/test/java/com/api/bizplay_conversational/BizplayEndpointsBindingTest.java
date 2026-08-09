@@ -47,5 +47,6 @@ class BizplayEndpointsBindingTest {
         assertEquals("/api/v2/receipt/issued/bulk/{ids}", ep.getIssuedBulk());
         assertEquals("/api/v2/receipt-etc/{receiptId}", ep.getReceiptEtcDetail());
         assertEquals("/api/v2/trankind/list", ep.getTrankindList());
+        assertEquals("/api/v2/receipt/etc-card/terminal", ep.getEtcCardTerminal());
     }
 }

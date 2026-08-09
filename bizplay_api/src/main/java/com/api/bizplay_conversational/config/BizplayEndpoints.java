@@ -70,4 +70,7 @@ public class BizplayEndpoints {
 
     /** TranKind master (id → name/type): GET, no params. */
     private String trankindList = "/api/v2/trankind/list";
+
+    /** Transport terminals (id, vehicleType, name): GET → TerminalDto[] for depart/arrival dropdowns. */
+    private String etcCardTerminal = "/api/v2/receipt/etc-card/terminal";
 }

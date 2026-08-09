@@ -33,3 +33,5 @@ bizplay:
     receipt-etc-detail: /api/v2/receipt-etc/{receiptId}
     # TranKind master (id → name/type), to resolve the plan's allowed tranKinds
     trankind-list: /api/v2/trankind/list
+    # transport terminals/stations (id, vehicleType, name) for depart/arrival dropdowns
+    etc-card-terminal: /api/v2/receipt/etc-card/terminal

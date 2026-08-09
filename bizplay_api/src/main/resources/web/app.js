@@ -3259,49 +3259,132 @@ function settlementSummaryCard(draft) {
  * this posts multipart to /agents/settlement/{sessionId}/manual-expense, which registers
  * a 기타카드 receipt + the image and maps them into the draft's etcReceiptSaveRequests.
  * Every amount is typed, never derived here — the agent stores the keys exactly as given. */
+/* Terminals/stations for the depart/arrival dropdowns (AIR = airports, KTX = rail stations). */
+async function fetchTerminals(vehicleType) {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/terminals?vehicleType=${encodeURIComponent(vehicleType)}`);
+    const json = await res.json().catch(() => ({}));
+    return ((json && (json.data || json.payload)) || []);
+  } catch { return []; }
+}
+
+// Korean label → BizPlay value (ReceiptEtcDto enums; seatClass values from the captured samples).
+const TP_ROUTE = [["편도", "ONEWAY"], ["왕복", "ROUNDTRIP"]];
+const TP_AIR_SEATS = [["일반석", "economyClass"], ["프리미엄 일반석", "premiumEconomyClass"],
+  ["비즈니스석", "businessClass"], ["일등석", "firstClass"]];
+const TP_TRAIN_SEATS = [["일반실", "standardRoom"], ["특실", "firstClassRoom"]];
+const TP_TRAIN_TYPES = [["KTX", "KTX"], ["SRT", "SRT"], ["ITX", "ITX"], ["새마을호", "SAEMAEUL"], ["무궁화호", "MUGUNGHWA"]];
+const TP_VEH_DOMESTIC = [["항공", "AIR"], ["열차", "__TRAIN__"], ["고속버스", "BUS"], ["시외버스", "CBUS"],
+  ["택시", "TAXI"], ["렌터카", "RENTAL"], ["공항 리무진", "AIRPORT_LIMOUSINE"], ["기타 교통수단", "OTHER"]];
+const TP_VEH_OVERSEA = [["항공", "AIR"], ["열차", "TRAIN"], ["고속버스", "BUS"], ["시외버스", "CBUS"],
+  ["택시", "TAXI"], ["렌터카", "RENTAL"], ["공항 리무진", "AIRPORT_LIMOUSINE"], ["기타 교통수단", "OTHER"],
+  ["공항이동", "AIRPORT_TRANSFER"], ["시외교통", "INTERCITY_TRANSPORT"], ["현지교통", "LOCAL_TRANSPORT"]];
+
+/* Rebuild the transport sub-form when the vehicle changes: route/seat dropdowns, and depart/arrival
+ * as terminal dropdowns (domestic AIR/train, with ids) or free text (overseas). */
+async function renderTpSub(container, vehicleValue, oversea) {
+  const optsL = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
+    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
+  container.innerHTML = "";
+  if (!vehicleValue) return;
+  const isAir = vehicleValue === "AIR";
+  const isTrainGroup = vehicleValue === "__TRAIN__";
+  const isTrain = isTrainGroup || ["TRAIN", "KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA"].includes(vehicleValue);
+  const useTerminals = !oversea && (isAir || isTrainGroup);   // domestic AIR/train → id dropdowns
+  const parts = [];
+  if (isTrainGroup) parts.push(f(T("Train type", "열차종류"), `<select data-tp="trainType">${optsL(TP_TRAIN_TYPES, T("Select", "선택"))}</select>`));
+  parts.push(f(T("Route", "노선종류"), `<select data-tp="routeType">${optsL(TP_ROUTE)}</select>`));
+  parts.push(f(T("Used date", "이용일"), `<input type="date" data-tp="usedStartDate">`));
+  if (useTerminals) {
+    parts.push(f(T("From", "출발지"), `<select data-tp="departSel"><option value="">${esc(T("Loading…", "불러오는 중…"))}</option></select>`));
+    parts.push(f(T("To", "도착지"), `<select data-tp="arrivalSel"><option value="">${esc(T("Loading…", "불러오는 중…"))}</option></select>`));
+  } else {
+    parts.push(f(T("From", "출발지"), `<input type="text" data-tp="depart">`));
+    parts.push(f(T("To", "도착지"), `<input type="text" data-tp="arrival">`));
+  }
+  if (isAir || isTrain) parts.push(f(T("Seat class", "좌석등급"), `<select data-tp="seatClass">${optsL(isTrain ? TP_TRAIN_SEATS : TP_AIR_SEATS, T("Select", "선택"))}</select>`));
+  container.innerHTML = parts.join("");
+  if (useTerminals) {
+    const terms = await fetchTerminals(isAir ? "AIR" : "KTX");
+    const o = `<option value="">${esc(T("Select", "선택"))}</option>`
+      + terms.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    const ds = container.querySelector('[data-tp="departSel"]'); if (ds) ds.innerHTML = o;
+    const as = container.querySelector('[data-tp="arrivalSel"]'); if (as) as.innerHTML = o;
+  }
+}
+
+/* Read the transport sub-form into a ReceiptEtcDto detail object (empty → null). */
+function readTransportDetail(w) {
+  const g = (k) => { const e = w.querySelector(`[data-tp="${k}"]`); return e ? e.value : ""; };
+  let vehicleType = (w.querySelector('[data-tv="vehicle"]') || {}).value || "";
+  if (vehicleType === "__TRAIN__") vehicleType = g("trainType") || "KTX";
+  const used = g("usedStartDate") || null;
+  const detail = {
+    etcReceiptType: "RECEIPT", usedStartDate: used, usedEndDate: used,
+    vehicleType: vehicleType || null, routeType: g("routeType") || null, seatClass: g("seatClass") || null,
+    departTerminalId: null, arrivalTerminalId: null, departNodeId: null, arrivalNodeId: null,
+    depart: null, arrival: null,
+  };
+  const ds = w.querySelector('[data-tp="departSel"]'), as = w.querySelector('[data-tp="arrivalSel"]');
+  if (ds) { detail.departTerminalId = ds.value ? num(ds.value) : null; detail.depart = ds.selectedOptions[0] ? ds.selectedOptions[0].text : null; }
+  else { detail.depart = g("depart") || null; }
+  if (as) { detail.arrivalTerminalId = as.value ? num(as.value) : null; detail.arrival = as.selectedOptions[0] ? as.selectedOptions[0].text : null; }
+  else { detail.arrival = g("arrival") || null; }
+  return detail;
+}
+
 function settlementManualExpenseForm() {
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
-  // Type-specific detail fields the agent asked for (missingFields), rendered as extra inputs and
-  // submitted as the `detail` part (PATCH /receipt-etc). Which fields appear depends on the TranKind.
+  const opts = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
+    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
   const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
+  const isTransport = detailFields.includes("vehicleType");
+  const draft0 = (agent.draft && agent.draft[0]) || {};
+  const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
+
+  // Non-transport detail (ROOM/FOOD/simple) — plain inputs keyed by data-d.
   const detailSpec = {
     usedStartDate: [T("Used from", "사용 시작일"), `<input type="date" data-d="usedStartDate">`],
     usedEndDate: [T("Used to", "사용 종료일"), `<input type="date" data-d="usedEndDate">`],
-    vehicleType: [T("Vehicle", "교통수단"), `<input type="text" data-d="vehicleType" placeholder="KTX / AIR / BUS">`],
-    routeType: [T("Route", "편도/왕복"), `<input type="text" data-d="routeType" placeholder="ONEWAY / ROUNDTRIP">`],
     seatClass: [T("Seat class", "좌석 등급"), `<input type="text" data-d="seatClass">`],
-    departTerminalId: [T("Depart terminal id", "출발 터미널 ID"), `<input type="number" data-d="departTerminalId">`],
-    arrivalTerminalId: [T("Arrival terminal id", "도착 터미널 ID"), `<input type="number" data-d="arrivalTerminalId">`],
-    depart: [T("From", "출발지"), `<input type="text" data-d="depart">`],
-    arrival: [T("To", "도착지"), `<input type="text" data-d="arrival">`],
     starRating: [T("Star rating", "성급"), `<input type="number" data-d="starRating">`],
     roomType: [T("Room type", "객실 유형"), `<input type="text" data-d="roomType">`],
     partnerHotel: [T("Partner hotel", "제휴 호텔"), `<input type="text" data-d="partnerHotel">`],
     foodDivisionType: [T("Meal category", "식대 구분"), `<input type="text" data-d="foodDivisionType">`],
     personCount: [T("Headcount", "인원수"), `<input type="number" data-d="personCount">`],
   };
-  const detailHtml = detailFields
-    .filter((k) => detailSpec[k])
-    .map((k) => f(detailSpec[k][0], detailSpec[k][1]))
-    .join("");
-  const detailSection = detailHtml
-    ? `<div class="mx-sub">${esc(T("Additional details", "추가 정보"))}</div>${detailHtml}`
-    : "";
+
+  // Transport skips the supply/VAT breakdown (null for transport receipts); others keep it.
+  const baseAmounts = isTransport
+    ? f(T("Amount", "승인금액"), money("approvalAmount"))
+    : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
+       ${f(T("Supply", "공급가액"), money("supplyAmount"))}
+       ${f(T("VAT", "부가세"), money("vatAmount"))}
+       ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
+       ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}`;
+
+  const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
+  const detailSection = isTransport
+    ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
+       ${f(T("Transport", "교통수단"), `<select data-tv="vehicle">${opts(veh, T("Select", "선택"))}</select>`)}
+       <div class="mx-tp mx-wide"></div>`
+    : (detailFields.filter((k) => detailSpec[k]).length
+        ? `<div class="mx-sub">${esc(T("Additional details", "추가 정보"))}</div>`
+          + detailFields.filter((k) => detailSpec[k]).map((k) => f(detailSpec[k][0], detailSpec[k][1])).join("")
+        : "");
+
   const html = `<div class="mx-grid">
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
         <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
       ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
       ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
       ${f(T("Currency", "통화"), `<input type="text" data-k="currencyCode" value="KRW">`)}
-      <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed">
+      <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed"${oversea ? " checked" : ""}>
         <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
-      ${f(T("Amount", "승인금액"), money("approvalAmount"))}
-      ${f(T("Supply", "공급가액"), money("supplyAmount"))}
-      ${f(T("VAT", "부가세"), money("vatAmount"))}
-      ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
-      ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}
+      ${baseAmounts}
       ${detailSection}
       <label class="mx-f mx-wide"><span>${esc(T("Receipt image (optional)", "영수증 이미지 (선택)"))}</span>
         <input type="file" accept="image/*" data-k="image"></label>
@@ -3323,6 +3406,14 @@ function settlementManualExpenseForm() {
   const el = (k) => w.querySelector(`[data-k="${k}"]`);
   const note = w.querySelector(".mx-note");
   const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
+
+  // Transport: rebuild the sub-form (route/seat/depart/arrival) whenever the vehicle changes.
+  const tpBox = w.querySelector(".mx-tp");
+  const vehSel = w.querySelector('[data-tv="vehicle"]');
+  if (vehSel && tpBox) {
+    vehSel.addEventListener("change", () => renderTpSub(tpBox, vehSel.value, oversea));
+  }
+
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = el("image").files[0];
     const mestName = el("mestName").value.trim();
@@ -3339,23 +3430,30 @@ function settlementManualExpenseForm() {
       mestName,
       overseasUsed: el("overseasUsed").checked,
       approvalAmount,
-      supplyAmount: num(el("supplyAmount").value),
-      originalSupplyAmount: num(el("originalSupplyAmount").value),
-      vatAmount: num(el("vatAmount").value),
-      originalVatAmount: num(el("originalVatAmount").value),
       // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
     };
-    // The TranKind detail (data-d inputs) → the `detail` part (PATCH /receipt-etc). Only sent when
-    // the form actually had detail fields; empty inputs go through as null.
+    // Transport receipts carry no supply/VAT breakdown (null); other types collect it.
+    if (!isTransport) {
+      expense.supplyAmount = num(el("supplyAmount").value);
+      expense.originalSupplyAmount = num(el("originalSupplyAmount").value);
+      expense.vatAmount = num(el("vatAmount").value);
+      expense.originalVatAmount = num(el("originalVatAmount").value);
+    }
+    // Detail → the `detail` part (PATCH /receipt-etc): the transport sub-form for transport,
+    // else the plain data-d inputs.
     let detail = null;
-    const dInputs = w.querySelectorAll("[data-d]");
-    if (dInputs.length) {
-      detail = { etcReceiptType: "RECEIPT" };
-      dInputs.forEach((inp) => {
-        const k = inp.getAttribute("data-d");
-        const v = inp.value;
-        detail[k] = v === "" ? null : (inp.type === "number" ? num(v) : v);
-      });
+    if (isTransport) {
+      detail = readTransportDetail(w);
+    } else {
+      const dInputs = w.querySelectorAll("[data-d]");
+      if (dInputs.length) {
+        detail = { etcReceiptType: "RECEIPT" };
+        dInputs.forEach((inp) => {
+          const k = inp.getAttribute("data-d");
+          const v = inp.value;
+          detail[k] = v === "" ? null : (inp.type === "number" ? num(v) : v);
+        });
+      }
     }
     note.textContent = "";
     note.classList.remove("mx-warn");
@@ -3423,9 +3521,10 @@ function manualExpenseFollowUp() {
     row.appendChild(btn);
   };
   chip(T("Add another expense", "경비 더 입력"), settlementManualExpenseForm);
-  chip(T("Done", "첨부 완료"), () => {
+  const doneLabel = T("Done", "첨부 완료");
+  chip(doneLabel, () => {
     $("agentInput").value = "receipts-done";
-    sendAgent({ keepLang: true });   // machine chip token, not the user's language
+    sendAgent({ keepLang: true, echoAs: doneLabel });   // token to the agent, label in the thread
   });
   wrap.appendChild(row);
   thread.appendChild(wrap);
@@ -3920,8 +4019,11 @@ async function sendAgent(opts) {
       return;
     }
   }
-  // Optimistic user bubble (text + any file chips)
-  appendMsg("user", message, { files: agent.pending.map((f) => f.filename) });
+  // Optimistic user bubble (text + any file chips). A chip sends a machine token
+  // (trankind:11719, receipt:all, receipts-done…) that the agent's state machine needs
+  // verbatim — but the thread must read like a conversation, so it echoes the label the
+  // user actually clicked ("숙박비") instead of the wire value.
+  appendMsg("user", (opts && opts.echoAs) || message, { files: agent.pending.map((f) => f.filename) });
   $("agentInput").value = "";
   const sentFiles = agent.pending.slice();
   agent.pending = [];
@@ -4224,8 +4326,10 @@ function planPickTable(group) {
       if (agent.busy || box.classList.contains("pp-done")) return;
       box.classList.add("pp-done");
       tr.classList.add("pp-picked");
-      $("agentInput").value = picks[Number(tr.dataset.i)].sendText || "";
-      sendAgent({ keepLang: true });   // machine token, not the user's language
+      const pickd = picks[Number(tr.dataset.i)];
+      $("agentInput").value = pickd.sendText || "";
+      // "settle-plan:141380" is for the agent; the thread shows the trip the user clicked.
+      sendAgent({ keepLang: true, echoAs: (pickd.meta && pickd.meta.title) || pickd.label || null });
     };
     tr.addEventListener("click", pick);
     tr.addEventListener("keydown", (e) => {
@@ -4233,6 +4337,15 @@ function planPickTable(group) {
     });
   });
   return box;
+}
+
+/* Chip payloads the settlement/plan state machines match verbatim — "trankind:11719",
+ * "card-types:PERSONAL,MY_DATA", "receipt:all", "receipts-done", "manual-expense". Shape
+ * test, not a hardcoded list that would drift from the backend: one lowercase word (dashes
+ * ok), optionally ":value". Anything with a space or Hangul is a composed sentence
+ * ("Trip type: 국내출장 / 일반") and is echoed as-is. */
+function isMachineToken(s) {
+  return /^[a-z][a-z-]*(:[\w.,-]+)?$/.test(String(s || "").trim());
 }
 
 function appendMsg(role, text, meta = {}) {
@@ -4278,7 +4391,9 @@ function appendMsg(role, text, meta = {}) {
           row.classList.add("choice-done");
           btn.classList.add("choice-picked");
           $("agentInput").value = sendText;
-          sendAgent({ keepLang: true });   // chip text is composed, not the user's language
+          // Machine tokens are echoed as the chip's own label; chips whose sendText is a
+          // real sentence ("The traveler is 김도하.") keep echoing that sentence.
+          sendAgent({ keepLang: true, echoAs: isMachineToken(sendText) ? label : null });
         });
         row.appendChild(btn);
       };
