@@ -273,6 +273,65 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .build();
         }
 
+        // "Done — no more expenses" (receipts-done) — works at ANY point after a plan is imported.
+        // Without this, Done clicked from the card-type/manual stage fell through to a receipt
+        // re-search ("No unattached card receipts…"). It finalizes: summarize + offer to submit.
+        if (RECEIPTS_DONE.matcher(message).matches() && state.path("anchor").hasNonNull("approvalId")) {
+            state.put("stage", "DONE");
+            session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
+            StringBuilder r = new StringBuilder();
+            summarize(documents, r, ko);
+            appendTurn(session, "user", message);
+            appendTurn(session, "assistant", r.toString());
+            session.setDraftJson(documents);
+            saveState(session, state);
+            ConversationalAgentSession savedDone = sessionRepo.save(session);
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(savedDone.getId().toString())
+                    .status(savedDone.getStatus() == null ? null : savedDone.getStatus().name())
+                    .intent("SETTLEMENT_READY")
+                    .subAgents(List.of("SETTLEMENT_AGENT"))
+                    .reply(r.toString().trim())
+                    .pendingChoices(submitChips(ko))
+                    .draftJson(savedDone.getDraftJson())
+                    .build();
+        }
+
+        // TranKind (re-)pick — from a chip (trankind:{id}) OR "register 숙박비" free text — works at
+        // ANY point after a plan is imported, so the user can add expenses of DIFFERENT types. It
+        // re-selects the TranKind and asks card types (→ search → attach or manual entry for that type).
+        if (state.path("anchor").hasNonNull("approvalId")) {
+            Long repick = null;
+            Matcher tkm = TRANKIND_PICK.matcher(message);
+            if (tkm.matches()) {
+                repick = Long.parseLong(tkm.group(1));
+            } else if (!machineToken && wantsRegister(message)) {
+                repick = matchTranKindByName(state, message);
+            }
+            if (repick != null && hasTranKind(state, repick)) {
+                selectTranKind(state, repick);
+                state.put("stage", "AWAIT_CARD_TYPES");
+                slots(state).remove("cardTypes");   // fresh card choice for the new type
+                String tkName = slots(state).path("evidenceTranKindName").asText("");
+                String r = t(ko,
+                        (tkName.isBlank() ? "" : tkName + " — ") + "which card types should I search? ",
+                        (tkName.isBlank() ? "" : tkName + " — ") + "어떤 카드의 사용 내역을 조회할까요? ");
+                appendTurn(session, "user", message);
+                appendTurn(session, "assistant", r);
+                saveState(session, state);
+                ConversationalAgentSession savedTk = sessionRepo.save(session);
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(savedTk.getId().toString())
+                        .status(savedTk.getStatus() == null ? null : savedTk.getStatus().name())
+                        .intent("TRANKIND_PICKED")
+                        .subAgents(List.of("SETTLEMENT_AGENT"))
+                        .reply(r)
+                        .pendingChoices(cardTypeChips(ko))
+                        .draftJson(savedTk.getDraftJson())
+                        .build();
+            }
+        }
+
         List<String> subAgents = new ArrayList<>();
         if (!machineToken && extractedSlots != null && extractedSlots.size() > 0) {
             subAgents.add("SLOT_FILLER_AGENT");   // it pulled at least one parameter from this turn
@@ -626,6 +685,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .intent("MANUAL_EXPENSE_ADDED")
                     .subAgents(List.of("BIZPLAY_GATEWAY"))
                     .reply(reply.trim())
+                    .pendingChoices(addAnotherChips(state, ko))   // register another TranKind, or Done
                     .draftJson(saved.getDraftJson())
                     .createdDate(saved.getCreatedDate())
                     .updatedDate(saved.getUpdatedDate())
@@ -662,10 +722,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 fileId = bizplayGatewayService.uploadReceiptFile(image, filename, bizplayToken);
             }
             ObjectNode fullBody = buildEtcExpense(base, detail, fileId);   // base + TranKind + detail + imageIds
-            createEtcReceipt(fullBody, bizplayToken);                       // single POST, no PATCH
+            long newReceiptId = createEtcReceipt(fullBody, bizplayToken);   // single POST, no PATCH
 
+            ObjectNode entry = fullBody.deepCopy();
+            if (newReceiptId > 0) {
+                entry.put("receiptId", newReceiptId);          // link to the created receipt (as in the sample)
+                confirmIssued(entry, newReceiptId, bizplayToken);   // ISSUED? pull the server copy back
+            }
             ObjectNode doc = (ObjectNode) documents.get(0);
-            doc.withArray("etcReceiptSaveRequests").add(fullBody.deepCopy());
+            doc.withArray("etcReceiptSaveRequests").add(entry);
             recomputeTotals(doc);
 
             boolean ko = "ko".equals(state.path("lang").asText(null));
@@ -680,6 +745,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .intent("MANUAL_EXPENSE_ADDED")
                     .subAgents(List.of("BIZPLAY_GATEWAY"))
                     .reply(reply)
+                    .pendingChoices(addAnotherChips(state, ko))   // register another TranKind, or Done
                     .draftJson(saved.getDraftJson())
                     .build();
         } finally {
@@ -692,6 +758,80 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         r.setCorpNo(corpNo);
         r.setSessionId(sessionId);
         return r;
+    }
+
+    /** Finalize in OUR DB only — mark APPROVED + persist the current draft_json. No BizPlay POST. */
+    @Override
+    @Transactional
+    public BizplayPlanAgentResponse saveSettlement(String corpNo, String sessionId) {
+        ConversationalAgentSession session = resolveSession(lookup(corpNo, sessionId));
+        session.setStatus(ConversationalAgentSession.AgentStatus.APPROVED);
+        session.setDraftJson(session.getDraftJson());   // no-op touch; the blob is already current
+        ConversationalAgentSession saved = sessionRepo.save(session);
+        log.info("Settlement {} saved to our DB (status=APPROVED)", saved.getId());
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(saved.getId().toString())
+                .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                .intent("SETTLEMENT_SAVED")
+                .subAgents(List.of("SETTLEMENT_AGENT"))
+                .reply("Saved to our database.")
+                .draftJson(saved.getDraftJson())
+                .createdDate(saved.getCreatedDate())
+                .updatedDate(saved.getUpdatedDate())
+                .build();
+    }
+
+    /** Summary rows of this corp's settlements that carry a draft — for the saved-settlements table. */
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.List<java.util.Map<String, Object>> listSettlements(String corpNo) {
+        java.util.List<java.util.Map<String, Object>> out = new ArrayList<>();
+        for (ConversationalAgentSession s : sessionRepo.findByCorpNo(corpNo)) {
+            if (s.getAgentType() != ConversationalAgentSession.AgentType.EXPENSE_REPORT) {
+                continue;   // settlements only, not plan sessions
+            }
+            ConversationalAgentSession full = sessionRepo.findById(s.getId()).orElse(s);
+            JsonNode draft = full.getDraftJson();
+            JsonNode doc = (draft != null && draft.isArray() && draft.size() > 0) ? draft.get(0) : null;
+            JsonNode receipts = doc == null ? null : doc.path("etcReceiptSaveRequests");
+            int count = (receipts != null && receipts.isArray()) ? receipts.size() : 0;
+            if (doc == null || count == 0) {
+                continue;   // skip empty settlements (nothing registered yet)
+            }
+            double total = 0;
+            for (JsonNode r : receipts) {
+                total += r.path("approvalAmount").asDouble(0);
+            }
+            if (total == 0) {
+                total = doc.path("totalBstrAmount").asDouble(0);
+            }
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("sessionId", s.getId().toString());
+            row.put("status", s.getStatus() == null ? null : s.getStatus().name());
+            row.put("title", doc.path("title").asText(doc.path("bstrTitle").asText("출장정산서")));
+            row.put("total", total);
+            row.put("receiptCount", count);
+            row.put("createdDate", full.getCreatedDate());
+            row.put("updatedDate", full.getUpdatedDate());
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** Read-only session load — draft_json (the registered expenses) + status, for the UI to restore. */
+    @Override
+    @Transactional(readOnly = true)
+    public BizplayPlanAgentResponse getSession(String corpNo, String sessionId) {
+        ConversationalAgentSession session = resolveSession(lookup(corpNo, sessionId));
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(session.getId() == null ? null : session.getId().toString())
+                .status(session.getStatus() == null ? null : session.getStatus().name())
+                .intent("SESSION")
+                .subAgents(List.of("SETTLEMENT_AGENT"))
+                .draftJson(session.getDraftJson())
+                .createdDate(session.getCreatedDate())
+                .updatedDate(session.getUpdatedDate())
+                .build();
     }
 
     /** deepCopy + default mestCorpNo + carry the picked TranKind into the etc-card body. */
@@ -732,16 +872,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (image != null && image.length > 0) {
             fileId = bizplayGatewayService.uploadReceiptFile(image, filename, token);
         }
+        ObjectNode entry = buildEtcExpense(fields, detail, fileId);
         if (receiptId > 0) {
-            try {
-                bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), token);
-            } catch (RuntimeException e) {
-                log.warn("issued/bulk lookup failed for {} — proceeding without it: {}", receiptId, e.getMessage());
-            }
+            entry.put("receiptId", receiptId);
+            confirmIssued(entry, receiptId, token);   // ISSUED? mark it and pull the issued id back
         }
         ObjectNode doc = (ObjectNode) documents.get(0);
-        doc.withArray("etcReceiptSaveRequests").add(buildEtcExpense(fields, detail, fileId));
+        doc.withArray("etcReceiptSaveRequests").add(entry);
         recomputeTotals(doc);
+    }
+
+    /**
+     * Retrieve the created receipt via GET /receipt/issued/bulk/{id} — the ONLY receipts it returns
+     * are ISSUED (complete). A partial (base-only) create is NOT_ISSUED and comes back empty, so this
+     * doubles as the "is it attachable yet?" check. Marks the draft entry with the status + issued id.
+     */
+    private void confirmIssued(ObjectNode entry, long receiptId, String token) {
+        try {
+            JsonNode issued = bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), token);
+            if (issued != null && issued.isArray() && issued.size() > 0) {
+                entry.put("expenseStatus", "ISSUED");
+                long issuedReceiptId = issued.get(0).path("id").asLong(0);
+                if (issuedReceiptId > 0) {
+                    entry.put("issuedReceiptId", issuedReceiptId);   // needed by the attach/enrichment step
+                }
+                log.info("etc receipt {} is ISSUED (issuedReceiptId={})", receiptId, issuedReceiptId);
+            } else {
+                entry.put("expenseStatus", "NOT_ISSUED");
+                log.info("etc receipt {} is NOT_ISSUED (issued/bulk empty) — complete it to make it attachable", receiptId);
+            }
+        } catch (RuntimeException e) {
+            log.warn("issued/bulk confirm failed for {}: {}", receiptId, e.getMessage());
+        }
     }
 
     /** deepCopy + default mestCorpNo only (PARTIAL create = the base fields, no TranKind). */
@@ -1122,22 +1284,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /** ⑥ Receipt stream -> evidence chips. Trimmed candidates cached in state. */
+    /** Widen [start,end] by −7 / +30 days so the search catches receipts dated near/just after the
+     * trip; returns the input unchanged when the dates don't parse. */
+    private String[] widenWindow(String start, String end) {
+        try {
+            java.time.LocalDate s = java.time.LocalDate.parse(start).minusDays(7);
+            java.time.LocalDate e = java.time.LocalDate.parse(end).plusDays(30);
+            return new String[]{s.toString(), e.toString()};
+        } catch (RuntimeException ex) {
+            return new String[]{start, end};
+        }
+    }
+
     private List<TripPlanAgentResponse.PendingChoice> loadEvidence(
             ObjectNode state, ArrayNode documents, long corpUserId, List<String> cardTypes, String token,
             List<String> subAgents, StringBuilder reply, boolean ko) {
-        String start = state.path("evidenceStart").asText(state.path("anchor").path("startDate").asText(""));
-        String end = state.path("evidenceEnd").asText(state.path("anchor").path("endDate").asText(""));
+        String tripStart = state.path("evidenceStart").asText(state.path("anchor").path("startDate").asText(""));
+        String tripEnd = state.path("evidenceEnd").asText(state.path("anchor").path("endDate").asText(""));
+        // Widen the search window generously around the trip — manually-registered receipts often carry
+        // dates a few days either side (or ahead) of the trip, so an exact-trip window silently misses
+        // them. The receipt browser (calendar) is the precise tool when a tighter window is wanted.
+        String[] win = widenWindow(tripStart, tripEnd);
+        String start = win[0], end = win[1];
         // Record the receipt-endpoint params in the slot bag (data in hand for this + later turns).
         ObjectNode slots = slots(state);
         slots.put("evidenceStart", start);
         slots.put("evidenceEnd", end);
         ArrayNode ct = slots.putArray("cardTypes");
         cardTypes.forEach(ct::add);
-        // Scope the search to the TranKind the user picked (if any) — the form's allowed set.
-        java.util.List<Long> tranKindIds = slots.hasNonNull("evidenceTranKindId")
-                ? java.util.List.of(slots.get("evidenceTranKindId").asLong()) : null;
+        // No TranKind scoping — the provider's filter is (tranKindId IN ids OR IS NULL), which returns
+        // the same rows anyway, and an unscoped search matches the user's working call (tranKindIds=).
         JsonNode receipts = bizplayGatewayService.getUnattachedReceipts(
-                corpUserId, start, end, cardTypes, tranKindIds, null, token);
+                corpUserId, start, end, cardTypes, null, null, token);
         subAgents.add("RECEIPT_LOOKUP_TOOL");
         ArrayNode candidates = objectMapper.createArrayNode();
         if (receipts != null && receipts.isArray()) {
@@ -1146,7 +1324,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     continue;   // canceled card approvals are not attachable evidence
                 }
                 candidates.add(trimReceipt(r));
-                if (candidates.size() >= 50) {
+                if (candidates.size() >= 10) {   // show up to 10 rows
                     break;
                 }
             }
@@ -1566,9 +1744,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 TripPlanAgentResponse.Option.builder()
                         .label(t(ko, "Personal + MyData", "개인카드+마이데이터"))
                         .sendText("card-types:PERSONAL,MY_DATA").build(),
+                // 기타증빙 (ETC): where manually-registered / etc-card receipts live — the ones the
+                // settlement flow creates. Without this, picking any card type misses them entirely.
                 TripPlanAgentResponse.Option.builder()
-                        .label(t(ko, "All cards", "전체"))
-                        .sendText("card-types:CORP,PERSONAL,MY_DATA").build());
+                        .label(t(ko, "Other receipts (기타증빙)", "기타증빙")).sendText("card-types:ETC").build(),
+                TripPlanAgentResponse.Option.builder()
+                        .label(t(ko, "All", "전체"))
+                        .sendText("card-types:CORP,PERSONAL,MY_DATA,ETC").build());
         return List.of(TripPlanAgentResponse.PendingChoice.builder()
                 .kind("CARD_TYPE").name(t(ko, "card types", "카드 종류")).options(options).build());
     }
@@ -1594,6 +1776,49 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         return List.of(TripPlanAgentResponse.PendingChoice.builder()
                 .kind("TRANKIND").name(t(ko, "expense type", "경비 항목")).options(options).build());
+    }
+
+    private boolean hasTranKind(ObjectNode state, long id) {
+        for (JsonNode tk : slots(state).withArray("planTranKinds")) {
+            if (tk.path("id").asLong() == id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A plan TranKind whose name the message mentions ("register 숙박비") — null when none. */
+    private Long matchTranKindByName(ObjectNode state, String message) {
+        if (message == null) {
+            return null;
+        }
+        for (JsonNode tk : slots(state).withArray("planTranKinds")) {
+            String name = tk.path("name").asText("");
+            if (!name.isBlank() && message.contains(name)) {
+                return tk.path("id").asLong();
+            }
+        }
+        return null;
+    }
+
+    private boolean wantsRegister(String m) {
+        return m != null && m.matches("(?ius).*(register|add|enter|입력|등록|추가|작성|하고\\s*싶|할래|할게).*");
+    }
+
+    /** After an expense is added: the plan's TranKind chips (register another) + a Done chip. */
+    private List<TripPlanAgentResponse.PendingChoice> addAnotherChips(ObjectNode state, boolean ko) {
+        List<TripPlanAgentResponse.PendingChoice> chips = new ArrayList<>();
+        List<TripPlanAgentResponse.PendingChoice> tk = tranKindChips(state, ko);
+        if (tk != null) {
+            chips.addAll(tk);
+        }
+        chips.add(TripPlanAgentResponse.PendingChoice.builder()
+                .kind("DONE").name(t(ko, "finish", "완료"))
+                .options(List.of(TripPlanAgentResponse.Option.builder()
+                        .label(t(ko, "Done — no more expenses", "완료 — 더 없음"))
+                        .sendText("receipts-done").build()))
+                .build());
+        return chips;
     }
 
     /** Remember the picked TranKind (id + type + name) — drives the receipt search and manual entry. */
@@ -1702,8 +1927,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (s.contains("마이데이터") || s.contains("my_data") || s.contains("mydata")) {
             types.add("MY_DATA");
         }
+        if (s.contains("기타") || s.contains("etc") || s.contains("other")) {
+            types.add("ETC");   // 기타증빙 — where manual/etc-card receipts live
+        }
         if (s.contains("전체") || s.contains("all")) {
-            return List.of("CORP", "PERSONAL", "MY_DATA");
+            return List.of("CORP", "PERSONAL", "MY_DATA", "ETC");
         }
         return types;
     }

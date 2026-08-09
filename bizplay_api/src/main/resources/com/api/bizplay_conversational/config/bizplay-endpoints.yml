@@ -35,3 +35,8 @@ bizplay:
     trankind-list: /api/v2/trankind/list
     # transport terminals/stations (id, vehicleType, name) for depart/arrival dropdowns
     etc-card-terminal: /api/v2/receipt/etc-card/terminal
+    # personal-card general-expense browser (POST: startDate/endDate/approvalStatusTypeList/pageIndex/pageSize)
+    general-expense: /api/v3/receipt/cloud/personal-card/my/general-expense
+    # one receipt's full detail (NOT_ISSUED) / attach uploaded files to a receipt
+    receipt-by-id: /api/v2/receipt/{receiptId}
+    receipt-image: /api/v2/receipt/image/{receiptId}

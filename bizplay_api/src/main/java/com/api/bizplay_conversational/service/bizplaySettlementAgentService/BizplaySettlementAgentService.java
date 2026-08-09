@@ -57,4 +57,25 @@ public interface BizplaySettlementAgentService {
      */
     BizplayPlanAgentResponse completeManualReceipt(String sessionId, String corpNo, JsonNode detail,
                                                    byte[] image, String filename, String bizplayToken);
+
+    /**
+     * Load a settlement session's current state (draft_json + status) without mutating it — used by the
+     * UI to restore the registered-expenses table after the chat is closed and reopened (the receipts
+     * are persisted in our DB as the session's draft_json for the time being).
+     */
+    BizplayPlanAgentResponse getSession(String corpNo, String sessionId);
+
+    /**
+     * Finalize the settlement in OUR DB only — marks the session APPROVED and persists its current
+     * draft_json, independent of the BizPlay {@code report/draft} POST (which needs enrichment). Lets a
+     * settlement be "saved" for the time being without leaving our database.
+     */
+    BizplayPlanAgentResponse saveSettlement(String corpNo, String sessionId);
+
+    /**
+     * List this corp's saved settlements (EXPENSE_REPORT sessions that have a draft) as lightweight
+     * summary rows — {sessionId, status, title, total, receiptCount, created/updatedDate} — for a table
+     * view. Full detail comes from {@link #getSession}.
+     */
+    java.util.List<java.util.Map<String, Object>> listSettlements(String corpNo);
 }

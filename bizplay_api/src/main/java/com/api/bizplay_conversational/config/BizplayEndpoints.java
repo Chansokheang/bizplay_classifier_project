@@ -73,4 +73,13 @@ public class BizplayEndpoints {
 
     /** Transport terminals (id, vehicleType, name): GET → TerminalDto[] for depart/arrival dropdowns. */
     private String etcCardTerminal = "/api/v2/receipt/etc-card/terminal";
+
+    /** Personal-card general-expense browser: POST {startDate,endDate,approvalStatusTypeList,pageIndex,pageSize}. */
+    private String generalExpense = "/api/v3/receipt/cloud/personal-card/my/general-expense";
+
+    /** One receipt's full detail (used for NOT_ISSUED): GET {receiptId}. */
+    private String receiptById = "/api/v2/receipt/{receiptId}";
+
+    /** Attach uploaded files to a receipt: PATCH {receiptId} with body [fileId, …]. */
+    private String receiptImage = "/api/v2/receipt/image/{receiptId}";
 }

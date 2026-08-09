@@ -2723,7 +2723,11 @@ function init() {
     const dl = ev.target.closest("[data-report-json]");
     if (dl) { ev.stopPropagation(); downloadReportJson(dl.getAttribute("data-report-json")); return; }
     const viewBtn = ev.target.closest("[data-report-key]");
-    if (viewBtn) openReportDetail(viewBtn.getAttribute("data-report-key"));
+    if (viewBtn) {
+      const key = viewBtn.getAttribute("data-report-key");
+      if (key.startsWith("settle:")) showSettlementDetail(key.slice(7));   // chat settlement detail modal
+      else openReportDetail(key);
+    }
   });
   $("reportBody").addEventListener("change", (ev) => {
     if (ev.target.classList.contains("report-chk")) updateReportSelBar();
@@ -3165,7 +3169,40 @@ function openSettlementChat() {
     "정산할 출장과 증빙 기간, 카드 영수증을 고르면 에이전트가 정산서를 만들어 드려요.");
   $("agentThread").innerHTML = "";                // no trip hero — settlement has its own
   agent.settle = true;
-  loadSettlementStarter();
+  // Restore an in-progress settlement (its registered expenses persist in our DB) if one exists;
+  // otherwise open on the starter hero.
+  const stored = localStorage.getItem("bizplay.settle.session");
+  if (stored) restoreSettleSession(stored);
+  else loadSettlementStarter();
+}
+
+/* Reload a saved settlement session from the DB and re-render its registered-expenses table, so the
+ * rows survive closing/reopening the chat. Falls back to the starter if it's gone or empty. */
+async function restoreSettleSession(sessionId) {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(sessionId)}`
+      + `?corpNo=${encodeURIComponent(CORP_NO)}`);
+    if (!res.ok) throw new Error("no session");
+    const json = await res.json();
+    const data = (json && (json.data || json.payload)) || {};
+    const draft = data.draftJson || null;
+    const receipts = (draft && draft[0] && draft[0].etcReceiptSaveRequests) || [];
+    if (!receipts.length) {                          // nothing worth restoring → fresh start
+      localStorage.removeItem("bizplay.settle.session");
+      loadSettlementStarter();
+      return;
+    }
+    agent.sessionId = data.sessionId || sessionId;
+    agent.draft = draft;
+    agent.status = data.status || null;
+    appendMsg("assistant", T("Welcome back — here are the expenses you registered for this settlement.",
+                             "다시 오셨네요 — 이 정산에 등록하신 경비예요."));
+    settlementReceiptsPreview();                     // the persisted rows
+    manualExpenseFollowUp();                          // continue (add another) or finish
+  } catch {
+    localStorage.removeItem("bizplay.settle.session");
+    loadSettlementStarter();
+  }
 }
 
 /* The settlement opener, per corp: GET /bizplay/agents/settlement/starter. Rendered as
@@ -3235,7 +3272,8 @@ function settlementDateAsk() {
  * so the flow deliberately ends here with no save button. */
 function settlementSummaryCard(draft) {
   const doc = (Array.isArray(draft) && draft[0]) || {};
-  const receipts = doc.bstrReceipts || [];
+  const receipts = (doc.etcReceiptSaveRequests && doc.etcReceiptSaveRequests.length)
+    ? doc.etcReceiptSaveRequests : (doc.bstrReceipts || []);   // manual expenses land in etcReceiptSaveRequests
   const won = (v) => "₩" + Math.round(num(v)).toLocaleString();
   const rows = receipts.map((r) => pcRow(
     `${r.mestName || "?"} · ${r.approvalDate || ""}`,
@@ -3249,9 +3287,41 @@ function settlementSummaryCard(draft) {
   wrap.className = "msg msg-assistant chat-section";
   wrap.innerHTML = `<div class="prev-card">
       <div class="pc-head"><span class="b-ico">${svgIcon("import")}</span> ${esc(T("Settlement summary", "정산 요약"))}</div>
-      <div class="pc-body">${body}</div></div>`;
+      <div class="pc-body">${body}</div>
+      <div class="pc-foot"><span class="pc-note"></span>
+        <button type="button" class="btn btn-primary pc-save">${esc(T("Save to our DB", "DB에 저장"))}</button></div></div>`;
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
+  const btn = wrap.querySelector(".pc-save");
+  const note = wrap.querySelector(".pc-note");
+  btn.addEventListener("click", () => saveSettlementToDb(btn, note));
+}
+
+/* Finalize the settlement in OUR DB (status APPROVED) — independent of the BizPlay report/draft POST. */
+async function saveSettlementToDb(btn, note) {
+  if (!agent.sessionId) { note.textContent = T("No settlement in progress.", "진행 중인 정산이 없어요."); return; }
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = T("Saving…", "저장 중…");
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}/save`
+      + `?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    agent.status = data.status || "APPROVED";
+    btn.textContent = "✓ " + T("Saved", "저장됨");
+    note.textContent = T("Saved to our database (status APPROVED).", "우리 DB에 저장했어요 (상태 APPROVED).");
+    localStorage.removeItem("bizplay.settle.session");   // finalized — next open starts fresh
+    setTimeout(() => {                                    // let the ✓ show, then close + refresh the report table
+      closeCreate();
+      loadReports();
+    }, 700);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = prev;
+    note.textContent = "⚠ " + friendlyError(e.message);
+  }
 }
 
 /* Manual expense entry (⑧) — the trip has no matching card receipt, so the user types
@@ -3344,6 +3414,27 @@ function readTransportDetail(w) {
   return detail;
 }
 
+/* supply/VAT are optional. Enter a VAT and Supply = Amount − VAT; leave VAT blank → both null.
+ * originalSupply/originalVat are left null (not collected). */
+function splitVat(amount, vatRaw) {
+  const vat = (vatRaw === "" || vatRaw == null) ? null : num(vatRaw);
+  if (!vat || vat <= 0) {
+    return { supplyAmount: null, vatAmount: null, originalSupplyAmount: null, originalVatAmount: null };
+  }
+  return { vatAmount: vat, supplyAmount: Math.max(0, amount - vat), originalSupplyAmount: null, originalVatAmount: null };
+}
+/* Live-fill the read-only Supply field from Amount − VAT as the user types either one. */
+function autoSupplyFromVat(amtEl, vatEl, supplyEl) {
+  if (!amtEl || !vatEl || !supplyEl) return;
+  const recalc = () => {
+    const amt = num(amtEl.value);
+    const vat = vatEl.value === "" ? null : num(vatEl.value);
+    supplyEl.value = (vat && vat > 0) ? Math.max(0, amt - vat) : "";
+  };
+  amtEl.addEventListener("input", recalc);
+  vatEl.addEventListener("input", recalc);
+}
+
 /* STEP 1 — register the receipt with the BASE fields only (POST …/manual-expense/create). The
  * additional detail + image are a separate step (settlementManualDetailForm) so the receipt is
  * created first, then enriched — matching the etc-card → receipt-etc flow. */
@@ -3357,14 +3448,12 @@ function settlementManualExpenseForm() {
   const draft0 = (agent.draft && agent.draft[0]) || {};
   const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
 
-  // Transport receipts carry no supply/VAT breakdown (null); other types collect it.
+  // supply/VAT default to null (not entered). If a VAT is typed, Supply auto = Amount − VAT.
   const baseAmounts = isTransport
     ? f(T("Amount", "승인금액"), money("approvalAmount"))
     : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
-       ${f(T("Supply", "공급가액"), money("supplyAmount"))}
-       ${f(T("VAT", "부가세"), money("vatAmount"))}
-       ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
-       ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}`;
+       ${f(T("VAT (optional)", "부가세 (선택)"), money("vatAmount"))}
+       ${f(T("Supply (auto)", "공급가액 (자동)"), `<input type="number" data-k="supplyAmount" readonly placeholder="—" tabindex="-1">`)}`;
 
   const html = `<div class="mx-grid">
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
@@ -3391,6 +3480,9 @@ function settlementManualExpenseForm() {
   const note = w.querySelector(".mx-note");
   const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
 
+  // Supply auto-fills from Amount − VAT the moment a VAT is entered; blank when VAT is empty.
+  if (!isTransport) autoSupplyFromVat(el("approvalAmount"), el("vatAmount"), el("supplyAmount"));
+
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
@@ -3408,12 +3500,7 @@ function settlementManualExpenseForm() {
       approvalAmount,
       // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
     };
-    if (!isTransport) {
-      expense.supplyAmount = num(el("supplyAmount").value);
-      expense.originalSupplyAmount = num(el("originalSupplyAmount").value);
-      expense.vatAmount = num(el("vatAmount").value);
-      expense.originalVatAmount = num(el("originalVatAmount").value);
-    }
+    if (!isTransport) Object.assign(expense, splitVat(approvalAmount, el("vatAmount").value));
     note.textContent = "";
     note.classList.remove("mx-warn");
     done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`);
@@ -3552,7 +3639,8 @@ async function submitManualDetail(detail, file) {
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;
     appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
-    manualExpenseFollowUp();
+    settlementReceiptsPreview();                 // show the running list after each add
+    manualExpenseFollowUp(data.pendingChoices);
     return true;
   } catch (e) {
     typing.remove();
@@ -3588,10 +3676,8 @@ function settlementManualFullForm() {
   const baseAmounts = isTransport
     ? f(T("Amount", "승인금액"), money("approvalAmount"))
     : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
-       ${f(T("Supply", "공급가액"), money("supplyAmount"))}
-       ${f(T("VAT", "부가세"), money("vatAmount"))}
-       ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
-       ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}`;
+       ${f(T("VAT (optional)", "부가세 (선택)"), money("vatAmount"))}
+       ${f(T("Supply (auto)", "공급가액 (자동)"), `<input type="number" data-k="supplyAmount" readonly placeholder="—" tabindex="-1">`)}`;
   const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
   const detailSection = isTransport
     ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
@@ -3635,6 +3721,7 @@ function settlementManualFullForm() {
   if (vehSel && tpBox) {
     vehSel.addEventListener("change", () => renderTpSub(tpBox, vehSel.value, oversea));
   }
+  if (!isTransport) autoSupplyFromVat(el("approvalAmount"), el("vatAmount"), el("supplyAmount"));
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = el("image").files[0];
@@ -3653,12 +3740,7 @@ function settlementManualFullForm() {
       overseasUsed: el("overseasUsed").checked,
       approvalAmount,
     };
-    if (!isTransport) {
-      expense.supplyAmount = num(el("supplyAmount").value);
-      expense.originalSupplyAmount = num(el("originalSupplyAmount").value);
-      expense.vatAmount = num(el("vatAmount").value);
-      expense.originalVatAmount = num(el("originalVatAmount").value);
-    }
+    if (!isTransport) Object.assign(expense, splitVat(approvalAmount, el("vatAmount").value));
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -3706,7 +3788,8 @@ async function submitManualComplete(expense, detail, file) {
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;
     appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
-    manualExpenseFollowUp();
+    settlementReceiptsPreview();                 // show the running list after each add
+    manualExpenseFollowUp(data.pendingChoices);
     return true;
   } catch (e) {
     typing.remove();
@@ -3745,6 +3828,195 @@ function runDemoStep(step) {
       break;
   }
 }
+/* ---- Personal-card general-expense browser: calendar + issued/not-issued toggle + paged table ---- */
+/* Renders in the chat thread when the user asks to "show receipts". status: NOT_DRAFTED (issued,
+ * default) or NOT_ISSUED. Clicking a row loads its detail via the status-appropriate endpoint. */
+function settlementReceiptBrowser(status) {
+  const st = status === "NOT_ISSUED" ? "NOT_ISSUED" : "NOT_DRAFTED";
+  const today = new Date().toISOString().slice(0, 10);
+  const start0 = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+  const anchor = (agent.draft && agent.draft[0]) || {};
+  const startDefault = anchor.startDate || start0;
+  const endDefault = anchor.endDate || today;
+
+  const html = `<div class="rb-panel">
+      <div class="rb-controls">
+        <label class="rb-cal"><span>${esc(T("From", "시작일"))}</span><input type="date" data-rb="start" value="${startDefault}"></label>
+        <label class="rb-cal"><span>${esc(T("To", "종료일"))}</span><input type="date" data-rb="end" value="${endDefault}"></label>
+        <div class="rb-toggle" role="tablist">
+          <button type="button" data-rb-status="NOT_DRAFTED" class="${st === "NOT_DRAFTED" ? "active" : ""}">${esc(T("Issued", "발급"))}</button>
+          <button type="button" data-rb-status="NOT_ISSUED" class="${st === "NOT_ISSUED" ? "active" : ""}">${esc(T("Not issued", "미발급"))}</button>
+        </div>
+        <button type="button" class="btn btn-primary rb-search">${esc(T("Search", "조회"))}</button>
+      </div>
+      <div class="rb-table-wrap">
+        <table class="rb-table">
+          <thead><tr>
+            <th>${esc(T("Date", "일자"))}</th><th>${esc(T("Merchant", "가맹점"))}</th>
+            <th>${esc(T("Type", "항목"))}</th><th class="rb-num">${esc(T("Amount", "금액"))}</th>
+            <th>${esc(T("Status", "상태"))}</th><th></th>
+          </tr></thead>
+          <tbody class="rb-body"><tr><td colspan="6" class="rb-empty">${esc(T("Choose a period and search.", "기간을 선택하고 조회하세요."))}</td></tr></tbody>
+        </table>
+      </div>
+      <div class="rb-pager">
+        <button type="button" class="rb-prev" disabled>${esc(T("Prev", "이전"))}</button>
+        <span class="rb-page"></span>
+        <button type="button" class="rb-next" disabled>${esc(T("Next", "다음"))}</button>
+      </div>
+      <div class="rb-detail"></div></div>`;
+
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget rb-wrap">${html}</div>`;
+  const w = wrap.querySelector(".rb-panel");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+
+  const q = (sel) => w.querySelector(sel);
+  const state = { status: st, page: 0, size: 10 };
+  const won = (n) => "₩" + Number(n || 0).toLocaleString();
+
+  const load = async () => {
+    const startDate = q('[data-rb="start"]').value;
+    const endDate = q('[data-rb="end"]').value;
+    const body = q(".rb-body");
+    body.innerHTML = `<tr><td colspan="6" class="rb-empty"><span class="spin"></span> ${esc(T("Loading…", "불러오는 중…"))}</td></tr>`;
+    try {
+      const url = `${BZ_API_BASE()}/agents/settlement/receipts`
+        + `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+        + `&status=${encodeURIComponent(state.status)}&page=${state.page}&size=${state.size}`;
+      const res = await fetch(url);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw apiError(json, res);
+      const rows = (json && (json.data || json.payload)) || [];
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="6" class="rb-empty">${esc(state.page > 0
+          ? T("No more receipts.", "더 이상 영수증이 없어요.")
+          : T("No receipts for this period.", "해당 기간에 영수증이 없어요."))}</td></tr>`;
+      } else {
+        body.innerHTML = rows.map((r) => {
+          const badge = r.expenseStatus === "ISSUED"
+            ? `<span class="rc-badge rc-ok">${esc(T("Issued", "발급"))}</span>`
+            : `<span class="rc-badge rc-wait">${esc(T("Not issued", "미발급"))}</span>`;
+          return `<tr data-id="${esc(r.id)}" data-st="${esc(r.expenseStatus || "")}">
+            <td>${esc(r.approvalDate || "")}</td>
+            <td class="rb-mest">${esc(r.mestName || "—")}</td>
+            <td>${esc(r.tranKind || r.tranKindType || "")}</td>
+            <td class="rb-num">${esc(won(r.totalAmount != null ? r.totalAmount : r.approvalAmount))}</td>
+            <td>${badge}</td>
+            <td><button type="button" class="rb-view">${esc(T("Detail", "상세"))}</button></td></tr>`;
+        }).join("");
+      }
+      q(".rb-page").textContent = T("Page ", "페이지 ") + (state.page + 1);
+      q(".rb-prev").disabled = state.page === 0;
+      q(".rb-next").disabled = rows.length < state.size;   // a short page = the last page
+    } catch (e) {
+      body.innerHTML = `<tr><td colspan="6" class="rb-empty rb-err">⚠ ${esc(friendlyError(e.message))}</td></tr>`;
+    }
+  };
+
+  const showDetail = async (id, rowStatus) => {
+    const box = q(".rb-detail");
+    box.innerHTML = `<div class="rb-detail-in"><span class="spin"></span> ${esc(T("Loading detail…", "상세 불러오는 중…"))}</div>`;
+    try {
+      const url = `${BZ_API_BASE()}/agents/settlement/receipts/${encodeURIComponent(id)}?status=${encodeURIComponent(rowStatus || "ISSUED")}`;
+      const res = await fetch(url);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw apiError(json, res);
+      const d = (json && (json.data || json.payload)) || {};
+      const obj = Array.isArray(d) ? (d[0] || {}) : d;
+      box.innerHTML = receiptDetailHtml(obj, id, rowStatus);
+    } catch (e) {
+      box.innerHTML = `<div class="rb-detail-in rb-err">⚠ ${esc(friendlyError(e.message))}</div>`;
+    }
+  };
+
+  q(".rb-search").addEventListener("click", () => { state.page = 0; load(); });
+  q(".rb-prev").addEventListener("click", () => { if (state.page > 0) { state.page--; load(); } });
+  q(".rb-next").addEventListener("click", () => { state.page++; load(); });
+  w.querySelectorAll("[data-rb-status]").forEach((b) => b.addEventListener("click", () => {
+    w.querySelectorAll("[data-rb-status]").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    state.status = b.getAttribute("data-rb-status");
+    state.page = 0; load();
+  }));
+  w.querySelector(".rb-body").addEventListener("click", (ev) => {
+    const tr = ev.target.closest("tr[data-id]");
+    if (tr && ev.target.closest(".rb-view")) showDetail(tr.getAttribute("data-id"), tr.getAttribute("data-st"));
+  });
+  load();   // initial search on the default period
+  return w;
+}
+
+/* Receipt detail as a labeled card (not raw JSON). Normalizes the two response shapes — issued/bulk
+ * rows (flat) and receipt/{id} (nested mest/issuedReceipts/receiptEtc) — and shows only useful fields. */
+function receiptDetailHtml(obj, id, status) {
+  const issued = obj.issuedReceipts && obj.issuedReceipts[0];   // receipt/{id} nests the issued row here
+  const etc = obj.receiptEtc || (issued && issued.receiptEtc) || {};
+  const pick = (...v) => v.find((x) => x != null && x !== "");
+  const won = (n) => n == null ? "" : "₩" + Number(n).toLocaleString();
+  const merchant = pick(obj.mestName, obj.mest && obj.mest.mestName, issued && issued.mestName);
+  const tkName = pick(obj.tranKindName, obj.tranKind, issued && issued.tranKindName);
+  const tkType = pick(obj.tranKindType, issued && issued.tranKindType, etc.tranKindType);
+  const amount = pick(obj.approvalAmount, obj.totalAmount, issued && issued.approvalAmount);
+  const supply = pick(obj.supplyAmount, obj.splAmt, issued && issued.splAmt);
+  const vat = pick(obj.vatAmount, obj.vatAmt, issued && issued.vatAmt);
+  const currency = pick(obj.currencyCode, obj.currCode, issued && issued.currencyCode);
+  const st = pick(obj.receiptStatusType, obj.expenseStatus, status);
+  const cardType = pick(obj.cardType, obj.card && obj.card.cardType, issued && issued.cardType);
+  const cardNo = pick(obj.cardNo, obj.card && obj.card.cardNumber, issued && issued.cardNo);
+  const time = (obj.approvalTime || "").slice(0, 5);
+  const when = [pick(obj.approvalDate, issued && issued.approvalDate), time].filter(Boolean).join(" ");
+  const veh = rcLabel(etc.vehicleType, TP_VEH_DOMESTIC, TP_VEH_OVERSEA, TP_TRAIN_TYPES);
+  const seat = rcLabel(etc.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS) || etc.seatClass;
+  const route = (etc.depart || etc.arrival)
+    ? `${etc.depart || "?"} → ${etc.arrival || "?"}` + (etc.routeType ? " · " + rcLabel(etc.routeType, TP_ROUTE) : "")
+    : "";
+  const period = (etc.usedStartDate && etc.usedEndDate && etc.usedStartDate !== etc.usedEndDate)
+    ? `${etc.usedStartDate} ~ ${etc.usedEndDate}` : (etc.usedStartDate || "");
+  const imgs = (pick(obj.imageIds, issued && issued.imageIds) || []).length;
+  const badge = st === "ISSUED" ? `<span class="rc-badge rc-ok">${esc(T("Issued", "발급"))}</span>`
+    : st === "NOT_ISSUED" ? `<span class="rc-badge rc-wait">${esc(T("Not issued", "미발급"))}</span>`
+    : (st ? `<span class="rc-badge">${esc(st)}</span>` : "");
+  const f = (label, value) => (value == null || value === "")
+    ? "" : `<div class="rc-f"><span class="rc-k">${esc(label)}</span><span class="rc-v">${esc(value)}</span></div>`;
+  const fields = [
+    f(T("Type", "경비 항목"), [tkName, tkType && tkType !== tkName ? "(" + tkType + ")" : ""].filter(Boolean).join(" ")),
+    f(T("When", "일시"), when),
+    f(T("Amount", "승인금액"), won(amount) + (currency && currency !== "KRW" ? " " + currency : "")),
+    f(T("Supply / VAT", "공급가액 / 부가세"), (supply != null || vat != null) ? `${won(supply)} / ${won(vat)}` : ""),
+    f(T("Card", "카드"), [cardType, cardNo].filter(Boolean).join(" · ")),
+    f(T("Transport", "교통수단"), veh),
+    f(T("Route", "구간"), route),
+    f(T("Seat", "좌석"), seat),
+    f(T("Used", "이용일"), period),
+    f(T("Room", "객실"), etc.roomType),
+    f(T("Star", "성급"), etc.starRating),
+    f(T("Partner hotel", "제휴 호텔"), etc.partnerHotel),
+    f(T("Headcount", "인원수"), etc.personCount),
+    f(T("Meal", "식대 구분"), etc.foodDivisionType),
+    f(T("Overseas", "해외"), obj.overseasUsed ? T("Yes", "예") : ""),
+    f(T("Image", "이미지"), imgs ? imgs + T(" file(s)", "개") : ""),
+  ].join("");
+  return `<div class="rb-detail-in"><div class="rc-item">
+      <div class="rc-top"><span class="rc-name">${esc(merchant || T("(no name)", "(이름 없음)"))}</span>
+        <span class="rc-amt">${esc(won(amount))}</span>${badge}
+        <span class="rc-badge">#${esc(id)}</span></div>
+      <div class="rc-grid">${fields}</div></div></div>`;
+}
+
+/* True when a settlement message is asking to browse receipts; captures the "not issued" variant. */
+function receiptBrowseIntent(message) {
+  if (!message) return null;
+  const m = message.toLowerCase();
+  const asks = /(show|list|browse|find|see).*(receipt|expense)|(receipt|expense).*(show|list)|영수증|경비.*(보여|목록|조회)|보여.*영수증/;
+  if (!asks.test(message) && !asks.test(m)) return null;
+  const notIssued = /(not[\s-]*issued|un[\s-]*issued|incomplete|미발급|미완료)/i.test(message);
+  return notIssued ? "NOT_ISSUED" : "NOT_DRAFTED";
+}
+
 function buildDemoPanel() {
   if (document.getElementById("demoPanel")) return;
   const step = (act, label, hint) => "<li>"
@@ -3775,14 +4047,171 @@ function buildDemoPanel() {
     b.addEventListener("click", () => runDemoStep(b.getAttribute("data-demo"))));
 }
 
-/* The expense landed but the evidence stage is still open: add another, or close it. */
-function manualExpenseFollowUp() {
+/* Localized label for an enum value (vehicle/route/seat), searching the [en,ko,value] maps. */
+function rcLabel(value, ...lists) {
+  if (!value) return "";
+  for (const list of lists) {
+    const hit = list.find((it) => it[2] === value);
+    if (hit) return T(hit[0], hit[1]);
+  }
+  return value;   // unknown code → show it raw
+}
+
+/* Running preview of every expense registered so far — a labeled card per receipt that rides down
+ * after each add/update, sourced from the draft's etcReceiptSaveRequests (mirrors what issued/bulk
+ * stores). Shows the full input, the ISSUED status + receipt #, and a running total. */
+/* One registered-expense (flat etcReceiptSaveRequests entry) as a labeled card — shared by the chat
+ * preview and the saved-settlement detail modal. */
+function settleReceiptItemHtml(r, i) {
+  const won = (n) => "₩" + Number(n || 0).toLocaleString();
+  const fld = (label, value) => (value == null || value === "")
+    ? "" : `<div class="rc-f"><span class="rc-k">${esc(label)}</span><span class="rc-v">${esc(value)}</span></div>`;
+  const status = r.expenseStatus || "";
+  const badge = status === "ISSUED"
+    ? `<span class="rc-badge rc-ok">${esc(T("Issued", "발급"))}${r.receiptId ? " · #" + r.receiptId : ""}</span>`
+    : status === "NOT_ISSUED"
+      ? `<span class="rc-badge rc-wait">${esc(T("Not issued", "미발급"))}${r.receiptId ? " · #" + r.receiptId : ""}</span>`
+      : (r.receiptId ? `<span class="rc-badge">#${esc(r.receiptId)}</span>` : "");
+  const time = (r.approvalTime || "").slice(0, 5).replace(/^(\d{2})(\d{2})$/, "$1:$2");
+  const when = [r.approvalDate, time].filter(Boolean).join(" ");
+  const route = (r.depart || r.arrival)
+    ? `${r.depart || "?"} → ${r.arrival || "?"}` + (r.routeType ? " · " + rcLabel(r.routeType, TP_ROUTE) : "")
+    : "";
+  const period = (r.usedStartDate && r.usedEndDate && r.usedStartDate !== r.usedEndDate)
+    ? `${r.usedStartDate} ~ ${r.usedEndDate}` : (r.usedStartDate || "");
+  const veh = rcLabel(r.vehicleType, TP_VEH_DOMESTIC, TP_VEH_OVERSEA, TP_TRAIN_TYPES);
+  const seat = rcLabel(r.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS) || r.seatClass;
+  const typeLine = [r.tranKindName, r.tranKindType && r.tranKindType !== r.tranKindName ? "(" + r.tranKindType + ")" : ""]
+    .filter(Boolean).join(" ");
+  const imgs = (r.imageIds || []).length;
+  const fields = [
+    fld(T("Type", "경비 항목"), typeLine),
+    fld(T("When", "일시"), when),
+    fld(T("Amount", "승인금액"), won(r.approvalAmount) + (r.currencyCode && r.currencyCode !== "KRW" ? " " + r.currencyCode : "")),
+    fld(T("Supply / VAT", "공급가액 / 부가세"), (r.supplyAmount != null || r.vatAmount != null)
+      ? `${won(r.supplyAmount)} / ${won(r.vatAmount)}` : ""),
+    fld(T("Transport", "교통수단"), veh),
+    fld(T("Route", "구간"), route),
+    fld(T("Seat", "좌석"), seat),
+    fld(T("Used", "이용일"), period),
+    fld(T("Room", "객실"), r.roomType),
+    fld(T("Star", "성급"), r.starRating),
+    fld(T("Partner hotel", "제휴 호텔"), r.partnerHotel),
+    fld(T("Headcount", "인원수"), r.personCount),
+    fld(T("Meal", "식대 구분"), r.foodDivisionType),
+    fld(T("Overseas", "해외"), r.overseasUsed ? T("Yes", "예") : ""),
+    fld(T("Image", "이미지"), imgs ? imgs + T(" file(s)", "개") : ""),
+  ].join("");
+  return `<div class="rc-item">
+      <div class="rc-top"><span class="rc-idx">${i + 1}</span>
+        <span class="rc-name">${esc(r.mestName || T("(no name)", "(이름 없음)"))}</span>
+        <span class="rc-amt">${esc(won(r.approvalAmount))}</span>${badge}</div>
+      <div class="rc-grid">${fields}</div></div>`;
+}
+
+function settlementReceiptsPreview() {
+  const doc = (agent.draft && agent.draft[0]) || {};
+  const list = doc.etcReceiptSaveRequests || [];
+  if (!list.length) return;
+  const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
+  const body = list.map((r, i) => settleReceiptItemHtml(r, i)).join("")
+    + `<div class="rc-total"><span>${esc(T("Total", "합계"))}</span>`
+    + `<b>${esc("₩" + total.toLocaleString())} · ${list.length}${esc(T(" item(s)", "건"))}</b></div>`;
+  previewCard("settleReceipts", T("Registered expenses", "등록한 경비"), "briefcase", body);
+}
+
+/* Fetch this corp's saved settlements (our DB) and map them into report-table rows — settlements ARE
+ * the settlement/expense reports, so they live in the same #reportBody table, marked with a Chat tag. */
+async function fetchSettlementRows() {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/saved?corpNo=${encodeURIComponent(CORP_NO)}`);
+    if (!res.ok) return [];
+    const json = await res.json().catch(() => ({}));
+    const rows = (json && (json.data || json.payload)) || [];
+    return rows.map((r) => ({
+      key: "settle:" + r.sessionId,
+      settlement: true,
+      sessionId: r.sessionId,
+      title: r.title || "출장정산서",
+      total: r.total || 0,
+      lineCount: r.receiptCount || 0,
+      date: (r.updatedDate || "").slice(0, 10),
+      approvalStatus: r.status || "",   // APPROVED / POSTED / READY_FOR_REVIEW
+      department: "", plan: null, audit: null, tripPlanId: null, createdAt: r.createdDate, lines: [],
+    }));
+  } catch { return []; }
+}
+
+/* One settlement rendered into the 15-column report table (empty for the plan-only columns). */
+function settlementReportRow(g, i) {
+  const st = g.approvalStatus || "";
+  const pill = `<span class="appr-pill ${st === "POSTED" || st === "APPROVED" ? "ok" : "pending"}">${esc(st || "—")}</span>`;
+  return `<tr class="row-click" data-report-key="${esc(g.key)}">
+      <td class="c-check"><input type="checkbox" class="chk report-chk" data-id="${esc(g.key)}" data-title="${esc(g.title)}" aria-label="Select" disabled /></td>
+      <td class="c-no">${i + 1}</td>
+      <td><span class="doc-no">${esc("정산 · " + String(g.sessionId || "").slice(0, 8))}</span> <span class="tagpill">Chat</span></td>
+      <td class="c-title" title="${esc(g.title)}">${esc(g.title)}</td>
+      <td class="c-trav">—</td>
+      <td class="c-dept">—</td>
+      <td>—</td>
+      <td class="c-period">${esc(g.date || "—")}</td>
+      <td>${g.lineCount}</td>
+      <td class="er-amt">${fmtMoney(g.total)}</td>
+      <td>${pill}</td>
+      <td><span class="muted">—</span></td>
+      <td class="c-period">${esc(g.date || "—")}</td>
+      <td class="c-json"><span class="muted">—</span></td>
+      <td><div class="row-actions"><button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button></div></td>
+    </tr>`;
+}
+
+/* Detail modal for a saved settlement — its registered receipts as labeled cards. */
+async function showSettlementDetail(sessionId) {
+  let ov = document.getElementById("ssDetailOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "ssDetailOverlay";
+    ov.className = "overlay";
+    ov.innerHTML = `<div class="sheet ss-sheet"><div class="sheet-head">`
+      + `<h2>${esc(T("Settlement detail", "정산 상세"))}</h2>`
+      + `<button class="x-btn" aria-label="Close">✕</button></div>`
+      + `<div class="sheet-body ss-detail-body"></div></div>`;
+    document.body.appendChild(ov);
+    ov.querySelector(".x-btn").addEventListener("click", () => ov.classList.add("hidden"));
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.add("hidden"); });
+  }
+  const body = ov.querySelector(".ss-detail-body");
+  body.innerHTML = `<div class="ss-empty"><span class="spin"></span> ${esc(T("Loading…", "불러오는 중…"))}</div>`;
+  ov.classList.remove("hidden");
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(sessionId)}`
+      + `?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    const doc = (data.draftJson && data.draftJson[0]) || {};
+    const list = doc.etcReceiptSaveRequests || [];
+    const won = (n) => "₩" + Number(n || 0).toLocaleString();
+    const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
+    body.innerHTML = `<div class="ss-detail-meta">${esc(data.status || "")} · ${list.length} `
+      + `${esc(T("receipt(s)", "건"))} · ${esc(won(total))}</div>`
+      + (list.length ? list.map((r, i) => settleReceiptItemHtml(r, i)).join("")
+                     : `<div class="ss-empty">${esc(T("No receipts.", "영수증이 없어요."))}</div>`);
+  } catch (e) {
+    body.innerHTML = `<div class="ss-empty rb-err">⚠ ${esc(friendlyError(e.message))}</div>`;
+  }
+}
+
+/* The expense landed but the evidence stage is still open. When the backend hands us its
+ * "register another" chips (the plan's TranKind types + Done) we render THOSE, so the user can pick
+ * a DIFFERENT expense type (교통비 → 숙박비) instead of re-registering the same one. */
+function manualExpenseFollowUp(pendingChoices) {
   const thread = $("agentThread");
   const wrap = document.createElement("div");
   wrap.className = "msg msg-assistant";
   const row = document.createElement("div");
   row.className = "choice-row";
-  const chip = (label, onPick) => {
+  const chip = (label, sendText, echoAs) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "choice-chip";
@@ -3791,19 +4220,22 @@ function manualExpenseFollowUp() {
       if (agent.busy || row.classList.contains("choice-done")) return;
       row.classList.add("choice-done");
       btn.classList.add("choice-picked");
-      onPick();
+      $("agentInput").value = sendText;
+      sendAgent({ keepLang: true, echoAs: echoAs || label });   // token to the agent, label in the thread
     });
     row.appendChild(btn);
   };
-  chip(T("Add another expense", "경비 더 입력"), () => {
-    $("agentInput").value = "manual-expense";   // re-ask partial/complete
-    sendAgent({ keepLang: true });
-  });
-  const doneLabel = T("Done", "첨부 완료");
-  chip(doneLabel, () => {
-    $("agentInput").value = "receipts-done";
-    sendAgent({ keepLang: true, echoAs: doneLabel });   // token to the agent, label in the thread
-  });
+
+  const groups = Array.isArray(pendingChoices) ? pendingChoices : [];
+  const options = groups.flatMap((g) => (g && g.options) || []);
+  if (options.length) {
+    // Backend-driven: "register another 교통비/숙박비 …" + a Done chip, straight from the plan.
+    options.forEach((o) => chip(o.label, o.sendText, o.label));
+  } else {
+    // Fallback (no plan TranKinds): the original add-another / done pair.
+    chip(T("Add another expense", "경비 더 입력"), "manual-expense");
+    chip(T("Done", "첨부 완료"), "receipts-done", T("Done", "첨부 완료"));
+  }
   wrap.appendChild(row);
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
@@ -4240,6 +4672,18 @@ async function sendAgent(opts) {
   }
   if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
 
+  // Settlement: a "show my receipts" ask opens the personal-card browser (calendar + issued/
+  // not-issued toggle + paged table). "not issued" in the ask flips the default Issued filter.
+  if (agent.settle && message) {
+    const brStatus = receiptBrowseIntent(message);
+    if (brStatus) {
+      appendMsg("user", message);
+      $("agentInput").value = "";
+      settlementReceiptBrowser(brStatus);
+      return;
+    }
+  }
+
   // RETIRED: predefined "show all" phrase-matching - we don't guess what users might ask.
   // Draft questions go to the backend's dynamic draft-QA (intent DRAFT_QUERY), which answers
   // ANY phrasing over any subset of the draft; for view-style requests the UI re-presents
@@ -4361,6 +4805,7 @@ async function sendAgent(opts) {
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;   // full last turn (missingFields etc.) for panels/tests
+    if (agent.settle && agent.sessionId) localStorage.setItem("bizplay.settle.session", agent.sessionId);
     // Form first, reply second: the turn reads as USER -> updated previews ->
     // the agent's message -> any follow-up chips. (A form-apply failure must not
     // swallow the reply, hence the try.)
@@ -4411,7 +4856,7 @@ async function sendAgent(opts) {
         // then posted multipart (a file can't ride a chat turn).
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
         else if (data.intent === "MANUAL_EXPENSE_PROMPT_FULL") settlementManualFullForm();
-        else if (data.intent === "SETTLEMENT_READY") settlementSummaryCard(data.draftJson);
+        else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
       }
       else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
       else if (wizardIncomplete() || wizardHasPendingExtra()) nextWizardStep();
@@ -5665,6 +6110,8 @@ async function loadReports() {
         title: (plan && plan.title) || (rep.tripPlanId ? "(trip plan removed)" : "Untitled report"),
       };
     });
+    const settleRows = await fetchSettlementRows();   // saved settlements are settlement reports — same table
+    reportsCache = settleRows.concat(reportsCache);   // newest chat settlements first
     renderReports();
     animateRowsIn("reportBody");
   } catch (e) {
@@ -5715,6 +6162,7 @@ function renderReports() {
     return;
   }
   body.innerHTML = list.map((g, i) => {
+    if (g.settlement) return settlementReportRow(g, i);   // chat settlement → its own row shape
     const doc = `2026-지출보고서-${shortNo(g.key, i + 1)}`;
     const p = g.plan || {};
     const t0 = (p.travelers && p.travelers[0]) || {};

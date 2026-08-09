@@ -239,7 +239,8 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         if (content == null || content.length == 0) {
             throw new IllegalArgumentException("The receipt image is empty.");
         }
-        String url = buildUrl(endpoints.getFileboxUpload());
+        // pdf2Img converts PDF pages to images; no thumbnail needed for receipt evidence.
+        String url = buildUrl(endpoints.getFileboxUpload()) + "?pdf2Img=true&useThumbnail=false";
         String bearer = resolveToken(token);
         // multipart/form-data field name is "multipartFile" (see the provider's OpenAPI).
         org.springframework.util.MultiValueMap<String, Object> form =
@@ -288,6 +289,76 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         String ids = receiptIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
         String url = buildUrl(endpoints.getIssuedBulk(), "ids", ids);
         return get(url, token);
+    }
+
+    @Override
+    public JsonNode getGeneralExpenses(String startDate, String endDate, java.util.List<String> statusList,
+                                       int pageIndex, int pageSize, String token) {
+        String url = buildUrl(endpoints.getGeneralExpense());
+        String bearer = resolveToken(token);
+        com.fasterxml.jackson.databind.node.ObjectNode body = objectMapper.createObjectNode();
+        body.put("startDate", startDate);
+        body.put("endDate", endDate);
+        com.fasterxml.jackson.databind.node.ArrayNode statuses = body.putArray("approvalStatusTypeList");
+        (statusList == null || statusList.isEmpty() ? java.util.List.of("NOT_DRAFTED") : statusList)
+                .forEach(statuses::add);
+        body.put("pageIndex", Math.max(0, pageIndex));
+        body.put("pageSize", pageSize <= 0 ? 10 : pageSize);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(body))
+                    .retrieve()
+                    .body(String.class);
+            return objectMapper.readTree(response == null || response.isBlank() ? "[]" : response);
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("general-expense lookup failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the receipt search (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("general-expense lookup failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay receipt search failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
+    public JsonNode getReceiptById(long receiptId, String token) {
+        return get(buildUrl(endpoints.getReceiptById(), "receiptId", receiptId), token);
+    }
+
+    @Override
+    public String attachReceiptImages(long receiptId, java.util.List<Long> fileIds, String token) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            throw new IllegalArgumentException("No file ids to attach.");
+        }
+        String url = buildUrl(endpoints.getReceiptImage(), "receiptId", receiptId);
+        String bearer = resolveToken(token);
+        com.fasterxml.jackson.databind.node.ArrayNode body = objectMapper.createArrayNode();
+        fileIds.forEach(body::add);   // request body is a bare array of file ids, e.g. [78408]
+        try {
+            String response = restClient.patch()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(body))
+                    .retrieve()
+                    .body(String.class);
+            log.info("BizPlay receipt image attach ok (receiptId={}, fileIds={})", receiptId, fileIds);
+            return response;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("receipt image attach failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the image attach (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("receipt image attach failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay image attach failed: " + rootMessage(e));
+        }
     }
 
     @Override

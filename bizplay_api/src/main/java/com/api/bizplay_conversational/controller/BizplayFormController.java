@@ -130,6 +130,36 @@ public class BizplayFormController {
                 bizplaySettlementAgentService.createSettlement(sessionId, corpNo, token, approvalLines)));
     }
 
+    @Operation(summary = "List this corp's saved settlements (summary rows) for the settlements table.")
+    @GetMapping("/agents/settlement/saved")
+    public ResponseEntity<ApiResponse<List<java.util.Map<String, Object>>>> listSavedSettlements(
+            @RequestParam("corpNo") String corpNo) {
+        log.info("GET /bizplay/agents/settlement/saved - corpNo={}", corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.listSettlements(corpNo)));
+    }
+
+    @Operation(summary = "Finalize the settlement in OUR DB only — marks the session APPROVED and "
+            + "persists its draft_json, independent of the BizPlay report/draft POST.")
+    @PostMapping("/agents/settlement/{sessionId}/save")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> saveSettlementToDb(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo) {
+        log.info("POST /bizplay/agents/settlement/{}/save - corpNo={}", sessionId, corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(
+                bizplaySettlementAgentService.saveSettlement(corpNo, sessionId)));
+    }
+
+    @Operation(summary = "Load a settlement session's current state (draft_json + status). Restores the "
+            + "registered-expenses table after the chat is closed and reopened.")
+    @GetMapping("/agents/settlement/{sessionId}")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> getSettlementSession(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo) {
+        log.info("GET /bizplay/agents/settlement/{} - corpNo={}", sessionId, corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(
+                bizplaySettlementAgentService.getSession(corpNo, sessionId)));
+    }
+
     @Operation(summary = "Manual expense ⑧ STEP 1 — register the receipt with the base fields only "
             + "(POST /receipt/etc-card). Body {approvalDate, mestName, approvalAmount, …}. Returns the "
             + "created receipt (stashed) + the type-specific detail fields to collect in step 2.")
@@ -202,6 +232,53 @@ public class BizplayFormController {
             }
         }
         return ResponseEntity.ok(ApiResponse.ok(out));
+    }
+
+    // --- personal-card general-expense browser (search receipts by date + status) -----------
+
+    @Operation(summary = "Browse personal-card general expenses. status=NOT_DRAFTED (issued, default) or "
+            + "NOT_ISSUED (incomplete). Paginated (default size 10). Returns the receipt-row array.")
+    @GetMapping("/agents/settlement/receipts")
+    public ResponseEntity<ApiResponse<JsonNode>> browseReceipts(
+            @RequestParam("startDate") String startDate,
+            @RequestParam("endDate") String endDate,
+            @RequestParam(value = "status", required = false, defaultValue = "NOT_DRAFTED") String status,
+            @RequestParam(value = "page", required = false, defaultValue = "0") int page,
+            @RequestParam(value = "size", required = false, defaultValue = "10") int size,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/agents/settlement/receipts - {}~{} status={} page={} size={}",
+                startDate, endDate, status, page, size);
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getGeneralExpenses(
+                startDate, endDate, List.of(status), page, size, token)));
+    }
+
+    @Operation(summary = "One receipt's detail. NOT_ISSUED → GET /receipt/{id}; ISSUED → issued/bulk/{id}.")
+    @GetMapping("/agents/settlement/receipts/{receiptId}")
+    public ResponseEntity<ApiResponse<JsonNode>> receiptDetail(
+            @org.springframework.web.bind.annotation.PathVariable("receiptId") long receiptId,
+            @RequestParam(value = "status", required = false, defaultValue = "ISSUED") String status,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/agents/settlement/receipts/{} - status={}", receiptId, status);
+        JsonNode detail = "NOT_ISSUED".equalsIgnoreCase(status)
+                ? bizplayGatewayService.getReceiptById(receiptId, token)
+                : bizplayGatewayService.getIssuedReceiptsBulk(List.of(receiptId), token);
+        return ResponseEntity.ok(ApiResponse.ok(detail));
+    }
+
+    @Operation(summary = "Upload a file (filebox, pdf2Img) and attach it to a receipt "
+            + "(PATCH /receipt/image/{id}). multipart: 'image' (file).")
+    @PostMapping(value = "/agents/settlement/receipts/{receiptId}/image", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<JsonNode>> attachReceiptImage(
+            @org.springframework.web.bind.annotation.PathVariable("receiptId") long receiptId,
+            @org.springframework.web.bind.annotation.RequestPart("image") org.springframework.web.multipart.MultipartFile image,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) throws java.io.IOException {
+        log.info("POST /bizplay/agents/settlement/receipts/{}/image", receiptId);
+        long fileId = bizplayGatewayService.uploadReceiptFile(image.getBytes(), image.getOriginalFilename(), token);
+        bizplayGatewayService.attachReceiptImages(receiptId, List.of(fileId), token);
+        com.fasterxml.jackson.databind.node.ObjectNode result = objectMapper.createObjectNode();
+        result.put("fileId", fileId);
+        result.put("receiptId", receiptId);
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     // --- settlement conversation starter (per-corp greeting + example prompts) --------------

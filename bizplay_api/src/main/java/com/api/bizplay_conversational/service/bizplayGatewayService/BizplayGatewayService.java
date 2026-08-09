@@ -89,6 +89,20 @@ public interface BizplayGatewayService {
     JsonNode getIssuedReceiptsBulk(java.util.List<Long> receiptIds, String token);
 
     /**
+     * Personal-card general-expense browser: POST /api/v3/receipt/cloud/personal-card/my/general-expense
+     * with {startDate, endDate, approvalStatusTypeList, pageIndex, pageSize}. Default status NOT_DRAFTED
+     * (issued, not yet in a document); NOT_ISSUED for incomplete receipts. Returns the receipt-row array.
+     */
+    JsonNode getGeneralExpenses(String startDate, String endDate, java.util.List<String> statusList,
+                                int pageIndex, int pageSize, String token);
+
+    /** One receipt's full detail (used for NOT_ISSUED rows): GET /api/v2/receipt/{receiptId}. */
+    JsonNode getReceiptById(long receiptId, String token);
+
+    /** Attach uploaded files to a receipt: PATCH /api/v2/receipt/image/{receiptId} body [fileId, …]. */
+    String attachReceiptImages(long receiptId, java.util.List<Long> fileIds, String token);
+
+    /**
      * TranKind master (기타카드 TranKind list): GET /api/v2/trankind/list — every TranKind
      * registered for the company ({@code id, name, type, activated, scope, manageByAdmin}). Cached;
      * used to resolve a plan's allowed tranKind ids to their name/type.
