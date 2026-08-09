@@ -870,6 +870,12 @@ body.ap-open #apPage { display: block; }
 .ss-detail-body { max-height: 70vh; overflow-y: auto; padding: 14px 18px; }
 .ss-detail-meta { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 10px; }
 
+/* Found-receipts pick table (settlement evidence) — reuses the plan-pick table shell. */
+.rp-table th.rb-num, .rp-table td.rb-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rp-table td.rb-mest { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-pick .rp-attach { padding: 4px 12px; }
+.rp-pick .choice-row { margin-top: 8px; }
+
 /* Wizard inline answer widgets (follow-up questions in the thread) */
 .guide-widget { margin-top: 7px; display: flex; flex-direction: column; gap: 7px; max-width: 480px; }
 .guide-widget .gw-row { display: flex; align-items: center; gap: 7px; }

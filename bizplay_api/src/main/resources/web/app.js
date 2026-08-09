@@ -3289,7 +3289,7 @@ function settlementSummaryCard(draft) {
       <div class="pc-head"><span class="b-ico">${svgIcon("import")}</span> ${esc(T("Settlement summary", "정산 요약"))}</div>
       <div class="pc-body">${body}</div>
       <div class="pc-foot"><span class="pc-note"></span>
-        <button type="button" class="btn btn-primary pc-save">${esc(T("Save to our DB", "DB에 저장"))}</button></div></div>`;
+        <button type="button" class="btn btn-primary pc-save">${esc(T("Save", "저장"))}</button></div></div>`;
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
   const btn = wrap.querySelector(".pc-save");
@@ -3311,7 +3311,7 @@ async function saveSettlementToDb(btn, note) {
     const data = (json && (json.data || json.payload)) || {};
     agent.status = data.status || "APPROVED";
     btn.textContent = "✓ " + T("Saved", "저장됨");
-    note.textContent = T("Saved to our database (status APPROVED).", "우리 DB에 저장했어요 (상태 APPROVED).");
+    note.textContent = T("Saved.", "저장되었습니다.");
     localStorage.removeItem("bizplay.settle.session");   // finalized — next open starts fresh
     setTimeout(() => {                                    // let the ✓ show, then close + refresh the report table
       closeCreate();
@@ -5063,6 +5063,69 @@ function planPickTable(group) {
   return box;
 }
 
+/* Found unattached receipts as a table — one row per receipt with an Attach button (sends
+ * receipt:{id}); the action options (Add manual expense, Done) render as chips below. Single-use:
+ * attaching one triggers a fresh turn that re-lists the remaining receipts. No "attach all". */
+function receiptPickTable(group) {
+  const picks = (group.options || []).filter((o) => o.meta);
+  const actions = (group.options || []).filter((o) => !o.meta);
+  const won = (v) => "₩" + Number(v || 0).toLocaleString();
+  const COLS = [
+    ["approvalDate", T("Date", "일자")],
+    ["mestName", T("Merchant", "가맹점")],
+    ["tranKindType", T("Type", "항목")],
+    ["approvalAmount", T("Amount", "금액")],
+    ["cardType", T("Card", "카드")],
+  ];
+  const box = document.createElement("div");
+  box.className = "plan-pick rp-pick";
+  box.innerHTML = `${group.name ? `<div class="pp-cap">${esc(group.name)}</div>` : ""}
+    <div class="pp-scroll"><table class="pp-table rp-table"><thead><tr>`
+    + COLS.map(([k, label]) => `<th class="${k === "approvalAmount" ? "rb-num" : ""}">${esc(label)}</th>`).join("")
+    + `<th></th></tr></thead><tbody>`
+    + picks.map((o, i) => {
+        const m = o.meta;
+        return `<tr data-i="${i}">`
+          + `<td>${esc(m.approvalDate || "—")}</td>`
+          + `<td class="rb-mest" title="${esc(m.mestName || "")}">${esc(m.mestName || "—")}</td>`
+          + `<td>${esc(m.tranKindType || "—")}</td>`
+          + `<td class="rb-num">${esc(won(m.approvalAmount))}</td>`
+          + `<td>${esc(m.cardType || "—")}</td>`
+          + `<td><button type="button" class="rb-view rp-attach" data-i="${i}">${esc(T("Attach", "첨부"))}</button></td></tr>`;
+      }).join("")
+    + `</tbody></table></div>`;
+
+  const sendPick = (sendText, echoAs) => {
+    if (agent.busy || box.classList.contains("pp-done")) return;
+    box.classList.add("pp-done");
+    $("agentInput").value = sendText || "";
+    sendAgent({ keepLang: true, echoAs });
+  };
+  box.querySelectorAll(".rp-attach").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const o = picks[Number(btn.dataset.i)];
+      sendPick(o.sendText, (o.meta && o.meta.mestName) || o.label || null);
+    });
+  });
+  if (actions.length) {
+    const row = document.createElement("div");
+    row.className = "choice-row";
+    actions.forEach((opt) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "choice-chip";
+      b.textContent = opt.label || opt.sendText;
+      b.addEventListener("click", () => {
+        b.classList.add("choice-picked");
+        sendPick(opt.sendText, isMachineToken(opt.sendText) ? opt.label : null);
+      });
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+  }
+  return box;
+}
+
 /* Chip payloads the settlement/plan state machines match verbatim — "trankind:11719",
  * "card-types:PERSONAL,MY_DATA", "receipt:all", "receipts-done", "manual-expense". Shape
  * test, not a hardcoded list that would drift from the backend: one lowercase word (dashes
@@ -5095,6 +5158,11 @@ function appendMsg(role, text, meta = {}) {
       // Trip plans carry too many columns for a chip — they get a table of their own.
       if (g.kind === "PLAN" && (g.options || []).some((o) => o.meta)) {
         wrap.appendChild(planPickTable(g));
+        return;
+      }
+      // Found receipts → a table (one row + Attach per receipt), action options as chips below.
+      if (g.kind === "RECEIPT" && (g.options || []).some((o) => o.meta)) {
+        wrap.appendChild(receiptPickTable(g));
         return;
       }
       const row = document.createElement("div");

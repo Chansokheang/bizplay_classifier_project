@@ -1854,23 +1854,32 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     private List<TripPlanAgentResponse.PendingChoice> receiptChipsFrom(ArrayNode candidates, JsonNode doc, boolean ko) {
+        // Each receipt option carries its fields in meta so the UI renders a TABLE (one row + Attach
+        // button per receipt). No "attach all" — receipts are attached one at a time from the table.
         List<TripPlanAgentResponse.Option> options = new ArrayList<>();
         for (JsonNode c : candidates) {
             if (alreadyAttached(doc, c.path("id").asLong())) {
                 continue;
             }
+            java.util.Map<String, String> meta = new java.util.LinkedHashMap<>();
+            meta.put("id", String.valueOf(c.path("id").asLong()));
+            meta.put("mestName", c.path("mestName").asText(""));
+            meta.put("approvalDate", c.path("approvalDate").asText(""));
+            meta.put("approvalAmount", c.path("approvalAmount").asText("0"));
+            meta.put("cardType", c.path("cardType").asText(""));
+            meta.put("tranKindType", c.path("tranKindType").asText(c.path("tranKindNames").asText("")));
             options.add(TripPlanAgentResponse.Option.builder()
                     .label(c.path("mestName").asText("") + " · " + c.path("approvalDate").asText("")
                             + " · ₩" + c.path("approvalAmount").asText("0")
                             + " · " + c.path("cardType").asText(""))
                     .sendText("receipt:" + c.path("id").asLong())
+                    .meta(meta)
                     .build());
             if (options.size() >= CHIP_LIMIT) {
                 break;
             }
         }
-        options.add(TripPlanAgentResponse.Option.builder()
-                .label(t(ko, "Attach all", "전체 첨부")).sendText("receipt:all").build());
+        // Action options (no meta) — the UI renders these as chips below the table.
         // No matching receipt? Enter the expense manually (etc-card + required image).
         options.add(TripPlanAgentResponse.Option.builder()
                 .label(t(ko, "Add manual expense", "직접 경비 입력")).sendText("manual-expense").build());
