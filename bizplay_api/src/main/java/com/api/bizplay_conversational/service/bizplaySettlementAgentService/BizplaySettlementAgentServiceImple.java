@@ -183,29 +183,61 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .build();
         }
 
-        // Manual-expense signal from the chips: the expense fields + REQUIRED image are submitted
-        // separately to POST /agents/settlement/{sessionId}/manual-expense (multipart) — a file
-        // can't ride a text turn. Here we just acknowledge and tell the UI to open the entry form.
+        // Manual-expense. Bare "manual-expense" → ask which way to register (PARTIAL = base now +
+        // details later via PATCH; COMPLETE = everything in one etc-card POST). The suffixed tokens
+        // open the matching entry form (the actual create/PATCH happen on the /manual-expense/* endpoints).
         if (message.matches("(?i)\\s*manual-expense.*")) {
-            // Tell the UI which TranKind we're entering and the type-specific detail fields to gather
-            // (missingFields = the extra ReceiptEtcDto inputs on top of the 11 base fields). The image
-            // is OPTIONAL — the user can add it after registering.
+            boolean partial = message.matches("(?i).*manual-expense:partial.*");
+            boolean complete = message.matches("(?i).*manual-expense:complete.*");
             String tkType = slots(state).path("evidenceTranKindType").asText(null);
             String tkName = slots(state).path("evidenceTranKindName").asText("");
             List<String> detailFields = detailFieldsForType(tkType);
-            String prompt = t(ko,
-                    "Sure — enter the expense details" + (tkName.isEmpty() ? "" : " for " + tkName)
-                            + " (merchant, date, time, amounts). A receipt image is optional.",
-                    "네 — " + (tkName.isEmpty() ? "" : tkName + " ") + "경비 정보(가맹점, 일자, 시간, 금액)를 "
-                            + "입력해 주세요. 영수증 이미지는 선택 사항입니다.");
             appendTurn(session, "user", message);
+            if (!partial && !complete) {
+                // ask the mode
+                String ask = t(ko,
+                        "How would you like to register" + (tkName.isEmpty() ? "" : " the " + tkName) + " receipt "
+                                + "— partial (basics now, details later) or complete (everything at once)?",
+                        (tkName.isEmpty() ? "" : tkName + " ") + "영수증을 어떻게 등록할까요 — 부분(기본 정보 먼저, "
+                                + "상세는 나중에) 또는 전체(한 번에 모두)?");
+                appendTurn(session, "assistant", ask);
+                saveState(session, state);
+                ConversationalAgentSession savedChoose = sessionRepo.save(session);
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(savedChoose.getId().toString())
+                        .status(savedChoose.getStatus() == null ? null : savedChoose.getStatus().name())
+                        .intent("MANUAL_EXPENSE_CHOOSE")
+                        .subAgents(List.of("SETTLEMENT_AGENT"))
+                        .reply(ask)
+                        .pendingChoices(List.of(TripPlanAgentResponse.PendingChoice.builder()
+                                .kind("MANUAL_EXPENSE_MODE").name(t(ko, "how to register", "등록 방식"))
+                                .options(List.of(
+                                        TripPlanAgentResponse.Option.builder()
+                                                .label(t(ko, "Partial (basics first)", "부분 (기본 정보 먼저)"))
+                                                .sendText("manual-expense:partial").build(),
+                                        TripPlanAgentResponse.Option.builder()
+                                                .label(t(ko, "Complete (all at once)", "전체 (한 번에)"))
+                                                .sendText("manual-expense:complete").build()))
+                                .build()))
+                        .draftJson(savedChoose.getDraftJson())
+                        .build();
+            }
+            String prompt = complete
+                    ? t(ko, "Complete registration" + (tkName.isEmpty() ? "" : " for " + tkName)
+                                + " — enter the expense and its details together. A receipt image is optional.",
+                            "전체 등록" + (tkName.isEmpty() ? "" : " (" + tkName + ")") + " — 경비 정보와 상세를 "
+                                + "함께 입력해 주세요. 영수증 이미지는 선택 사항입니다.")
+                    : t(ko, "Partial registration — enter the basics" + (tkName.isEmpty() ? "" : " for " + tkName)
+                                + " first; you'll add the details next.",
+                            "부분 등록 — 먼저 기본 정보" + (tkName.isEmpty() ? "" : " (" + tkName + ")") + "를 입력하면 "
+                                + "이어서 상세를 추가합니다.");
             appendTurn(session, "assistant", prompt);
             saveState(session, state);
             ConversationalAgentSession savedManual = sessionRepo.save(session);
             return BizplayPlanAgentResponse.builder()
                     .sessionId(savedManual.getId().toString())
                     .status(savedManual.getStatus() == null ? null : savedManual.getStatus().name())
-                    .intent("MANUAL_EXPENSE_PROMPT")
+                    .intent(complete ? "MANUAL_EXPENSE_PROMPT_FULL" : "MANUAL_EXPENSE_PROMPT")
                     .subAgents(List.of("SETTLEMENT_AGENT"))
                     .reply(prompt)
                     .missingFields(detailFields)   // the type-specific detail inputs for the UI form
@@ -496,88 +528,98 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             "approvalAmount", "supplyAmount", "originalSupplyAmount", "vatAmount", "originalVatAmount",
             "tranKindId", "tranKindType"};
 
+    /**
+     * ⑧ STEP 1 — register the receipt: POST /receipt/etc-card with just the base fields (+ the picked
+     * TranKind). Returns the created receipt id, stashed in the session as slots.pendingReceipt so
+     * STEP 2 can complete it. The additional detail + image are NOT collected here — that is
+     * {@link #completeManualReceipt}.
+     */
     @Override
     @Transactional
-    public BizplayPlanAgentResponse addManualExpense(String sessionId, String corpNo, JsonNode expenseFields,
-                                                     JsonNode detail, byte[] image, String filename, String bizplayToken) {
+    public BizplayPlanAgentResponse createManualReceipt(String sessionId, String corpNo,
+                                                        JsonNode expenseFields, String bizplayToken) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("sessionId is required.");
         }
         if (expenseFields == null || !expenseFields.isObject()) {
             throw new IllegalArgumentException("Expense fields are required.");
         }
-        // The receipt image is OPTIONAL — the flow may register the expense first and add the image
-        // afterwards. When present it is uploaded; when absent the expense is created without one.
         com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
         try {
-            BizplayPlanAgentRequest lookup = new BizplayPlanAgentRequest();
-            lookup.setCorpNo(corpNo);
-            lookup.setSessionId(sessionId);
-            ConversationalAgentSession session = resolveSession(lookup);
-            ArrayNode documents = documents(session);
-            if (documents.isEmpty()) {
+            ConversationalAgentSession session = resolveSession(lookup(corpNo, sessionId));
+            if (documents(session).isEmpty()) {
                 throw new IllegalArgumentException("Import a plan before adding a manual expense.");
             }
-            ObjectNode fields = (ObjectNode) expenseFields.deepCopy();
-            if (!fields.hasNonNull("mestCorpNo")) {
-                fields.put("mestCorpNo", corpNo);   // the merchant-corp scope is the corp itself
-            }
-            // Carry the picked TranKind into the create body — a receipt with no allowed TranKind is
-            // "unclassified" (slide 2). Prefer the request's value, else the session's selection.
-            ObjectNode slots = slots(loadState(session));
-            if (!fields.hasNonNull("tranKindId") && slots.hasNonNull("evidenceTranKindId")) {
-                fields.put("tranKindId", slots.path("evidenceTranKindId").asLong());
-            }
-            if (!fields.hasNonNull("tranKindType") && slots.hasNonNull("evidenceTranKindType")) {
-                fields.put("tranKindType", slots.path("evidenceTranKindType").asText());
-            }
+            ObjectNode state = loadState(session);
+            // PARTIAL create = just the base fields (no TranKind) — the detail is a separate PATCH.
+            ObjectNode fields = prepareBaseFields(expenseFields, corpNo);
+            long receiptId = createEtcReceipt(fields, bizplayToken);
 
-            // 1) register the expense as a 기타카드 receipt → created receipt id
-            ArrayNode payload = objectMapper.createArrayNode();
-            payload.add(fields);
-            java.util.List<Long> ids = bizplayGatewayService.postEtcCardReceipts(payload, bizplayToken);
-            Long receiptId = ids.isEmpty() ? null : ids.get(0);
+            // Stash for STEP 2 (the detail PATCH + image + mapping run against this receipt).
+            ObjectNode pending = slots(state).putObject("pendingReceipt");
+            pending.put("receiptId", receiptId);
+            pending.set("fields", fields);
 
-            // 1b) OPTIONAL additional detail (travel info) → PATCH the created receipt. Best-effort:
-            //     a detail hiccup must not lose the already-created expense.
-            if (receiptId != null && detail != null && detail.isObject() && detail.size() > 0) {
-                try {
-                    bizplayGatewayService.patchEtcReceiptDetail(receiptId, detail, bizplayToken);
-                } catch (RuntimeException e) {
-                    log.warn("receipt-etc detail update failed for {} — keeping the expense: {}",
-                            receiptId, e.getMessage());
-                }
+            boolean ko = "ko".equals(state.path("lang").asText(null));
+            java.util.List<String> detailFields = detailFieldsForType(slots(state).path("evidenceTranKindType").asText(null));
+            String reply = t(ko,
+                    "Receipt registered. Now add the details" + (detailFields.isEmpty() ? "" : " for this expense") + ".",
+                    "영수증을 등록했어요. 이제 이 경비의 상세 정보를 입력해 주세요.");
+            appendTurn(session, "assistant", reply);
+            saveState(session, state);
+            ConversationalAgentSession saved = sessionRepo.save(session);
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(saved.getId().toString())
+                    .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                    .intent("MANUAL_EXPENSE_CREATED")
+                    .subAgents(List.of("BIZPLAY_GATEWAY"))
+                    .reply(reply)
+                    .missingFields(detailFields)   // the type-specific detail inputs for STEP 2
+                    .draftJson(saved.getDraftJson())
+                    .build();
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    /**
+     * ⑧ STEP 2 — complete the receipt registered in STEP 1: PATCH /receipt-etc/{id} with the
+     * additional detail, upload the optional image, and map the expense into the settlement draft's
+     * etcReceiptSaveRequests. Requires a slots.pendingReceipt from {@link #createManualReceipt}.
+     */
+    @Override
+    @Transactional
+    public BizplayPlanAgentResponse completeManualReceipt(String sessionId, String corpNo, JsonNode detail,
+                                                          byte[] image, String filename, String bizplayToken) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId is required.");
+        }
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            ConversationalAgentSession session = resolveSession(lookup(corpNo, sessionId));
+            ArrayNode documents = documents(session);
+            if (documents.isEmpty()) {
+                throw new IllegalArgumentException("No settlement draft in progress.");
             }
-
-            // 2) OPTIONAL receipt image → file id (0 when none; user may add it after registering)
-            long fileId = 0;
-            if (image != null && image.length > 0) {
-                fileId = bizplayGatewayService.uploadReceiptFile(image, filename, bizplayToken);
+            ObjectNode state = loadState(session);
+            JsonNode pending = slots(state).path("pendingReceipt");
+            if (!pending.hasNonNull("receiptId")) {
+                throw new IllegalArgumentException("No receipt to complete — register the receipt (step 1) first.");
             }
+            long receiptId = pending.path("receiptId").asLong();
+            ObjectNode fields = (ObjectNode) pending.path("fields").deepCopy();
 
-            // 3) issued detail — best-effort (surfaces the created issued receipt in logs; not put
-            //    into the save body, which only accepts EtcReceiptSaveRequest fields).
-            if (receiptId != null) {
-                try {
-                    bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), bizplayToken);
-                } catch (RuntimeException e) {
-                    log.warn("issued/bulk lookup failed for {} — proceeding without it: {}", receiptId, e.getMessage());
-                }
-            }
+            attachDetailImageAndMap(documents, receiptId, fields, detail, image, filename, bizplayToken);
+            slots(state).remove("pendingReceipt");
 
-            // 4) map into the settlement body's etcReceiptSaveRequests[] with exact keys, retotal
-            ObjectNode doc = (ObjectNode) documents.get(0);
-            doc.withArray("etcReceiptSaveRequests").add(buildEtcExpense(fields, fileId));
-            recomputeTotals(doc);
-
-            boolean ko = "ko".equals(loadState(session).path("lang").asText(null));
+            boolean ko = "ko".equals(state.path("lang").asText(null));
             String label = fields.path("mestName").asText("") + " ₩" + fields.path("approvalAmount").asText("");
             String reply = t(ko, "Added manual expense: " + label + ". ", "직접 입력 경비를 추가했어요: " + label + ". ");
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
+            saveState(session, state);
             sessionRepo.save(session);
             ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
-
             return BizplayPlanAgentResponse.builder()
                     .sessionId(saved.getId().toString())
                     .status(saved.getStatus() == null ? null : saved.getStatus().name())
@@ -594,19 +636,146 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /**
+     * COMPLETE mode — register the whole receipt in ONE etc-card POST: base + TranKind + detail +
+     * imageIds, no separate PATCH. The full body IS a valid EtcReceiptSaveRequest, so it doubles as
+     * the settlement entry.
+     */
+    @Override
+    @Transactional
+    public BizplayPlanAgentResponse addManualExpense(String sessionId, String corpNo, JsonNode expenseFields,
+                                                     JsonNode detail, byte[] image, String filename, String bizplayToken) {
+        if (expenseFields == null || !expenseFields.isObject()) {
+            throw new IllegalArgumentException("Expense fields are required.");
+        }
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            ConversationalAgentSession session = resolveSession(lookup(corpNo, sessionId));
+            ArrayNode documents = documents(session);
+            if (documents.isEmpty()) {
+                throw new IllegalArgumentException("Import a plan before adding a manual expense.");
+            }
+            ObjectNode state = loadState(session);
+            ObjectNode base = prepareExpenseFields(state, expenseFields, corpNo);   // base + TranKind
+            // Upload the (optional) image first so its id rides in the single etc-card body.
+            long fileId = 0;
+            if (image != null && image.length > 0) {
+                fileId = bizplayGatewayService.uploadReceiptFile(image, filename, bizplayToken);
+            }
+            ObjectNode fullBody = buildEtcExpense(base, detail, fileId);   // base + TranKind + detail + imageIds
+            createEtcReceipt(fullBody, bizplayToken);                       // single POST, no PATCH
+
+            ObjectNode doc = (ObjectNode) documents.get(0);
+            doc.withArray("etcReceiptSaveRequests").add(fullBody.deepCopy());
+            recomputeTotals(doc);
+
+            boolean ko = "ko".equals(state.path("lang").asText(null));
+            String reply = t(ko, "Added manual expense.", "직접 입력 경비를 추가했어요.");
+            session.setDraftJson(documents);
+            appendTurn(session, "assistant", reply);
+            sessionRepo.save(session);
+            ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(saved.getId().toString())
+                    .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                    .intent("MANUAL_EXPENSE_ADDED")
+                    .subAgents(List.of("BIZPLAY_GATEWAY"))
+                    .reply(reply)
+                    .draftJson(saved.getDraftJson())
+                    .build();
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    private BizplayPlanAgentRequest lookup(String corpNo, String sessionId) {
+        BizplayPlanAgentRequest r = new BizplayPlanAgentRequest();
+        r.setCorpNo(corpNo);
+        r.setSessionId(sessionId);
+        return r;
+    }
+
+    /** deepCopy + default mestCorpNo + carry the picked TranKind into the etc-card body. */
+    private ObjectNode prepareExpenseFields(ObjectNode state, JsonNode expenseFields, String corpNo) {
+        ObjectNode fields = (ObjectNode) expenseFields.deepCopy();
+        if (!fields.hasNonNull("mestCorpNo")) {
+            fields.put("mestCorpNo", corpNo);
+        }
+        ObjectNode slots = slots(state);
+        if (!fields.hasNonNull("tranKindId") && slots.hasNonNull("evidenceTranKindId")) {
+            fields.put("tranKindId", slots.path("evidenceTranKindId").asLong());
+        }
+        if (!fields.hasNonNull("tranKindType") && slots.hasNonNull("evidenceTranKindType")) {
+            fields.put("tranKindType", slots.path("evidenceTranKindType").asText());
+        }
+        return fields;
+    }
+
+    /** STEP 1 core: POST /receipt/etc-card → the created receipt id (0 when none returned). */
+    private long createEtcReceipt(JsonNode fields, String token) {
+        ArrayNode payload = objectMapper.createArrayNode();
+        payload.add(fields.deepCopy());
+        java.util.List<Long> ids = bizplayGatewayService.postEtcCardReceipts(payload, token);
+        return ids.isEmpty() ? 0 : ids.get(0);
+    }
+
+    /** STEP 2 core: PATCH detail (best-effort) + upload optional image + map into the draft. */
+    private void attachDetailImageAndMap(ArrayNode documents, long receiptId, ObjectNode fields,
+                                         JsonNode detail, byte[] image, String filename, String token) {
+        if (receiptId > 0 && detail != null && detail.isObject() && detail.size() > 0) {
+            try {
+                bizplayGatewayService.patchEtcReceiptDetail(receiptId, detail, token);
+            } catch (RuntimeException e) {
+                log.warn("receipt-etc detail update failed for {} — keeping the expense: {}", receiptId, e.getMessage());
+            }
+        }
+        long fileId = 0;
+        if (image != null && image.length > 0) {
+            fileId = bizplayGatewayService.uploadReceiptFile(image, filename, token);
+        }
+        if (receiptId > 0) {
+            try {
+                bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), token);
+            } catch (RuntimeException e) {
+                log.warn("issued/bulk lookup failed for {} — proceeding without it: {}", receiptId, e.getMessage());
+            }
+        }
+        ObjectNode doc = (ObjectNode) documents.get(0);
+        doc.withArray("etcReceiptSaveRequests").add(buildEtcExpense(fields, detail, fileId));
+        recomputeTotals(doc);
+    }
+
+    /** deepCopy + default mestCorpNo only (PARTIAL create = the base fields, no TranKind). */
+    private ObjectNode prepareBaseFields(JsonNode expenseFields, String corpNo) {
+        ObjectNode fields = (ObjectNode) expenseFields.deepCopy();
+        if (!fields.hasNonNull("mestCorpNo")) {
+            fields.put("mestCorpNo", corpNo);
+        }
+        return fields;
+    }
+
+    /**
      * One etcReceiptSaveRequests[] entry, keys mapped 1:1 from the etc-card request body, plus the
      * uploaded image (imageIds) and links to the created/issued receipt. recomputeTotals then counts
      * its approvalAmount toward the totals (and a cost bucket when it carries a tranKindType).
      */
-    private ObjectNode buildEtcExpense(JsonNode fields, long fileId) {
-        // ONLY the EtcReceiptSaveRequest keys — the save DTO rejects any extra (e.g. `id`,
-        // `issuedReceiptId` → HTTP 400 "Unrecognized field"). imageIds is a valid field.
+    private ObjectNode buildEtcExpense(JsonNode fields, JsonNode detail, long fileId) {
+        // The EtcReceiptSaveRequest keys (base + tranKind) + the ReceiptEtcDto detail merged in —
+        // both are the same DTO. Drop `id`/`issuedReceiptId` (the save 400s on them). imageIds valid.
         ObjectNode e = objectMapper.createObjectNode();
         for (String k : ETC_EXPENSE_KEYS) {
             if (fields.has(k)) {
                 e.set(k, fields.get(k).deepCopy());
             }
         }
+        if (detail != null && detail.isObject()) {
+            detail.fields().forEachRemaining(en -> {
+                if (!"id".equals(en.getKey()) && !"issuedReceiptId".equals(en.getKey())) {
+                    e.set(en.getKey(), en.getValue() == null ? null : en.getValue().deepCopy());
+                }
+            });
+        }
+        e.remove("id");
+        e.remove("issuedReceiptId");
         ArrayNode imageIds = e.putArray("imageIds");
         if (fileId > 0) {
             imageIds.add(fileId);   // only when an image was actually uploaded

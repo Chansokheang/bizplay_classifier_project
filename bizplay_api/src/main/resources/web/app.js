@@ -3334,10 +3334,119 @@ function readTransportDetail(w) {
   return detail;
 }
 
+/* STEP 1 — register the receipt with the BASE fields only (POST …/manual-expense/create). The
+ * additional detail + image are a separate step (settlementManualDetailForm) so the receipt is
+ * created first, then enriched — matching the etc-card → receipt-etc flow. */
 function settlementManualExpenseForm() {
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
+  const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
+  const isTransport = detailFields.includes("vehicleType");
+  const draft0 = (agent.draft && agent.draft[0]) || {};
+  const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
+
+  // Transport receipts carry no supply/VAT breakdown (null); other types collect it.
+  const baseAmounts = isTransport
+    ? f(T("Amount", "승인금액"), money("approvalAmount"))
+    : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
+       ${f(T("Supply", "공급가액"), money("supplyAmount"))}
+       ${f(T("VAT", "부가세"), money("vatAmount"))}
+       ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
+       ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}`;
+
+  const html = `<div class="mx-grid">
+      <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
+        <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
+      ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
+      ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
+      ${f(T("Currency", "통화"), `<input type="text" data-k="currencyCode" value="KRW">`)}
+      <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed"${oversea ? " checked" : ""}>
+        <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
+      ${baseAmounts}
+    </div>
+    <div class="mx-actions"><span class="mx-note"></span>
+      <button type="button" class="btn btn-primary mx-add">${esc(T("Register receipt", "영수증 등록"))}</button></div>`;
+
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget">${html}</div>`;
+  const w = wrap.querySelector(".guide-widget");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  const done = (shown) => { w.classList.add("guide-done"); appendMsg("user", shown, {}); };
+  const el = (k) => w.querySelector(`[data-k="${k}"]`);
+  const note = w.querySelector(".mx-note");
+  const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
+
+  w.querySelector(".mx-add").addEventListener("click", async () => {
+    const mestName = el("mestName").value.trim();
+    const approvalDate = el("approvalDate").value;
+    const approvalAmount = num(el("approvalAmount").value);
+    if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
+    if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(T("Enter the approved amount.", "승인금액을 입력해 주세요."));
+    const time = el("approvalTime").value || "00:00:00";
+    const expense = {
+      approvalDate,
+      approvalTime: time.length === 5 ? time + ":00" : time,   // <input type=time> drops seconds
+      currencyCode: el("currencyCode").value.trim() || "KRW",
+      mestName,
+      overseasUsed: el("overseasUsed").checked,
+      approvalAmount,
+      // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
+    };
+    if (!isTransport) {
+      expense.supplyAmount = num(el("supplyAmount").value);
+      expense.originalSupplyAmount = num(el("originalSupplyAmount").value);
+      expense.vatAmount = num(el("vatAmount").value);
+      expense.originalVatAmount = num(el("originalVatAmount").value);
+    }
+    note.textContent = "";
+    note.classList.remove("mx-warn");
+    done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`);
+    if (!await submitManualCreate(expense)) w.classList.remove("guide-done");   // re-open on failure
+  });
+  return w;
+}
+
+/* STEP 1 submit → register the receipt, then open STEP 2 (detail + image). */
+async function submitManualCreate(expense) {
+  if (!agent.sessionId) {
+    appendMsg("assistant", "⚠ " + T("Import a plan before adding a manual expense.",
+                                    "먼저 출장 계획을 불러온 뒤 경비를 입력해 주세요."), { error: true });
+    return false;
+  }
+  const typing = appendTyping();
+  setAgentBusy(true);
+  try {
+    const url = `${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}`
+      + `/manual-expense/create?corpNo=${encodeURIComponent(CORP_NO)}`;
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                                   body: JSON.stringify(expense) });
+    const json = await res.json().catch(() => ({}));
+    typing.remove();
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    agent.status = data.status || agent.status;
+    agent.draft = data.draftJson || agent.draft;
+    agent.lastData = data;
+    appendMsg("assistant", data.reply || T("Receipt registered.", "영수증을 등록했어요."));
+    settlementManualDetailForm();   // STEP 2 — additional detail + optional image
+    return true;
+  } catch (e) {
+    typing.remove();
+    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
+    return false;
+  } finally {
+    setAgentBusy(false);
+  }
+}
+
+/* STEP 2 — additional detail (per TranKind) + optional image (POST …/manual-expense/detail). */
+function settlementManualDetailForm() {
+  const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   const opts = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
     + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
   const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
@@ -3345,7 +3454,6 @@ function settlementManualExpenseForm() {
   const draft0 = (agent.draft && agent.draft[0]) || {};
   const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
 
-  // Non-transport detail (ROOM/FOOD/simple) — plain inputs keyed by data-d.
   const detailSpec = {
     usedStartDate: [T("Used from", "사용 시작일"), `<input type="date" data-d="usedStartDate">`],
     usedEndDate: [T("Used to", "사용 종료일"), `<input type="date" data-d="usedEndDate">`],
@@ -3356,8 +3464,116 @@ function settlementManualExpenseForm() {
     foodDivisionType: [T("Meal category", "식대 구분"), `<input type="text" data-d="foodDivisionType">`],
     personCount: [T("Headcount", "인원수"), `<input type="number" data-d="personCount">`],
   };
+  const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
+  const detailSection = isTransport
+    ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
+       ${f(T("Transport", "교통수단"), `<select data-tv="vehicle">${opts(veh, T("Select", "선택"))}</select>`)}
+       <div class="mx-tp mx-wide"></div>`
+    : (detailFields.filter((k) => detailSpec[k]).length
+        ? `<div class="mx-sub">${esc(T("Additional details", "추가 정보"))}</div>`
+          + detailFields.filter((k) => detailSpec[k]).map((k) => f(detailSpec[k][0], detailSpec[k][1])).join("")
+        : `<div class="mx-sub">${esc(T("Additional details", "추가 정보"))}</div>`);
 
-  // Transport skips the supply/VAT breakdown (null for transport receipts); others keep it.
+  const html = `<div class="mx-grid">
+      ${detailSection}
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt image (optional)", "영수증 이미지 (선택)"))}</span>
+        <input type="file" accept="image/*" data-k="image"></label>
+    </div>
+    <div class="mx-actions"><span class="mx-note"></span>
+      <button type="button" class="btn btn-primary mx-add">${esc(T("Save details", "상세 저장"))}</button></div>`;
+
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget">${html}</div>`;
+  const w = wrap.querySelector(".guide-widget");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  const done = (shown) => { w.classList.add("guide-done"); appendMsg("user", shown, {}); };
+  const note = w.querySelector(".mx-note");
+
+  const tpBox = w.querySelector(".mx-tp");
+  const vehSel = w.querySelector('[data-tv="vehicle"]');
+  if (vehSel && tpBox) {
+    vehSel.addEventListener("change", () => renderTpSub(tpBox, vehSel.value, oversea));
+  }
+
+  w.querySelector(".mx-add").addEventListener("click", async () => {
+    const file = w.querySelector('[data-k="image"]').files[0];
+    let detail = null;
+    if (isTransport) {
+      detail = readTransportDetail(w);
+    } else {
+      const dInputs = w.querySelectorAll("[data-d]");
+      if (dInputs.length) {
+        detail = { etcReceiptType: "RECEIPT" };
+        dInputs.forEach((inp) => {
+          const k = inp.getAttribute("data-d");
+          const v = inp.value;
+          detail[k] = v === "" ? null : (inp.type === "number" ? num(v) : v);
+        });
+      }
+    }
+    note.textContent = "";
+    note.classList.remove("mx-warn");
+    done(T("Save details", "상세 저장") + (file ? ` · ${file.name}` : ""));
+    if (!await submitManualDetail(detail, file)) w.classList.remove("guide-done");
+  });
+  return w;
+}
+
+/* STEP 2 submit → PATCH the detail + optional image, map into the draft. */
+async function submitManualDetail(detail, file) {
+  const typing = appendTyping();
+  setAgentBusy(true);
+  try {
+    const fd = new FormData();
+    if (detail) fd.append("detail", JSON.stringify(detail));   // optional additional info
+    if (file) fd.append("image", file, file.name);             // image is optional
+    const url = `${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}`
+      + `/manual-expense/detail?corpNo=${encodeURIComponent(CORP_NO)}`;
+    const res = await fetch(url, { method: "POST", body: fd });
+    const json = await res.json().catch(() => ({}));
+    typing.remove();
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    agent.status = data.status || agent.status;
+    agent.draft = data.draftJson || agent.draft;
+    agent.lastData = data;
+    appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
+    manualExpenseFollowUp();
+    return true;
+  } catch (e) {
+    typing.remove();
+    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
+    return false;
+  } finally {
+    setAgentBusy(false);
+  }
+}
+
+/* COMPLETE mode — base + detail + optional image in ONE form (POST …/manual-expense/complete). */
+function settlementManualFullForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
+  const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
+  const opts = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
+    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
+  const isTransport = detailFields.includes("vehicleType");
+  const draft0 = (agent.draft && agent.draft[0]) || {};
+  const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
+
+  const detailSpec = {
+    usedStartDate: [T("Used from", "사용 시작일"), `<input type="date" data-d="usedStartDate">`],
+    usedEndDate: [T("Used to", "사용 종료일"), `<input type="date" data-d="usedEndDate">`],
+    seatClass: [T("Seat class", "좌석 등급"), `<input type="text" data-d="seatClass">`],
+    starRating: [T("Star rating", "성급"), `<input type="number" data-d="starRating">`],
+    roomType: [T("Room type", "객실 유형"), `<input type="text" data-d="roomType">`],
+    partnerHotel: [T("Partner hotel", "제휴 호텔"), `<input type="text" data-d="partnerHotel">`],
+    foodDivisionType: [T("Meal category", "식대 구분"), `<input type="text" data-d="foodDivisionType">`],
+    personCount: [T("Headcount", "인원수"), `<input type="number" data-d="personCount">`],
+  };
   const baseAmounts = isTransport
     ? f(T("Amount", "승인금액"), money("approvalAmount"))
     : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
@@ -3365,7 +3581,6 @@ function settlementManualExpenseForm() {
        ${f(T("VAT", "부가세"), money("vatAmount"))}
        ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
        ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}`;
-
   const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
   const detailSection = isTransport
     ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
@@ -3390,10 +3605,8 @@ function settlementManualExpenseForm() {
         <input type="file" accept="image/*" data-k="image"></label>
     </div>
     <div class="mx-actions"><span class="mx-note"></span>
-      <button type="button" class="btn btn-primary mx-add">${esc(T("Add expense", "경비 추가"))}</button></div>`;
+      <button type="button" class="btn btn-primary mx-add">${esc(T("Register receipt", "영수증 등록"))}</button></div>`;
 
-  // No prompt bubble of our own: the agent's reply right above already asked for this,
-  // and a second canned sentence would just repeat it.
   const thread = $("agentThread");
   const wrap = document.createElement("div");
   wrap.className = "msg msg-assistant";
@@ -3402,12 +3615,10 @@ function settlementManualExpenseForm() {
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
   const done = (shown) => { w.classList.add("guide-done"); appendMsg("user", shown, {}); };
-
   const el = (k) => w.querySelector(`[data-k="${k}"]`);
   const note = w.querySelector(".mx-note");
   const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
 
-  // Transport: rebuild the sub-form (route/seat/depart/arrival) whenever the vehicle changes.
   const tpBox = w.querySelector(".mx-tp");
   const vehSel = w.querySelector('[data-tv="vehicle"]');
   if (vehSel && tpBox) {
@@ -3425,22 +3636,18 @@ function settlementManualExpenseForm() {
     const time = el("approvalTime").value || "00:00:00";
     const expense = {
       approvalDate,
-      approvalTime: time.length === 5 ? time + ":00" : time,   // <input type=time> drops seconds
+      approvalTime: time.length === 5 ? time + ":00" : time,
       currencyCode: el("currencyCode").value.trim() || "KRW",
       mestName,
       overseasUsed: el("overseasUsed").checked,
       approvalAmount,
-      // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
     };
-    // Transport receipts carry no supply/VAT breakdown (null); other types collect it.
     if (!isTransport) {
       expense.supplyAmount = num(el("supplyAmount").value);
       expense.originalSupplyAmount = num(el("originalSupplyAmount").value);
       expense.vatAmount = num(el("vatAmount").value);
       expense.originalVatAmount = num(el("originalVatAmount").value);
     }
-    // Detail → the `detail` part (PATCH /receipt-etc): the transport sub-form for transport,
-    // else the plain data-d inputs.
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -3457,15 +3664,14 @@ function settlementManualExpenseForm() {
     }
     note.textContent = "";
     note.classList.remove("mx-warn");
-    done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`
-      + (file ? ` · ${file.name}` : ""));
-    // A rejected submit reopens the form with everything still typed in.
-    if (!await submitManualExpense(expense, detail, file)) w.classList.remove("guide-done");
+    done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}` + (file ? ` · ${file.name}` : ""));
+    if (!await submitManualComplete(expense, detail, file)) w.classList.remove("guide-done");
   });
   return w;
 }
 
-async function submitManualExpense(expense, detail, file) {
+/* COMPLETE submit → one etc-card POST with base + detail + optional image. */
+async function submitManualComplete(expense, detail, file) {
   if (!agent.sessionId) {
     appendMsg("assistant", "⚠ " + T("Import a plan before adding a manual expense.",
                                     "먼저 출장 계획을 불러온 뒤 경비를 입력해 주세요."), { error: true });
@@ -3475,11 +3681,11 @@ async function submitManualExpense(expense, detail, file) {
   setAgentBusy(true);
   try {
     const fd = new FormData();
-    fd.append("expense", JSON.stringify(expense));   // plain text part -> @RequestPart String
-    if (detail) fd.append("detail", JSON.stringify(detail));   // optional additional info
-    if (file) fd.append("image", file, file.name);             // image is optional
+    fd.append("expense", JSON.stringify(expense));
+    if (detail) fd.append("detail", JSON.stringify(detail));
+    if (file) fd.append("image", file, file.name);
     const url = `${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}`
-      + `/manual-expense?corpNo=${encodeURIComponent(CORP_NO)}`;
+      + `/manual-expense/complete?corpNo=${encodeURIComponent(CORP_NO)}`;
     const res = await fetch(url, { method: "POST", body: fd });
     const json = await res.json().catch(() => ({}));
     typing.remove();
@@ -3520,7 +3726,10 @@ function manualExpenseFollowUp() {
     });
     row.appendChild(btn);
   };
-  chip(T("Add another expense", "경비 더 입력"), settlementManualExpenseForm);
+  chip(T("Add another expense", "경비 더 입력"), () => {
+    $("agentInput").value = "manual-expense";   // re-ask partial/complete
+    sendAgent({ keepLang: true });
+  });
   const doneLabel = T("Done", "첨부 완료");
   chip(doneLabel, () => {
     $("agentInput").value = "receipts-done";
@@ -4132,6 +4341,7 @@ async function sendAgent(opts) {
         // No card receipt for this trip: the expense is typed in and its image attached,
         // then posted multipart (a file can't ride a chat turn).
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
+        else if (data.intent === "MANUAL_EXPENSE_PROMPT_FULL") settlementManualFullForm();
         else if (data.intent === "SETTLEMENT_READY") settlementSummaryCard(data.draftJson);
       }
       else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below

@@ -130,25 +130,56 @@ public class BizplayFormController {
                 bizplaySettlementAgentService.createSettlement(sessionId, corpNo, token, approvalLines)));
     }
 
-    @Operation(summary = "Manual expense entry (⑧) — when the trip has no card receipt: register a "
-            + "기타카드 expense + its required receipt image and map it into the settlement draft's "
-            + "etcReceiptSaveRequests. multipart: 'expense' (JSON of the etc-card fields) + 'image' (file) "
-            + "+ optional 'detail' (JSON of ReceiptEtcDto — vehicleType, depart/arrival, used dates, …).")
-    @PostMapping(value = "/agents/settlement/{sessionId}/manual-expense", consumes = "multipart/form-data")
-    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> addSettlementManualExpense(
+    @Operation(summary = "Manual expense ⑧ STEP 1 — register the receipt with the base fields only "
+            + "(POST /receipt/etc-card). Body {approvalDate, mestName, approvalAmount, …}. Returns the "
+            + "created receipt (stashed) + the type-specific detail fields to collect in step 2.")
+    @PostMapping("/agents/settlement/{sessionId}/manual-expense/create")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> createSettlementManualReceipt(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode expense,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense/create - corpNo={}", sessionId, corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(
+                bizplaySettlementAgentService.createManualReceipt(sessionId, corpNo, expense, token)));
+    }
+
+    @Operation(summary = "Manual expense ⑧ COMPLETE — register the whole receipt in one etc-card POST "
+            + "(base + TranKind + detail + image). multipart: 'expense' (JSON base) + optional 'detail' "
+            + "(JSON ReceiptEtcDto) + optional 'image' (file).")
+    @PostMapping(value = "/agents/settlement/{sessionId}/manual-expense/complete", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> completeSettlementManualFull(
             @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
             @RequestParam("corpNo") String corpNo,
             @org.springframework.web.bind.annotation.RequestPart("expense") String expenseJson,
             @org.springframework.web.bind.annotation.RequestPart(value = "detail", required = false) String detailJson,
             @org.springframework.web.bind.annotation.RequestPart(value = "image", required = false) org.springframework.web.multipart.MultipartFile image,
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token) throws java.io.IOException {
-        log.info("POST /bizplay/agents/settlement/{}/manual-expense - corpNo={}", sessionId, corpNo);
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense/complete - corpNo={}", sessionId, corpNo);
         JsonNode fields = objectMapper.readTree(expenseJson);
         JsonNode detail = (detailJson == null || detailJson.isBlank()) ? null : objectMapper.readTree(detailJson);
         byte[] imageBytes = (image == null || image.isEmpty()) ? null : image.getBytes();
         String imageName = image == null ? null : image.getOriginalFilename();
         return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.addManualExpense(
                 sessionId, corpNo, fields, detail, imageBytes, imageName, token)));
+    }
+
+    @Operation(summary = "Manual expense ⑧ STEP 2 — complete the receipt from step 1: PATCH "
+            + "/receipt-etc/{id} with the additional detail + optional image, and map it into the draft. "
+            + "multipart: optional 'detail' (JSON ReceiptEtcDto) + optional 'image' (file).")
+    @PostMapping(value = "/agents/settlement/{sessionId}/manual-expense/detail", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> completeSettlementManualReceipt(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @org.springframework.web.bind.annotation.RequestPart(value = "detail", required = false) String detailJson,
+            @org.springframework.web.bind.annotation.RequestPart(value = "image", required = false) org.springframework.web.multipart.MultipartFile image,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) throws java.io.IOException {
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense/detail - corpNo={}", sessionId, corpNo);
+        JsonNode detail = (detailJson == null || detailJson.isBlank()) ? null : objectMapper.readTree(detailJson);
+        byte[] imageBytes = (image == null || image.isEmpty()) ? null : image.getBytes();
+        String imageName = image == null ? null : image.getOriginalFilename();
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.completeManualReceipt(
+                sessionId, corpNo, detail, imageBytes, imageName, token)));
     }
 
     @Operation(summary = "Transport terminals/stations for the manual-expense depart/arrival dropdowns. "

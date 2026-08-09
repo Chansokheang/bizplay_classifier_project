@@ -421,7 +421,9 @@ class BizplaySettlementStructureTest {
                 "{\"etcReceiptType\":\"RECEIPT\",\"usedStartDate\":\"2026-07-21\","
                         + "\"usedEndDate\":\"2026-07-21\",\"vehicleType\":\"AIRPORT_TRANSFER\","
                         + "\"depart\":\"incheon airport\",\"arrival\":\"KTI airport\"}");
-        agent.addManualExpense(sessionId, "1234567890", fields, detail,
+        // PARTIAL two-phase: step 1 registers the base receipt, step 2 PATCHes the detail + maps.
+        agent.createManualReceipt(sessionId, "1234567890", fields, "test-token");
+        agent.completeManualReceipt(sessionId, "1234567890", detail,
                 "img-bytes".getBytes(), "receipt.png", "test-token");
 
         // the additional detail was PATCHed to the created receipt id (777), not to some other id

@@ -43,4 +43,18 @@ public interface BizplaySettlementAgentService {
      */
     BizplayPlanAgentResponse addManualExpense(String sessionId, String corpNo, JsonNode expenseFields,
                                               JsonNode detail, byte[] image, String filename, String bizplayToken);
+
+    /**
+     * ⑧ STEP 1 — register the receipt with just the base fields (POST /receipt/etc-card). Returns the
+     * created receipt id (stashed in the session) and the type-specific detail fields to collect next.
+     */
+    BizplayPlanAgentResponse createManualReceipt(String sessionId, String corpNo, JsonNode expenseFields,
+                                                 String bizplayToken);
+
+    /**
+     * ⑧ STEP 2 — complete the receipt from STEP 1: PATCH /receipt-etc/{id} with the additional detail,
+     * upload the optional image, and map the expense into the settlement draft.
+     */
+    BizplayPlanAgentResponse completeManualReceipt(String sessionId, String corpNo, JsonNode detail,
+                                                   byte[] image, String filename, String bizplayToken);
 }
