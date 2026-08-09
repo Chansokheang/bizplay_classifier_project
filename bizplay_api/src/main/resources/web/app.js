@@ -3268,23 +3268,33 @@ async function fetchTerminals(vehicleType) {
   } catch { return []; }
 }
 
-// Korean label → BizPlay value (ReceiptEtcDto enums; seatClass values from the captured samples).
-const TP_ROUTE = [["편도", "ONEWAY"], ["왕복", "ROUNDTRIP"]];
-const TP_AIR_SEATS = [["일반석", "economyClass"], ["프리미엄 일반석", "premiumEconomyClass"],
-  ["비즈니스석", "businessClass"], ["일등석", "firstClass"]];
-const TP_TRAIN_SEATS = [["일반실", "standardRoom"], ["특실", "firstClassRoom"]];
-const TP_TRAIN_TYPES = [["KTX", "KTX"], ["SRT", "SRT"], ["ITX", "ITX"], ["새마을호", "SAEMAEUL"], ["무궁화호", "MUGUNGHWA"]];
-const TP_VEH_DOMESTIC = [["항공", "AIR"], ["열차", "__TRAIN__"], ["고속버스", "BUS"], ["시외버스", "CBUS"],
-  ["택시", "TAXI"], ["렌터카", "RENTAL"], ["공항 리무진", "AIRPORT_LIMOUSINE"], ["기타 교통수단", "OTHER"]];
-const TP_VEH_OVERSEA = [["항공", "AIR"], ["열차", "TRAIN"], ["고속버스", "BUS"], ["시외버스", "CBUS"],
-  ["택시", "TAXI"], ["렌터카", "RENTAL"], ["공항 리무진", "AIRPORT_LIMOUSINE"], ["기타 교통수단", "OTHER"],
-  ["공항이동", "AIRPORT_TRANSFER"], ["시외교통", "INTERCITY_TRANSPORT"], ["현지교통", "LOCAL_TRANSPORT"]];
+// [English label, Korean label, BizPlay value] — the form renders labels in the WEBSITE language (LANG).
+const TP_ROUTE = [["One-way", "편도", "ONEWAY"], ["Round-trip", "왕복", "ROUNDTRIP"]];
+const TP_AIR_SEATS = [["Economy", "일반석", "economyClass"], ["Premium economy", "프리미엄 일반석", "premiumEconomyClass"],
+  ["Business", "비즈니스석", "businessClass"], ["First", "일등석", "firstClass"]];
+const TP_TRAIN_SEATS = [["Standard", "일반실", "standardRoom"], ["First class", "특실", "firstClassRoom"]];
+const TP_TRAIN_TYPES = [["KTX", "KTX", "KTX"], ["SRT", "SRT", "SRT"], ["ITX", "ITX", "ITX"],
+  ["Saemaeul", "새마을호", "SAEMAEUL"], ["Mugunghwa", "무궁화호", "MUGUNGHWA"]];
+const TP_VEH_DOMESTIC = [["Air", "항공", "AIR"], ["Train", "열차", "__TRAIN__"], ["Express bus", "고속버스", "BUS"],
+  ["Intercity bus", "시외버스", "CBUS"], ["Taxi", "택시", "TAXI"], ["Rental car", "렌터카", "RENTAL"],
+  ["Airport limo", "공항 리무진", "AIRPORT_LIMOUSINE"], ["Other", "기타 교통수단", "OTHER"]];
+const TP_VEH_OVERSEA = [["Air", "항공", "AIR"], ["Train", "열차", "TRAIN"], ["Express bus", "고속버스", "BUS"],
+  ["Intercity bus", "시외버스", "CBUS"], ["Taxi", "택시", "TAXI"], ["Rental car", "렌터카", "RENTAL"],
+  ["Airport limo", "공항 리무진", "AIRPORT_LIMOUSINE"], ["Other", "기타 교통수단", "OTHER"],
+  ["Airport transfer", "공항이동", "AIRPORT_TRANSFER"], ["Intercity transport", "시외교통", "INTERCITY_TRANSPORT"],
+  ["Local transport", "현지교통", "LOCAL_TRANSPORT"]];
+
+/* <option> list for the transport dropdowns — labels in the WEBSITE language (LANG), value = item[2]. */
+function optList(list, ph) {
+  return `<option value="">${esc(ph || "—")}</option>`
+    + list.map((it) => `<option value="${esc(it[2])}">${esc(LANG === "ko" ? it[1] : it[0])}</option>`).join("");
+}
 
 /* Rebuild the transport sub-form when the vehicle changes: route/seat dropdowns, and depart/arrival
  * as terminal dropdowns (domestic AIR/train, with ids) or free text (overseas). */
 async function renderTpSub(container, vehicleValue, oversea) {
-  const optsL = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
-    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
+  const optsL = optList;
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   container.innerHTML = "";
   if (!vehicleValue) return;
@@ -3338,6 +3348,7 @@ function readTransportDetail(w) {
  * additional detail + image are a separate step (settlementManualDetailForm) so the receipt is
  * created first, then enriched — matching the etc-card → receipt-etc flow. */
 function settlementManualExpenseForm() {
+  const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
@@ -3446,9 +3457,9 @@ async function submitManualCreate(expense) {
 
 /* STEP 2 — additional detail (per TranKind) + optional image (POST …/manual-expense/detail). */
 function settlementManualDetailForm() {
+  const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
-  const opts = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
-    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const opts = optList;   // website-language option labels
   const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
   const isTransport = detailFields.includes("vehicleType");
   const draft0 = (agent.draft && agent.draft[0]) || {};
@@ -3554,11 +3565,11 @@ async function submitManualDetail(detail, file) {
 
 /* COMPLETE mode — base + detail + optional image in ONE form (POST …/manual-expense/complete). */
 function settlementManualFullForm() {
+  const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
   const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
-  const opts = (list, ph) => `<option value="">${esc(ph || "—")}</option>`
-    + list.map(([l, v]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const opts = optList;   // website-language option labels
   const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
   const isTransport = detailFields.includes("vehicleType");
   const draft0 = (agent.draft && agent.draft[0]) || {};
