@@ -802,7 +802,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         doc.put("clientRequestId", "er-" + LocalDate.now().toString().replace("-", "")
                 + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
         doc.put("bstrPlanApprovalId", approvalId);
-        copyOrNull(doc, "bstrType", d);
+        // bstrType (DOMESTIC | OVERSEA) lives on the paper in the plan detail — the top level is null.
+        String bstrType = d.hasNonNull("bstrType") ? d.path("bstrType").asText()
+                : d.path("paper").path("bstrType").asText(null);
+        if (bstrType != null && !bstrType.isBlank()) {
+            doc.put("bstrType", bstrType);
+            slots(state).put("bstrType", bstrType);
+        } else {
+            doc.putNull("bstrType");
+        }
         copyOrNull(doc, "bstrPayType", d);
         doc.put("bstrStartDate", start);
         doc.put("bstrEndDate", end);

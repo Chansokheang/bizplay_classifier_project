@@ -798,22 +798,37 @@ body.ap-open #apPage { display: block; }
 .guide-widget .gw-row .btn { flex-shrink: 0; }
 .guide-widget.guide-done { opacity: .5; pointer-events: none; }
 
-/* Manual expense entry (settlement, no card receipt): typed fields + required image. */
-.mx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; width: 340px; max-width: 100%;
-           background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
-.mx-f { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.mx-f > span { font-size: 11.5px; color: var(--muted); }
-.mx-f input { width: 100%; min-width: 0; padding: 7px 9px; font-size: 13px; border: 1px solid var(--line);
-              border-radius: var(--radius-sm); background: #fff; color: var(--text); }
-.mx-f input:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+/* Manual expense entry (settlement, no card receipt): typed fields + optional image. */
+.mx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 14px;
+           width: min(460px, 100%); max-width: 100%;
+           background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+           padding: 16px 18px; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 6px 18px rgba(16,24,40,.05); }
+.mx-f { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.mx-f > span { font-size: 11.5px; font-weight: 500; color: var(--muted); letter-spacing: .01em; }
+.mx-f input, .mx-f select {
+  width: 100%; min-width: 0; height: 36px; padding: 0 11px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text);
+  transition: border-color .12s ease, box-shadow .12s ease; box-sizing: border-box; }
+.mx-f input::placeholder { color: color-mix(in srgb, var(--muted) 65%, transparent); }
+.mx-f input:hover, .mx-f select:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
+.mx-f input:focus-visible, .mx-f select:focus-visible {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.mx-f select { appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; }
+.mx-f input[type="file"] { height: auto; padding: 7px 11px; font-size: 12.5px; cursor: pointer; }
 .mx-wide { grid-column: 1 / -1; }
-.mx-sub { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  text-transform: uppercase; color: var(--muted); margin-top: 4px;
-  border-top: 1px solid var(--line); padding-top: 8px; }
-.mx-check { flex-direction: row; align-items: center; gap: 7px; align-self: end; padding-bottom: 7px; }
-.mx-check input { width: auto; }
+/* transport sub-fields flow into the same 2-column grid */
+.mx-tp { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 11px 14px; }
+.mx-tp:empty { display: none; }
+.mx-sub { grid-column: 1 / -1; font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); margin-top: 6px;
+  border-top: 1px solid var(--line); padding-top: 12px; }
+.mx-check { flex-direction: row; align-items: center; gap: 8px; align-self: end; height: 36px; }
+.mx-check input { width: 16px; height: 16px; accent-color: var(--primary); }
 .mx-check > span { font-size: 12.5px; color: var(--text); }
-.mx-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; width: 340px; max-width: 100%; }
+.mx-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+  width: min(460px, 100%); max-width: 100%; margin-top: 9px; }
 .mx-note { flex: 1; font-size: 11.5px; color: var(--muted); }
 .mx-note.mx-warn { color: var(--danger); }
 
