@@ -56,5 +56,11 @@ public class TripPlanAgentResponse {
          * "Chan Sokheang from IT". Must be a phrase the disambiguation resolver already understands.
          */
         private String sendText;
+        /**
+         * Optional structured columns behind the label — used when the option is richer than a
+         * chip, e.g. the settlement flow's plan picker, which the UI renders as a table
+         * (purpose / title / docNo / startDate / endDate / drafter / registrar).
+         */
+        private java.util.Map<String, String> meta;
     }
 }

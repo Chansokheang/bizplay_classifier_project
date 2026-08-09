@@ -34,10 +34,19 @@ public interface BizplayGatewayService {
 
     /**
      * ③ Save the plan draft: POST the draft_json array (one document per traveler) to
-     * /api/v2/approval/bics/bstr/plan/draft. Returns the server's raw response text
+     * /api/v2/approval/{productCode}/bstr/plan/draft. Returns the server's raw response text
      * (e.g. "작성되었습니다."). Never cached.
      */
     String postPlanDraft(JsonNode documents, String token);
+
+    /**
+     * ⑦ Save the settlement (출장정산) draft — a SEPARATE endpoint and body from the plan draft.
+     * POSTs the settlement draft_json array (the 정산서 request-body shape, one document per
+     * settlement) to /api/v2/approval/{productCode}/bstr/report/draft. Returns the server's raw
+     * response text. Never cached. The plan and settlement bodies never share this call: plan goes
+     * to /bstr/plan/draft via {@link #postPlanDraft}, settlement to /bstr/report/draft here.
+     */
+    String postSettlementDraft(JsonNode documents, String token);
 
     /**
      * ④ Search the traveler's business-trip plans (settlement anchor candidates):
@@ -56,5 +65,41 @@ public interface BizplayGatewayService {
      * cardTypeList entries: CORP | PERSONAL | MY_DATA.
      */
     JsonNode getUnattachedReceipts(long corpUserId, String startDate, String endDate,
-                                   java.util.List<String> cardTypes, String token);
+                                   java.util.List<String> cardTypes,
+                                   java.util.List<Long> tranKindIds,
+                                   java.util.List<Long> excludeTranKindIds, String token);
+
+    /**
+     * ⑧ Manual expense entry (기타카드 영수증 일괄 등록): POST an array of EtcReceiptSaveRequest
+     * objects to /api/v2/receipt/etc-card. Returns the created receipt ids (the provider responds
+     * with an array of int64). Used when a settlement has no matching card receipt to attach.
+     */
+    java.util.List<Long> postEtcCardReceipts(JsonNode expenses, String token);
+
+    /**
+     * ⑧ Upload a receipt image to the filebox (multipart field {@code multipartFile}):
+     * POST /api/v2/filebox/upload. Returns the first uploaded file's id (UploadFileboxResponse.fileId).
+     */
+    long uploadReceiptFile(byte[] content, String filename, String token);
+
+    /**
+     * ⑧ Issued-receipt detail for the given receipt ids: GET /api/v2/receipt/issued/bulk/{ids}
+     * (ids comma-joined). Returns the provider's IssuedReceiptDto array.
+     */
+    JsonNode getIssuedReceiptsBulk(java.util.List<Long> receiptIds, String token);
+
+    /**
+     * TranKind master (기타카드 TranKind list): GET /api/v2/trankind/list — every TranKind
+     * registered for the company ({@code id, name, type, activated, scope, manageByAdmin}). Cached;
+     * used to resolve a plan's allowed tranKind ids to their name/type.
+     */
+    JsonNode getTranKindList(String token);
+
+    /**
+     * ⑧ Update a created etc receipt's ADDITIONAL detail (기타증빙 단건 수정): PATCH
+     * /api/v2/receipt-etc/{receiptId} with a ReceiptEtcDto body (etcReceiptType, usedStartDate/End,
+     * vehicleType, depart/arrival, …). Optional — only called when the user supplies extra info.
+     * Returns the provider's raw response text.
+     */
+    String patchEtcReceiptDetail(long receiptId, JsonNode detail, String token);
 }

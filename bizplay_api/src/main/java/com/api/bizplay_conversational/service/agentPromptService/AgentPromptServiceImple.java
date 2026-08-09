@@ -34,6 +34,16 @@ public class AgentPromptServiceImple implements AgentPromptService {
             "I am going to the KSHRD Center in Phnom Penh from 2026-08-20 to 2026-08-21 to train IT instructors.",
             "Prepare an overseas trip to the Osaka exhibition for me and my team lead.");
 
+    /** Default chat opener for the settlement (출장정산) agent's hero. */
+    private static final String SETTLEMENT_STARTER_DEFAULT =
+            "Tell me which trip to settle — I'll pull the plan and its card receipts and draft the 정산서 for you.";
+
+    /** Default example prompts on the settlement chat hero — ONE per line. */
+    private static final String SETTLEMENT_SUGGESTIONS_DEFAULT = String.join("\n",
+            "지난달 부산 출장 정산해줘",
+            "Settle my Gwangju trip on the corporate card",
+            "이번 분기 출장 영수증 첨부해서 정산서 작성해줘");
+
     /** Agent name -> compiled-in default, registered by each agent on startup / first call. */
     private final Map<String, String> defaults = new ConcurrentHashMap<>();
 
@@ -93,6 +103,8 @@ public class AgentPromptServiceImple implements AgentPromptService {
         }
         defaults.put(STARTER_MESSAGE, STARTER_DEFAULT);
         defaults.put(STARTER_SUGGESTIONS, SUGGESTIONS_DEFAULT);
+        defaults.put(SETTLEMENT_STARTER_MESSAGE, SETTLEMENT_STARTER_DEFAULT);
+        defaults.put(SETTLEMENT_STARTER_SUGGESTIONS, SETTLEMENT_SUGGESTIONS_DEFAULT);
     }
 
     @Override

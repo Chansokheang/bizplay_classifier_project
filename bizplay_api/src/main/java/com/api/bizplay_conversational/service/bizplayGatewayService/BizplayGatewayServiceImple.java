@@ -34,9 +34,22 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     private final BizplayProperties properties;
+    private final com.api.bizplay_conversational.config.BizplayEndpoints endpoints;
     private final com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+
+    /**
+     * baseUrl + an endpoint template with its {@code {name}} path variables substituted. Query
+     * strings are appended by the caller. Kept tiny on purpose — the templates carry no query part.
+     */
+    private String buildUrl(String template, Object... pathVars) {
+        String path = template;
+        for (int i = 0; i + 1 < pathVars.length; i += 2) {
+            path = path.replace("{" + pathVars[i] + "}", String.valueOf(pathVars[i + 1]));
+        }
+        return baseUrl() + path;
+    }
 
     /** Tiny TTL cache: catalogs/papers are corp master data and change rarely. */
     private record CacheEntry(JsonNode body, long expiresAtMillis) {
@@ -44,9 +57,12 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
 
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    public BizplayGatewayServiceImple(BizplayProperties properties, ObjectMapper objectMapper,
+    public BizplayGatewayServiceImple(BizplayProperties properties,
+                                      com.api.bizplay_conversational.config.BizplayEndpoints endpoints,
+                                      ObjectMapper objectMapper,
                                       com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService) {
         this.properties = properties;
+        this.endpoints = endpoints;
         this.objectMapper = objectMapper;
         this.agentPromptService = agentPromptService;
         agentPromptService.registerDefault(BASE_URL_SETTING, properties.getBaseUrl());
@@ -62,8 +78,8 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         if (corpUserId == null || corpUserId.isBlank()) {
             throw new IllegalArgumentException("corpUserId is required.");
         }
-        String url = baseUrl() + "/api/v2/bstrPurpose/corporation-user/"
-                + corpUserId.trim() + "/BSTR_PLAN";
+        String url = buildUrl(endpoints.getPurposeCatalog(),
+                "corpUserId", corpUserId.trim(), "paperKindType", "BSTR_PLAN");
         return getCached("catalog:" + corpUserId, url, token);
     }
 
@@ -73,7 +89,7 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         // Discovery call: the untyped path returns the UNION of this purpose's papers, each
         // carrying its own bstrType (DOMESTIC | OVERSEA).
         JsonNode papers = getCached("papers:" + purposeId + ":" + segmentId,
-                baseUrl() + "/api/v2/paper/purpose/" + purposeId + query, token);
+                buildUrl(endpoints.getPapers(), "purposeId", purposeId) + query, token);
         // The typed path is what the real UI calls: it FILTERS to that trip area's papers and
         // fills in area-dependent configuration the untyped variant leaves null (period-time
         // rules, route reservation settings). Take the type from the plan paper's own answer —
@@ -84,7 +100,8 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         }
         try {
             JsonNode typed = getCached("papers:" + bstrType + ":" + purposeId + ":" + segmentId,
-                    baseUrl() + "/api/v2/paper/purpose/" + bstrType + "/" + purposeId + query, token);
+                    buildUrl(endpoints.getPapersTyped(), "bstrType", bstrType, "purposeId", purposeId)
+                            + query, token);
             return planPaperBstrType(typed) != null ? typed : papers;
         } catch (RuntimeException e) {
             log.warn("Typed paper lookup failed for {}/{} — using the untyped definition: {}",
@@ -109,13 +126,13 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
 
     @Override
     public JsonNode getCorporationUsers(long corporationId, String token) {
-        String url = baseUrl() + "/api/v2/popup/user/all/" + corporationId;
+        String url = buildUrl(endpoints.getCorporationUsers(), "corporationId", corporationId);
         return getCached("users:" + corporationId, url, token);
     }
 
     @Override
     public JsonNode getUser(long corporationUserId, String token) {
-        String url = baseUrl() + "/api/v2/eacc-user/" + corporationUserId;
+        String url = buildUrl(endpoints.getUser(), "corporationUserId", corporationUserId);
         return getCached("user:" + corporationUserId, url, token);
     }
 
@@ -124,7 +141,7 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         if (documents == null || !documents.isArray() || documents.isEmpty()) {
             throw new IllegalArgumentException("The draft has no documents to save.");
         }
-        String url = baseUrl() + "/api/v2/approval/" + productCode() + "/bstr/plan/draft";
+        String url = buildUrl(endpoints.getPlanDraft(), "productCode", productCode());
         String bearer = resolveToken(token);
         try {
             String response = restClient.post()
@@ -150,8 +167,167 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public String postSettlementDraft(JsonNode documents, String token) {
+        if (documents == null || !documents.isArray() || documents.isEmpty()) {
+            throw new IllegalArgumentException("The settlement draft has no documents to save.");
+        }
+        // The settlement (정산서) endpoint — deliberately DISTINCT from the plan draft's
+        // /bstr/plan/draft. The body here is the 정산서 request-body shape, never the plan shape.
+        String url = buildUrl(endpoints.getSettlementDraft(), "productCode", productCode());
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(documents))
+                    .retrieve()
+                    .body(String.class);
+            log.info("BizPlay settlement draft saved: {}", response);
+            return response;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // Surface the provider's real error body (their 500s carry a JSON message).
+            log.warn("BizPlay settlement-draft save failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the settlement draft (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("BizPlay settlement-draft save failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay settlement-draft save failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
+    public java.util.List<Long> postEtcCardReceipts(JsonNode expenses, String token) {
+        if (expenses == null || !expenses.isArray() || expenses.isEmpty()) {
+            throw new IllegalArgumentException("No expense rows to register.");
+        }
+        String url = buildUrl(endpoints.getEtcCard());
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(expenses))
+                    .retrieve()
+                    .body(String.class);
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            JsonNode parsed = objectMapper.readTree(response == null ? "[]" : response);
+            for (JsonNode id : parsed) {
+                if (id.canConvertToLong()) {
+                    ids.add(id.asLong());
+                }
+            }
+            log.info("BizPlay etc-card receipts created: {}", ids);
+            return ids;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("BizPlay etc-card create failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the manual expense (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("BizPlay etc-card create failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay manual expense create failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
+    public long uploadReceiptFile(byte[] content, String filename, String token) {
+        if (content == null || content.length == 0) {
+            throw new IllegalArgumentException("The receipt image is empty.");
+        }
+        String url = buildUrl(endpoints.getFileboxUpload());
+        String bearer = resolveToken(token);
+        // multipart/form-data field name is "multipartFile" (see the provider's OpenAPI).
+        org.springframework.util.MultiValueMap<String, Object> form =
+                new org.springframework.util.LinkedMultiValueMap<>();
+        org.springframework.core.io.ByteArrayResource file =
+                new org.springframework.core.io.ByteArrayResource(content) {
+                    @Override
+                    public String getFilename() {
+                        return filename == null || filename.isBlank() ? "receipt" : filename;
+                    }
+                };
+        form.add("multipartFile", file);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .contentType(org.springframework.http.MediaType.MULTIPART_FORM_DATA)
+                    .body(form)
+                    .retrieve()
+                    .body(String.class);
+            JsonNode parsed = objectMapper.readTree(response == null ? "[]" : response);
+            JsonNode first = parsed.isArray() ? parsed.path(0) : parsed;
+            long fileId = first.path("fileId").asLong(0);
+            if (fileId <= 0) {
+                throw new IllegalStateException("filebox upload returned no fileId: " + response);
+            }
+            log.info("BizPlay filebox upload ok: fileId={}", fileId);
+            return fileId;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("BizPlay filebox upload failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the receipt image (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("BizPlay filebox upload failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay receipt image upload failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
+    public JsonNode getIssuedReceiptsBulk(java.util.List<Long> receiptIds, String token) {
+        if (receiptIds == null || receiptIds.isEmpty()) {
+            throw new IllegalArgumentException("No receipt ids to look up.");
+        }
+        String ids = receiptIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        String url = buildUrl(endpoints.getIssuedBulk(), "ids", ids);
+        return get(url, token);
+    }
+
+    @Override
+    public JsonNode getTranKindList(String token) {
+        // Company master data — cache it like the paper/catalog lookups.
+        return getCached("trankinds", buildUrl(endpoints.getTrankindList()), token);
+    }
+
+    @Override
+    public String patchEtcReceiptDetail(long receiptId, JsonNode detail, String token) {
+        if (detail == null || !detail.isObject()) {
+            throw new IllegalArgumentException("Receipt detail is required.");
+        }
+        String url = buildUrl(endpoints.getReceiptEtcDetail(), "receiptId", receiptId);
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.patch()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(detail))
+                    .retrieve()
+                    .body(String.class);
+            log.info("BizPlay receipt-etc detail updated (receiptId={}): {}", receiptId, response);
+            return response;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("receipt-etc detail update failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the receipt detail (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("receipt-etc detail update failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay receipt detail update failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
     public JsonNode getPlanList(long travelerId, String startDate, String endDate, String token) {
-        String url = baseUrl() + "/api/v2/approval/bstr/plan/list?travelerId=" + travelerId
+        String url = buildUrl(endpoints.getPlanList()) + "?travelerId=" + travelerId
                 + "&searchPeriodType=BSTR_START_DATE&startDate=" + startDate + "&endDate=" + endDate;
         // Not cached: the list changes as plans are drafted; the pick must see fresh rows.
         return get(url, token);
@@ -159,25 +335,37 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
 
     @Override
     public JsonNode getPlanDetail(long approvalId, String token) {
-        String url = baseUrl() + "/api/v2/approval/bstr/" + approvalId;
+        String url = buildUrl(endpoints.getPlanDetail(), "approvalId", approvalId);
         return get(url, token);
     }
 
     @Override
     public JsonNode getUnattachedReceipts(long corpUserId, String startDate, String endDate,
-                                          java.util.List<String> cardTypes, String token) {
+                                          java.util.List<String> cardTypes,
+                                          java.util.List<Long> tranKindIds,
+                                          java.util.List<Long> excludeTranKindIds, String token) {
         String types = (cardTypes == null || cardTypes.isEmpty())
                 ? "CORP" : String.join("%2C", cardTypes);
-        String url = baseUrl() + "/api/v2/receipt/" + properties.getReceiptProductCode() + "/not-attached/stream"
-                + "?startDate=" + startDate + "&endDate=" + endDate
-                + "&receiptStatusTypeList=YET%2CISSUED"
-                + "&corpUserIds=" + corpUserId
-                + "&cardTypeList=" + types
-                + "&excludeExpenseAttached=true";
+        StringBuilder url = new StringBuilder(
+                buildUrl(endpoints.getReceiptStream(), "receiptProductCode", properties.getReceiptProductCode()))
+                .append("?startDate=").append(startDate).append("&endDate=").append(endDate)
+                .append("&receiptStatusTypeList=YET%2CISSUED")
+                .append("&corpUserIds=").append(corpUserId)
+                .append("&cardTypeList=").append(types)
+                .append("&excludeExpenseAttached=true");
+        // Section-scoped TranKind filter (from the form's paperItemOrderDto[].itemDto.tranKinds).
+        if (tranKindIds != null && !tranKindIds.isEmpty()) {
+            url.append("&tranKindIds=").append(tranKindIds.stream()
+                    .map(String::valueOf).collect(java.util.stream.Collectors.joining("%2C")));
+        }
+        if (excludeTranKindIds != null && !excludeTranKindIds.isEmpty()) {
+            url.append("&excludeTranKindIds=").append(excludeTranKindIds.stream()
+                    .map(String::valueOf).collect(java.util.stream.Collectors.joining("%2C")));
+        }
         String bearer = resolveToken(token);
         try {
             String raw = restClient.get()
-                    .uri(java.net.URI.create(url))   // pre-encoded commas must not be re-encoded
+                    .uri(java.net.URI.create(url.toString()))   // pre-encoded commas must not be re-encoded
                     .header("accept", "*/*")
                     .header("X-RR-MODE", "NONE")
                     .header("Authorization", "Bearer " + bearer)

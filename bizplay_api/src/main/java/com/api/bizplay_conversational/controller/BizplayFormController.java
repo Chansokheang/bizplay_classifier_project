@@ -18,14 +18,23 @@ import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.api.bizplay_conversational.model.request.AgentPromptRequest;
+import com.api.bizplay_conversational.model.request.SettlementStarterRequest;
+import com.api.bizplay_conversational.model.response.AgentPromptResponse;
+import com.api.bizplay_conversational.model.response.SettlementStarterResponse;
+import com.api.bizplay_conversational.service.agentPromptService.AgentPromptService;
+
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -45,6 +54,7 @@ public class BizplayFormController {
     private final FormSkeletonService formSkeletonService;
     private final BizplayPlanAgentService bizplayPlanAgentService;
     private final com.api.bizplay_conversational.service.bizplaySettlementAgentService.BizplaySettlementAgentService bizplaySettlementAgentService;
+    private final AgentPromptService agentPromptService;
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
@@ -103,6 +113,134 @@ public class BizplayFormController {
         JsonNode approvalLines = body == null ? null : body.path("approvalLines");
         return ResponseEntity.ok(ApiResponse.ok(
                 bizplayPlanAgentService.createPlan(sessionId, corpNo, token, approvalLines)));
+    }
+
+    @Operation(summary = "Submit this settlement: POST the session's draft_json to BizPlay's own "
+            + "settlement endpoint (/bstr/report/draft — never the plan path). Optional body "
+            + "{approvalLines:[{corporationUserId, approvalKindType?}]} carries the approver picks.")
+    @PostMapping("/agents/settlement/{sessionId}/create")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> createSettlement(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody(required = false) JsonNode body,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("POST /bizplay/agents/settlement/{}/create - corpNo={}", sessionId, corpNo);
+        JsonNode approvalLines = body == null ? null : body.path("approvalLines");
+        return ResponseEntity.ok(ApiResponse.ok(
+                bizplaySettlementAgentService.createSettlement(sessionId, corpNo, token, approvalLines)));
+    }
+
+    @Operation(summary = "Manual expense entry (⑧) — when the trip has no card receipt: register a "
+            + "기타카드 expense + its required receipt image and map it into the settlement draft's "
+            + "etcReceiptSaveRequests. multipart: 'expense' (JSON of the etc-card fields) + 'image' (file) "
+            + "+ optional 'detail' (JSON of ReceiptEtcDto — vehicleType, depart/arrival, used dates, …).")
+    @PostMapping(value = "/agents/settlement/{sessionId}/manual-expense", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> addSettlementManualExpense(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @org.springframework.web.bind.annotation.RequestPart("expense") String expenseJson,
+            @org.springframework.web.bind.annotation.RequestPart(value = "detail", required = false) String detailJson,
+            @org.springframework.web.bind.annotation.RequestPart(value = "image", required = false) org.springframework.web.multipart.MultipartFile image,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) throws java.io.IOException {
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense - corpNo={}", sessionId, corpNo);
+        JsonNode fields = objectMapper.readTree(expenseJson);
+        JsonNode detail = (detailJson == null || detailJson.isBlank()) ? null : objectMapper.readTree(detailJson);
+        byte[] imageBytes = (image == null || image.isEmpty()) ? null : image.getBytes();
+        String imageName = image == null ? null : image.getOriginalFilename();
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.addManualExpense(
+                sessionId, corpNo, fields, detail, imageBytes, imageName, token)));
+    }
+
+    // --- settlement conversation starter (per-corp greeting + example prompts) --------------
+
+    @Operation(summary = "Get this corp's settlement conversation starter — the chat greeting and "
+            + "example prompts (custom override when set, else the built-in default).")
+    @GetMapping("/agents/settlement/starter")
+    public ResponseEntity<ApiResponse<SettlementStarterResponse>> getSettlementStarter(
+            @RequestParam("corpNo") String corpNo) {
+        log.info("GET /bizplay/agents/settlement/starter - corpNo={}", corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(settlementStarter(corpNo)));
+    }
+
+    @Operation(summary = "Set up this corp's settlement conversation starter: greeting and/or example "
+            + "prompts. A provided value is saved; a blank/empty one resets that piece to the default. "
+            + "Body {greeting, suggestions:[...]}.")
+    @PutMapping("/agents/settlement/starter")
+    public ResponseEntity<ApiResponse<SettlementStarterResponse>> setSettlementStarter(
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody SettlementStarterRequest request) {
+        log.info("PUT /bizplay/agents/settlement/starter - corpNo={}", corpNo);
+        applySettlementStarter(corpNo, request);
+        return ResponseEntity.ok(ApiResponse.ok(settlementStarter(corpNo)));
+    }
+
+    /** POST alias of PUT — "create" reads naturally for first-time setup. */
+    @Operation(summary = "Create this corp's settlement conversation starter (alias of PUT).")
+    @PostMapping("/agents/settlement/starter")
+    public ResponseEntity<ApiResponse<SettlementStarterResponse>> createSettlementStarter(
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody SettlementStarterRequest request) {
+        log.info("POST /bizplay/agents/settlement/starter - corpNo={}", corpNo);
+        applySettlementStarter(corpNo, request);
+        return ResponseEntity.ok(ApiResponse.ok(settlementStarter(corpNo)));
+    }
+
+    @Operation(summary = "Reset this corp's settlement conversation starter (greeting + prompts) to defaults.")
+    @DeleteMapping("/agents/settlement/starter")
+    public ResponseEntity<ApiResponse<SettlementStarterResponse>> resetSettlementStarter(
+            @RequestParam("corpNo") String corpNo) {
+        log.info("DELETE /bizplay/agents/settlement/starter - corpNo={}", corpNo);
+        agentPromptService.reset(corpNo, AgentPromptService.SETTLEMENT_STARTER_MESSAGE);
+        agentPromptService.reset(corpNo, AgentPromptService.SETTLEMENT_STARTER_SUGGESTIONS);
+        return ResponseEntity.ok(ApiResponse.ok(settlementStarter(corpNo)));
+    }
+
+    /** Save the provided pieces: greeting and suggestions each saved when given, reset when blank/empty. */
+    private void applySettlementStarter(String corpNo, SettlementStarterRequest request) {
+        if (request == null) {
+            return;
+        }
+        if (request.getGreeting() != null) {
+            if (request.getGreeting().isBlank()) {
+                agentPromptService.reset(corpNo, AgentPromptService.SETTLEMENT_STARTER_MESSAGE);
+            } else {
+                AgentPromptRequest g = new AgentPromptRequest();
+                g.setPrompt(request.getGreeting().trim());
+                agentPromptService.put(corpNo, AgentPromptService.SETTLEMENT_STARTER_MESSAGE, g);
+            }
+        }
+        if (request.getSuggestions() != null) {
+            List<String> cleaned = request.getSuggestions().stream()
+                    .filter(s -> s != null && !s.isBlank())
+                    .map(String::trim)
+                    .toList();
+            if (cleaned.isEmpty()) {
+                agentPromptService.reset(corpNo, AgentPromptService.SETTLEMENT_STARTER_SUGGESTIONS);
+            } else {
+                AgentPromptRequest s = new AgentPromptRequest();
+                s.setPrompt(String.join("\n", cleaned));
+                agentPromptService.put(corpNo, AgentPromptService.SETTLEMENT_STARTER_SUGGESTIONS, s);
+            }
+        }
+    }
+
+    /** The corp's effective settlement starter (custom-or-default greeting + prompts). */
+    private SettlementStarterResponse settlementStarter(String corpNo) {
+        AgentPromptResponse greeting =
+                agentPromptService.get(corpNo, AgentPromptService.SETTLEMENT_STARTER_MESSAGE);
+        AgentPromptResponse suggestions =
+                agentPromptService.get(corpNo, AgentPromptService.SETTLEMENT_STARTER_SUGGESTIONS);
+        String raw = suggestions.getEffectivePrompt() == null ? "" : suggestions.getEffectivePrompt();
+        List<String> lines = Arrays.stream(raw.split("\\r?\\n"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        return SettlementStarterResponse.builder()
+                .greeting(greeting.getEffectivePrompt())
+                .suggestions(lines)
+                .greetingSource(greeting.getSource())
+                .suggestionsSource(suggestions.getSource())
+                .build();
     }
 
     @Operation(summary = "Manual (non-chat) plan create: values from the UI form are written into "

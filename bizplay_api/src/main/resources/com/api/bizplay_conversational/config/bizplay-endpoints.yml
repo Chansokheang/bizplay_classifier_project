@@ -1,0 +1,35 @@
+# BizPlay cloud API endpoint templates (the provider's API contract).
+#
+# These are PATHS ONLY — the base URL and the {productCode}/{receiptProductCode} segments come
+# from app.bizplay.* (BizplayProperties), and query strings are assembled in the gateway. Path
+# variables use {name} and are substituted by BizplayGatewayServiceImple.expand(...).
+#
+# Bound into BizplayEndpoints (@ConfigurationProperties prefix "bizplay.endpoints"), loaded via
+# @PropertySource + YamlPropertySourceFactory. The Java class carries the same values as defaults,
+# so the app still starts if this file is absent — edit here to re-point a path without a rebuild.
+bizplay:
+  endpoints:
+    # ① purpose catalog (purposes + segments) for a corporation user
+    purpose-catalog: /api/v2/bstrPurpose/corporation-user/{corpUserId}/{paperKindType}
+    # ② paper (form) definitions for a purpose — untyped discovery, then the typed variant
+    papers: /api/v2/paper/purpose/{purposeId}
+    papers-typed: /api/v2/paper/purpose/{bstrType}/{purposeId}
+    # corporation staff roster / one staff member
+    corporation-users: /api/v2/popup/user/all/{corporationId}
+    user: /api/v2/eacc-user/{corporationUserId}
+    # ③ plan draft save  /  ⑦ settlement draft save (SEPARATE endpoints, per body shape)
+    plan-draft: /api/v2/approval/{productCode}/bstr/plan/draft
+    settlement-draft: /api/v2/approval/{productCode}/bstr/report/draft
+    # ④ plan list (settlement anchor search)  /  ⑤ one plan's detail
+    plan-list: /api/v2/approval/bstr/plan/list
+    plan-detail: /api/v2/approval/bstr/{approvalId}
+    # ⑥ unattached card receipts (settlement evidence)
+    receipt-stream: /api/v2/receipt/{receiptProductCode}/not-attached/stream
+    # ⑧ manual expense entry (when no card receipt exists): create → upload image → issued detail
+    etc-card: /api/v2/receipt/etc-card
+    filebox-upload: /api/v2/filebox/upload
+    issued-bulk: /api/v2/receipt/issued/bulk/{ids}
+    # optional: additional receipt detail (travel info) — PATCH after etc-card create
+    receipt-etc-detail: /api/v2/receipt-etc/{receiptId}
+    # TranKind master (id → name/type), to resolve the plan's allowed tranKinds
+    trankind-list: /api/v2/trankind/list

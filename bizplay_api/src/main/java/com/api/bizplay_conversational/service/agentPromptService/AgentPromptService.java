@@ -20,6 +20,12 @@ public interface AgentPromptService {
     /** Pseudo-agent holding the chat example prompts (one suggestion per line). */
     String STARTER_SUGGESTIONS = "starter-suggestions";
 
+    /** Settlement (출장정산) agent's own chat opener — independent from the plan agent's. */
+    String SETTLEMENT_STARTER_MESSAGE = "settlement-starter-message";
+
+    /** Settlement agent's own example prompts (one suggestion per line). */
+    String SETTLEMENT_STARTER_SUGGESTIONS = "settlement-starter-suggestions";
+
     /**
      * The prompt the agent should use right now: the current turn's corp (from
      * {@link AgentTenantContext}) may have a custom override; otherwise the given default.

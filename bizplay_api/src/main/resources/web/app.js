@@ -6,7 +6,8 @@
  * ============================================================ */
 
 /* Corp number is editable from the header and remembered across reloads. */
-let CORP_NO = localStorage.getItem("bizplay.corpNo") || "1234567890";
+let CORP_NO = localStorage.getItem("bizplay.corpNo")
+  || (window.APP_CONFIG && window.APP_CONFIG.corpNo) || "1234567890";
 const PLAN_TYPE = "Business Trip Plan";
 let currentTab = "plan";
 
@@ -574,6 +575,7 @@ function openAp() {
   document.body.classList.add("ap-open");
   window.scrollTo(0, 0);
   apLoad();
+  apSettleStarterLoad();   // its own endpoint — a failure here must not blank the rest
   caLoad();
   mcpLoad();
 }
@@ -600,10 +602,14 @@ async function apLoad() {
   }
 }
 
-/* ---- Starter conversation: greeting + GPT-style starter rows (✕ per row) ---- */
-function apStarterRowHtml(value) {
+/* ---- Starter conversation: greeting + GPT-style starter rows (✕ per row) ----
+ * Two cards share this code: the plan chat's starter (saved through /agent-prompts)
+ * and the settlement chat's (its own endpoint, /bizplay/agents/settlement/starter). ---- */
+const AP_STARTER_PH = "e.g. Please create a business trip plan to Busan for next Tuesday.";
+const AP_SETTLE_STARTER_PH = "e.g. 지난달 부산 출장 정산해줘";
+function apStarterRowHtml(value, placeholder) {
   return `<div class="ap-starter-row"><input type="text" maxlength="160" value="${esc(value)}"
-      placeholder="e.g. Please create a business trip plan to Busan for next Tuesday." />
+      placeholder="${esc(placeholder || AP_STARTER_PH)}" />
       <button type="button" class="ap-row-x" title="Remove">✕</button></div>`;
 }
 function renderStarterCard() {
@@ -615,8 +621,8 @@ function renderStarterCard() {
   $("apStarterMsgNote").textContent =
     (msg.source === "CUSTOM" || sug.source === "CUSTOM") ? "Customized for this corp." : "";
 }
-function apStarterValues() {
-  return [...$("apStarterRows").querySelectorAll("input")]
+function apStarterValues(rowsId) {
+  return [...$(rowsId || "apStarterRows").querySelectorAll("input")]
     .map((i) => i.value.trim()).filter(Boolean).slice(0, 6);
 }
 async function apStarterSave() {
@@ -651,6 +657,54 @@ async function apStarterReset() {
   toast("Starter conversation reset to defaults.", "ok");
   starterMessage = null; starterSuggestions = null;
   apLoad();
+}
+
+/* ---- The settlement chat's own starter. One endpoint carries both pieces:
+ * GET/PUT/DELETE /bizplay/agents/settlement/starter?corpNo= with {greeting, suggestions[]}.
+ * A blank greeting or an empty suggestion list resets THAT piece to the default. ---- */
+async function apSettleStarterLoad() {
+  const note = $("apSetStarterMsgNote");
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/starter?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json();
+    if (!res.ok) throw apiError(json, res);
+    const d = json.data || json.payload || {};
+    $("apSetStarterMsg").value = d.greeting || "";
+    $("apSetStarterRows").innerHTML =
+      (d.suggestions || []).map((s) => apStarterRowHtml(s, AP_SETTLE_STARTER_PH)).join("")
+      + apStarterRowHtml("", AP_SETTLE_STARTER_PH);
+    note.textContent = (d.greetingSource === "CUSTOM" || d.suggestionsSource === "CUSTOM")
+      ? "Customized for this corp." : "";
+  } catch (e) {
+    $("apSetStarterRows").innerHTML = apStarterRowHtml("", AP_SETTLE_STARTER_PH);
+    note.textContent = friendlyError(e.message);
+  }
+}
+async function apSettleStarterSave() {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/starter?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        greeting: $("apSetStarterMsg").value.trim(),
+        suggestions: apStarterValues("apSetStarterRows"),
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw apiError(json, res);
+    toast("Settlement starter saved ✓", "ok");
+    settleStarterMessage = null; settleStarterSuggestions = null;   // settle chat refetches
+    apSettleStarterLoad();
+  } catch (e) {
+    $("apSetStarterMsgNote").textContent = friendlyError(e.message);
+  }
+}
+async function apSettleStarterReset() {
+  await fetch(`${BZ_API_BASE()}/agents/settlement/starter?corpNo=${encodeURIComponent(CORP_NO)}`,
+    { method: "DELETE" });
+  toast("Settlement starter reset to defaults.", "ok");
+  settleStarterMessage = null; settleStarterSuggestions = null;
+  apSettleStarterLoad();
 }
 
 /* ---- Sub-agents master-detail: list on the right, selected agent's card on the left.
@@ -1051,20 +1105,28 @@ function initAp() {
   $("apBackBtn").addEventListener("click", closeAp);
   $("apStarterSaveBtn").addEventListener("click", apStarterSave);
   $("apStarterResetBtn").addEventListener("click", apStarterReset);
+  $("apSetStarterSaveBtn").addEventListener("click", apSettleStarterSave);
+  $("apSetStarterResetBtn").addEventListener("click", apSettleStarterReset);
   // Starter rows: ✕ removes; typing in the last row grows a fresh empty one.
-  $("apStarterRows").addEventListener("click", (ev) => {
-    const x = ev.target.closest(".ap-row-x");
-    if (!x) return;
-    const rows = $("apStarterRows").querySelectorAll(".ap-starter-row");
-    if (rows.length > 1) x.closest(".ap-starter-row").remove();
-    else x.closest(".ap-starter-row").querySelector("input").value = "";
-  });
-  $("apStarterRows").addEventListener("input", (ev) => {
-    const rows = [...$("apStarterRows").querySelectorAll(".ap-starter-row input")];
-    if (rows.length && rows[rows.length - 1].value.trim() && rows.length < 6) {
-      $("apStarterRows").insertAdjacentHTML("beforeend", apStarterRowHtml(""));
-    }
-  });
+  // Both starter cards (plan + settlement) behave the same way.
+  const wireStarterRows = (id, placeholder) => {
+    const box = $(id);
+    box.addEventListener("click", (ev) => {
+      const x = ev.target.closest(".ap-row-x");
+      if (!x) return;
+      const rows = box.querySelectorAll(".ap-starter-row");
+      if (rows.length > 1) x.closest(".ap-starter-row").remove();
+      else x.closest(".ap-starter-row").querySelector("input").value = "";
+    });
+    box.addEventListener("input", () => {
+      const rows = [...box.querySelectorAll(".ap-starter-row input")];
+      if (rows.length && rows[rows.length - 1].value.trim() && rows.length < 6) {
+        box.insertAdjacentHTML("beforeend", apStarterRowHtml("", placeholder));
+      }
+    });
+  };
+  wireStarterRows("apStarterRows", AP_STARTER_PH);
+  wireStarterRows("apSetStarterRows", AP_SETTLE_STARTER_PH);
   $("apAgentList").addEventListener("click", (ev) => {
     const pick = ev.target.closest("[data-ag-pick]");
     if (pick) { apSelectedAgent = pick.getAttribute("data-ag-pick"); renderAgentCards(); }
@@ -1216,7 +1278,8 @@ const TRIP_TYPES = {
  * fallback so the modal still works when the private API is unreachable.
  * ================================================================ */
 const BZ_API_BASE = () => API_ORIGIN + "/api/v1/agent-conversations/bizplay";
-let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId") || "30447";
+let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId")
+  || (window.APP_CONFIG && window.APP_CONFIG.corpUserId) || "30447";
 /* The signed-in demo user — "I"/"me" in chat defaults to this person. */
 /* Who "I"/"me" refers to in chat. MUST be the same person as BZ_CORP_USER_ID — that id is the
  * drafter of every document — otherwise "plan a trip for me" drafts as one user and travels as
@@ -1785,8 +1848,42 @@ async function downloadPlanJson(planId) {
     console.warn("[bizplay] draft fetch failed, falling back to the plan record:", e.message);
   }
   if (!payload) payload = plan;   // no session (or no draft yet) — the row's own record
-  const safe = String(plan.title || planId).replace(/[^\w가-힣.-]+/g, "_").slice(0, 60);
-  const name = `${label}_${safe || planId}.json`;
+  saveJsonFile(payload, `${label}_${jsonFileStem(plan.title, planId)}.json`);
+}
+
+/* A session's draft_json straight from the database (GET /sessions/{id}), or null. */
+async function fetchSessionDraft(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const res = await fetch(`${AGENT_API}/sessions/${encodeURIComponent(sessionId)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return null;
+    const d = (json && (json.data || json.payload)) || {};
+    return d.draftJson || null;
+  } catch (e) {
+    console.warn("[bizplay] draft fetch failed:", e.message);
+    return null;
+  }
+}
+
+/* Download one settlement's draft_json — the agent session's stored document (the 정산서
+ * save body). Rows with no session, or one that never got a draft, fall back to the
+ * stored report record so the button is never a dead end; the filename says which. */
+async function downloadReportJson(key) {
+  const rep = reportsCache.find((r) => String(r.key) === String(key));
+  if (!rep) { toast("That report is no longer in the list.", "err"); return; }
+  const draft = await fetchSessionDraft(rep.sessionId);
+  const label = draft ? "draft" : "report";
+  const payload = draft || rep;
+  if (!draft) toast("No draft_json for this row — downloading the stored report instead.", "");
+  saveJsonFile(payload, `${label}_${jsonFileStem(rep.title, key)}.json`);
+}
+
+function jsonFileStem(title, fallback) {
+  return String(title || fallback).replace(/[^\w가-힣.-]+/g, "_").slice(0, 60) || String(fallback);
+}
+
+function saveJsonFile(payload, name) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   const a = document.createElement("a");
   a.href = url; a.download = name;
@@ -2622,6 +2719,9 @@ function init() {
   $("openReportCreateBtn").addEventListener("click", () => openReportCreate());
   $("reportBody").addEventListener("click", (ev) => {
     if (ev.target.closest(".c-check")) return;
+    // The JSON button must not also open the row detail behind it.
+    const dl = ev.target.closest("[data-report-json]");
+    if (dl) { ev.stopPropagation(); downloadReportJson(dl.getAttribute("data-report-json")); return; }
     const viewBtn = ev.target.closest("[data-report-key]");
     if (viewBtn) openReportDetail(viewBtn.getAttribute("data-report-key"));
   });
@@ -3049,7 +3149,9 @@ function openChatMode() {
 
 /* "Settle in Chat" — the settlement agent (fixed chip-driven flow, all server-side).
  * The UI only renders reply + chips; each chip click sends its sendText back as the
- * next message. The agent speaks first, so we auto-send the opener turn. */
+ * next message. It opens on the corp's settlement starter (greeting + clickable
+ * starters, both configurable in Settings); if that can't be fetched we fall back to
+ * the old behavior — auto-send an opener so the agent speaks first. */
 function openSettlementChat() {
   openCreate();                                   // full reset (also clears agent state)
   chatOnly = true;
@@ -3061,12 +3163,57 @@ function openSettlementChat() {
   $("createSub").textContent = T(
     "Pick the finished trip, the evidence period and the card receipts — the agent assembles the settlement.",
     "정산할 출장과 증빙 기간, 카드 영수증을 고르면 에이전트가 정산서를 만들어 드려요.");
-  $("agentThread").innerHTML = "";                // no trip hero — settlement asks its own questions
+  $("agentThread").innerHTML = "";                // no trip hero — settlement has its own
   agent.settle = true;
-  $("agentInput").value = LANG === "ko"
-    ? "출장 정산을 시작할게요"
-    : "I want to settle my business-trip expenses";
-  sendAgent({ keepLang: true });
+  loadSettlementStarter();
+}
+
+/* The settlement opener, per corp: GET /bizplay/agents/settlement/starter. Rendered as
+ * the chat hero; the agent then speaks on the first real message. If the endpoint is
+ * unreachable we keep the previous behavior and auto-send the opener turn instead. */
+let settleStarterMessage = null;         // greeting (null until fetched for THIS corp)
+let settleStarterSuggestions = null;     // clickable starters
+async function loadSettlementStarter() {
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/starter?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error("starter unavailable");
+    const d = json.data || json.payload || {};
+    settleStarterMessage = d.greeting || null;
+    settleStarterSuggestions = (d.suggestions || []).slice(0, 4);
+    if (!agent.settle || agent.sessionId) return;     // user already started talking
+    renderSettlementHero();
+  } catch {
+    if (!agent.settle || agent.sessionId) return;
+    $("agentInput").value = LANG === "ko"
+      ? "출장 정산을 시작할게요"
+      : "I want to settle my business-trip expenses";
+    sendAgent({ keepLang: true });
+  }
+}
+
+function renderSettlementHero() {
+  const thread = $("agentThread");
+  const starters = settleStarterSuggestions && settleStarterSuggestions.length
+    ? settleStarterSuggestions : [];
+  thread.innerHTML = `<div class="chat-hero" id="chatHero">
+    <span class="ch-ico">${svgIcon("import", "ico-lg")}</span>
+    <h3 class="ch-title">${esc(T("Which trip should we settle?", "어떤 출장을 정산할까요?"))}</h3>
+    <p class="ch-sub">${esc(settleStarterMessage
+      || T("Tell me which trip to settle — I'll pull the plan and its card receipts and draft the 정산서 for you.",
+           "정산할 출장을 알려주시면 계획과 카드 영수증을 불러와 정산서를 만들어 드릴게요."))}</p>
+    <div class="ch-cards">
+      ${starters.map((s) => `<button type="button" class="ch-card">${svgIcon("chat")} <span>${esc(s)}</span></button>`).join("")}
+    </div>
+  </div>`;
+  thread.querySelectorAll(".ch-card").forEach((b) => b.addEventListener("click", () => {
+    $("agentInput").value = b.textContent.trim();
+    sendAgent();
+  }));
+  if (MOTION) {
+    gsap.fromTo("#chatHero > *", { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.45, ease: "power3.out", stagger: 0.07, clearProps: "transform,opacity" });
+  }
 }
 
 /* Period questions in the settlement flow reuse the plan wizard's click-range
@@ -3079,7 +3226,9 @@ function settlementDateAsk() {
       $("agentInput").value = `${start} ~ ${end}`;
       sendAgent({ keepLang: true });   // machine-formatted dates, not the user's language
     },
-    { allowPast: true });
+    // echo:false — sendAgent() prints the "start ~ end" bubble; the calendar must not
+    // print a second "start → end" one right above it.
+    { allowPast: true, echo: false });
 }
 
 /* Final settlement summary — read-only card. Provider save is NOT implemented yet,
@@ -3101,6 +3250,184 @@ function settlementSummaryCard(draft) {
   wrap.innerHTML = `<div class="prev-card">
       <div class="pc-head"><span class="b-ico">${svgIcon("import")}</span> ${esc(T("Settlement summary", "정산 요약"))}</div>
       <div class="pc-body">${body}</div></div>`;
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* Manual expense entry (⑧) — the trip has no matching card receipt, so the user types
+ * the expense and attaches its (required) receipt image. A file can't ride a chat turn:
+ * this posts multipart to /agents/settlement/{sessionId}/manual-expense, which registers
+ * a 기타카드 receipt + the image and maps them into the draft's etcReceiptSaveRequests.
+ * Every amount is typed, never derived here — the agent stores the keys exactly as given. */
+function settlementManualExpenseForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
+  const money = (k) => `<input type="number" min="0" step="1" data-k="${k}" placeholder="0">`;
+  // Type-specific detail fields the agent asked for (missingFields), rendered as extra inputs and
+  // submitted as the `detail` part (PATCH /receipt-etc). Which fields appear depends on the TranKind.
+  const detailFields = (agent.lastData && agent.lastData.missingFields) || [];
+  const detailSpec = {
+    usedStartDate: [T("Used from", "사용 시작일"), `<input type="date" data-d="usedStartDate">`],
+    usedEndDate: [T("Used to", "사용 종료일"), `<input type="date" data-d="usedEndDate">`],
+    vehicleType: [T("Vehicle", "교통수단"), `<input type="text" data-d="vehicleType" placeholder="KTX / AIR / BUS">`],
+    routeType: [T("Route", "편도/왕복"), `<input type="text" data-d="routeType" placeholder="ONEWAY / ROUNDTRIP">`],
+    seatClass: [T("Seat class", "좌석 등급"), `<input type="text" data-d="seatClass">`],
+    departTerminalId: [T("Depart terminal id", "출발 터미널 ID"), `<input type="number" data-d="departTerminalId">`],
+    arrivalTerminalId: [T("Arrival terminal id", "도착 터미널 ID"), `<input type="number" data-d="arrivalTerminalId">`],
+    depart: [T("From", "출발지"), `<input type="text" data-d="depart">`],
+    arrival: [T("To", "도착지"), `<input type="text" data-d="arrival">`],
+    starRating: [T("Star rating", "성급"), `<input type="number" data-d="starRating">`],
+    roomType: [T("Room type", "객실 유형"), `<input type="text" data-d="roomType">`],
+    partnerHotel: [T("Partner hotel", "제휴 호텔"), `<input type="text" data-d="partnerHotel">`],
+    foodDivisionType: [T("Meal category", "식대 구분"), `<input type="text" data-d="foodDivisionType">`],
+    personCount: [T("Headcount", "인원수"), `<input type="number" data-d="personCount">`],
+  };
+  const detailHtml = detailFields
+    .filter((k) => detailSpec[k])
+    .map((k) => f(detailSpec[k][0], detailSpec[k][1]))
+    .join("");
+  const detailSection = detailHtml
+    ? `<div class="mx-sub">${esc(T("Additional details", "추가 정보"))}</div>${detailHtml}`
+    : "";
+  const html = `<div class="mx-grid">
+      <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
+        <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
+      ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
+      ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
+      ${f(T("Currency", "통화"), `<input type="text" data-k="currencyCode" value="KRW">`)}
+      <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed">
+        <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
+      ${f(T("Amount", "승인금액"), money("approvalAmount"))}
+      ${f(T("Supply", "공급가액"), money("supplyAmount"))}
+      ${f(T("VAT", "부가세"), money("vatAmount"))}
+      ${f(T("Original supply", "원공급가액"), money("originalSupplyAmount"))}
+      ${f(T("Original VAT", "원부가세"), money("originalVatAmount"))}
+      ${detailSection}
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt image (optional)", "영수증 이미지 (선택)"))}</span>
+        <input type="file" accept="image/*" data-k="image"></label>
+    </div>
+    <div class="mx-actions"><span class="mx-note"></span>
+      <button type="button" class="btn btn-primary mx-add">${esc(T("Add expense", "경비 추가"))}</button></div>`;
+
+  // No prompt bubble of our own: the agent's reply right above already asked for this,
+  // and a second canned sentence would just repeat it.
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget">${html}</div>`;
+  const w = wrap.querySelector(".guide-widget");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  const done = (shown) => { w.classList.add("guide-done"); appendMsg("user", shown, {}); };
+
+  const el = (k) => w.querySelector(`[data-k="${k}"]`);
+  const note = w.querySelector(".mx-note");
+  const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
+  w.querySelector(".mx-add").addEventListener("click", async () => {
+    const file = el("image").files[0];
+    const mestName = el("mestName").value.trim();
+    const approvalDate = el("approvalDate").value;
+    const approvalAmount = num(el("approvalAmount").value);
+    if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
+    if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(T("Enter the approved amount.", "승인금액을 입력해 주세요."));
+    const time = el("approvalTime").value || "00:00:00";
+    const expense = {
+      approvalDate,
+      approvalTime: time.length === 5 ? time + ":00" : time,   // <input type=time> drops seconds
+      currencyCode: el("currencyCode").value.trim() || "KRW",
+      mestName,
+      overseasUsed: el("overseasUsed").checked,
+      approvalAmount,
+      supplyAmount: num(el("supplyAmount").value),
+      originalSupplyAmount: num(el("originalSupplyAmount").value),
+      vatAmount: num(el("vatAmount").value),
+      originalVatAmount: num(el("originalVatAmount").value),
+      // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
+    };
+    // The TranKind detail (data-d inputs) → the `detail` part (PATCH /receipt-etc). Only sent when
+    // the form actually had detail fields; empty inputs go through as null.
+    let detail = null;
+    const dInputs = w.querySelectorAll("[data-d]");
+    if (dInputs.length) {
+      detail = { etcReceiptType: "RECEIPT" };
+      dInputs.forEach((inp) => {
+        const k = inp.getAttribute("data-d");
+        const v = inp.value;
+        detail[k] = v === "" ? null : (inp.type === "number" ? num(v) : v);
+      });
+    }
+    note.textContent = "";
+    note.classList.remove("mx-warn");
+    done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`
+      + (file ? ` · ${file.name}` : ""));
+    // A rejected submit reopens the form with everything still typed in.
+    if (!await submitManualExpense(expense, detail, file)) w.classList.remove("guide-done");
+  });
+  return w;
+}
+
+async function submitManualExpense(expense, detail, file) {
+  if (!agent.sessionId) {
+    appendMsg("assistant", "⚠ " + T("Import a plan before adding a manual expense.",
+                                    "먼저 출장 계획을 불러온 뒤 경비를 입력해 주세요."), { error: true });
+    return false;
+  }
+  const typing = appendTyping();
+  setAgentBusy(true);
+  try {
+    const fd = new FormData();
+    fd.append("expense", JSON.stringify(expense));   // plain text part -> @RequestPart String
+    if (detail) fd.append("detail", JSON.stringify(detail));   // optional additional info
+    if (file) fd.append("image", file, file.name);             // image is optional
+    const url = `${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}`
+      + `/manual-expense?corpNo=${encodeURIComponent(CORP_NO)}`;
+    const res = await fetch(url, { method: "POST", body: fd });
+    const json = await res.json().catch(() => ({}));
+    typing.remove();
+    if (!res.ok) throw apiError(json, res);
+    const data = (json && (json.data || json.payload)) || {};
+    agent.status = data.status || agent.status;
+    agent.draft = data.draftJson || agent.draft;
+    agent.lastData = data;
+    appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
+    manualExpenseFollowUp();
+    return true;
+  } catch (e) {
+    typing.remove();
+    appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
+    return false;
+  } finally {
+    setAgentBusy(false);
+  }
+}
+
+/* The expense landed but the evidence stage is still open: add another, or close it. */
+function manualExpenseFollowUp() {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  const row = document.createElement("div");
+  row.className = "choice-row";
+  const chip = (label, onPick) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "choice-chip";
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      if (agent.busy || row.classList.contains("choice-done")) return;
+      row.classList.add("choice-done");
+      btn.classList.add("choice-picked");
+      onPick();
+    });
+    row.appendChild(btn);
+  };
+  chip(T("Add another expense", "경비 더 입력"), settlementManualExpenseForm);
+  chip(T("Done", "첨부 완료"), () => {
+    $("agentInput").value = "receipts-done";
+    sendAgent({ keepLang: true });   // machine chip token, not the user's language
+  });
+  wrap.appendChild(row);
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
 }
@@ -3199,7 +3526,9 @@ function guideChips(prompt, options, onPick) {
 }
 
 /* Assistant bubble + an inline answer widget (text or date-range). */
-function guideWidget(prompt, innerHtml, wire) {
+/* opts.echo === false: the caller sends the answer through sendAgent(), which draws its
+ * own user bubble — echoing here too would print the same period twice. */
+function guideWidget(prompt, innerHtml, wire, opts) {
   const thread = $("agentThread");
   const wrap = document.createElement("div");
   wrap.className = "msg msg-assistant";
@@ -3207,7 +3536,10 @@ function guideWidget(prompt, innerHtml, wire) {
   const w = wrap.querySelector(".guide-widget");
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
-  wire(w, (shownText) => { w.classList.add("guide-done"); appendMsg("user", shownText, {}); });
+  wire(w, (shownText) => {
+    w.classList.add("guide-done");
+    if (!opts || opts.echo !== false) appendMsg("user", shownText, {});
+  });
   return w;
 }
 
@@ -3237,7 +3569,7 @@ function guideDates(prompt, onSubmit, opts) {
   const iso = (y, m, d) => `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   const todayIso = iso(now.getFullYear(), now.getMonth(), now.getDate());   // past days can't be picked
 
-  return guideWidget(prompt, `<div class="cal"></div>`, (w, done) => {
+  return guideWidget(prompt, `<div class="cal"></div>`, (w, done) => {   // opts passed through below
     const cal = w.querySelector(".cal");
     const hint = () => !selStart
       ? T("Pick the start date.", "시작일을 선택해 주세요.")
@@ -3288,7 +3620,7 @@ function guideDates(prompt, onSubmit, opts) {
       }));
     };
     render();
-  });
+  }, opts);
 }
 
 /* Travellers: offer staff chips (from master data); "Done" moves on. */
@@ -3695,6 +4027,9 @@ async function sendAgent(opts) {
         const wantsDates = data.intent === "AWAIT_PERIOD" || data.intent === "EVIDENCE_PERIOD_PENDING"
           || (data.pendingChoices || []).some((g) => g.kind === "EVIDENCE_PERIOD");
         if (wantsDates) settlementDateAsk();
+        // No card receipt for this trip: the expense is typed in and its image attached,
+        // then posted multipart (a file can't ride a chat turn).
+        else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
         else if (data.intent === "SETTLEMENT_READY") settlementSummaryCard(data.draftJson);
       }
       else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
@@ -3854,6 +4189,52 @@ function pickPrompt(idx) {
 }
 
 /* ---- Thread rendering ---- */
+/* Settlement ④ plan picker: the candidate trip plans as a table (a chip can't carry six
+ * columns legibly). One clickable row per plan; picking one sends the very same
+ * `settle-plan:{approvalId}` token the chips sent, so the state machine is untouched. */
+function planPickTable(group) {
+  const picks = (group.options || []).filter((o) => o.meta);
+  const COLS = [
+    ["purpose", T("Purpose", "목적")],
+    ["title", T("Title", "제목")],
+    ["docNo", T("Doc no.", "문서번호")],
+    ["period", T("Period", "기간")],
+    ["drafter", T("Drafter", "기안자")],
+    ["registrar", T("Registered by", "등록자")],
+  ];
+  const cell = (m, key) => (key === "period"
+    ? [m.startDate, m.endDate].filter(Boolean).join(" ~ ")
+    : m[key]) || "—";
+  const box = document.createElement("div");
+  box.className = "plan-pick";
+  box.innerHTML = `
+    ${group.name ? `<div class="pp-cap">${esc(group.name)}</div>` : ""}
+    <div class="pp-scroll">
+      <table class="pp-table">
+        <thead><tr>${COLS.map(([k, label]) => `<th class="pp-${k}">${esc(label)}</th>`).join("")}</tr></thead>
+        <tbody>${picks.map((o, i) => `<tr class="pp-row" data-i="${i}" tabindex="0">${
+          COLS.map(([k]) => {
+            const v = cell(o.meta, k);
+            return `<td class="pp-${k}" title="${esc(v)}">${esc(v)}</td>`;
+          }).join("")}</tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+  box.querySelectorAll(".pp-row").forEach((tr) => {
+    const pick = () => {
+      if (agent.busy || box.classList.contains("pp-done")) return;
+      box.classList.add("pp-done");
+      tr.classList.add("pp-picked");
+      $("agentInput").value = picks[Number(tr.dataset.i)].sendText || "";
+      sendAgent({ keepLang: true });   // machine token, not the user's language
+    };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
+    });
+  });
+  return box;
+}
+
 function appendMsg(role, text, meta = {}) {
   const thread = $("agentThread");
   const wrap = document.createElement("div");
@@ -3874,6 +4255,11 @@ function appendMsg(role, text, meta = {}) {
   // ambiguous name; clicking a chip sends its sendText as the next chat turn.
   if (meta.choiceGroups && meta.choiceGroups.length) {
     meta.choiceGroups.forEach((g) => {
+      // Trip plans carry too many columns for a chip — they get a table of their own.
+      if (g.kind === "PLAN" && (g.options || []).some((o) => o.meta)) {
+        wrap.appendChild(planPickTable(g));
+        return;
+      }
       const row = document.createElement("div");
       row.className = "choice-row";
       if (g.name) {
@@ -3904,8 +4290,12 @@ function appendMsg(role, text, meta = {}) {
         const isSkip = !opt.staffId && /^skip$/i.test(opt.label || "");
         addChip(opt.label || opt.sendText || "?", opt.sendText || opt.label || "", isSkip ? "choice-skip" : "");
       });
-      // Opt-out fallback for older backends whose options don't include a Skip.
-      if (!(g.options || []).some((opt) => /^skip$/i.test(opt.label || ""))) {
+      // Opt-out fallback for older backends whose options don't include a Skip. Only
+      // person groups get it — its text ("Don't add … to this trip") is nonsense on a
+      // settlement card-type / receipt / manual-expense group, and clicking it there
+      // used to derail the chip state machine.
+      const personGroup = !g.kind || g.kind === "STAFF" || g.kind === "TRAVELER";
+      if (personGroup && !(g.options || []).some((opt) => /^skip$/i.test(opt.label || ""))) {
         addChip("Skip", `Don't add ${g.name || "that person"} to this trip.`, "choice-skip");
       }
       wrap.appendChild(row);
@@ -4831,7 +5221,7 @@ function reportLineDate(line) {
 
 async function loadReports() {
   const body = $("reportBody");
-  body.innerHTML = loadingRow(14);
+  body.innerHTML = loadingRow(15);
   beginLoad();
   try {
     // Reports, plus plans (trip title/traveler) and audits (latest R10 verdict per plan).
@@ -4886,7 +5276,7 @@ async function loadReports() {
   } catch (e) {
     reportsCache = [];
     $("reportCount").textContent = 0; $("reportShown").textContent = 0; $("reportTotal").textContent = 0;
-    body.innerHTML = emptyRow(14, { icon: "alert", title: "Couldn’t load reports", sub: esc(friendlyError(e.message)) });
+    body.innerHTML = emptyRow(15, { icon: "alert", title: "Couldn’t load reports", sub: esc(friendlyError(e.message)) });
   } finally {
     endLoad();
   }
@@ -4924,8 +5314,8 @@ function renderReports() {
   const body = $("reportBody");
   if (!list.length) {
     body.innerHTML = reportsCache.length
-      ? emptyRow(14, { icon: "search", title: "No reports match this search", sub: "Try different keywords." })
-      : emptyRow(14, { icon: "receipt", title: "No expense reports yet", sub: "Import an approved plan and attach receipts to settle a trip.",
+      ? emptyRow(15, { icon: "search", title: "No reports match this search", sub: "Try different keywords." })
+      : emptyRow(15, { icon: "receipt", title: "No expense reports yet", sub: "Import an approved plan and attach receipts to settle a trip.",
           action: `<button class="btn btn-primary btn-sm" onclick="openReportCreate()">+ Create Report</button>` });
     updateReportSelBar();
     return;
@@ -4961,6 +5351,8 @@ function renderReports() {
       <td><span class="appr-pill ${approvalClass(aprStatus)}">${esc(aprLabel)}</span></td>
       <td>${auditCell}</td>
       <td class="c-period">${esc(g.date || "—")}</td>
+      <td class="c-json"><button class="btn-json" data-report-json="${esc(g.key)}"
+        title="Download this settlement's draft JSON">${svgIcon("download")}</button></td>
       <td><div class="row-actions">
         <button class="btn-xs btn-view" data-report-key="${esc(g.key)}">View</button>
       </div></td>
