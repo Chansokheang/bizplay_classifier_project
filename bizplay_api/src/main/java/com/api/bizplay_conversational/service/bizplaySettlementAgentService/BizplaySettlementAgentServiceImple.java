@@ -555,11 +555,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 fileId = bizplayGatewayService.uploadReceiptFile(image, filename, bizplayToken);
             }
 
-            // 3) issued detail (best-effort enrichment for the issued-receipt id linkage)
-            JsonNode issued = null;
+            // 3) issued detail — best-effort (surfaces the created issued receipt in logs; not put
+            //    into the save body, which only accepts EtcReceiptSaveRequest fields).
             if (receiptId != null) {
                 try {
-                    issued = bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), bizplayToken);
+                    bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), bizplayToken);
                 } catch (RuntimeException e) {
                     log.warn("issued/bulk lookup failed for {} — proceeding without it: {}", receiptId, e.getMessage());
                 }
@@ -567,7 +567,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
             // 4) map into the settlement body's etcReceiptSaveRequests[] with exact keys, retotal
             ObjectNode doc = (ObjectNode) documents.get(0);
-            doc.withArray("etcReceiptSaveRequests").add(buildEtcExpense(fields, fileId, receiptId, issued));
+            doc.withArray("etcReceiptSaveRequests").add(buildEtcExpense(fields, fileId));
             recomputeTotals(doc);
 
             boolean ko = "ko".equals(loadState(session).path("lang").asText(null));
@@ -598,22 +598,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * uploaded image (imageIds) and links to the created/issued receipt. recomputeTotals then counts
      * its approvalAmount toward the totals (and a cost bucket when it carries a tranKindType).
      */
-    private ObjectNode buildEtcExpense(JsonNode fields, long fileId, Long receiptId, JsonNode issued) {
+    private ObjectNode buildEtcExpense(JsonNode fields, long fileId) {
+        // ONLY the EtcReceiptSaveRequest keys — the save DTO rejects any extra (e.g. `id`,
+        // `issuedReceiptId` → HTTP 400 "Unrecognized field"). imageIds is a valid field.
         ObjectNode e = objectMapper.createObjectNode();
         for (String k : ETC_EXPENSE_KEYS) {
             if (fields.has(k)) {
                 e.set(k, fields.get(k).deepCopy());
             }
         }
-        if (receiptId != null) {
-            e.put("id", receiptId);
-        }
         ArrayNode imageIds = e.putArray("imageIds");
         if (fileId > 0) {
             imageIds.add(fileId);   // only when an image was actually uploaded
-        }
-        if (issued != null && issued.isArray() && !issued.isEmpty() && issued.get(0).hasNonNull("id")) {
-            e.put("issuedReceiptId", issued.get(0).path("id").asLong());
         }
         return e;
     }
@@ -1584,39 +1580,64 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * without name/type.
      */
     private void resolvePlanTranKinds(ObjectNode state, JsonNode planDetail, String token, List<String> subAgents) {
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        // The plan-detail tranKinds are OBJECTS {id, type, name, ...} — use them directly. (Bare-id
+        // arrays are handled as a fallback via the TranKind master.)
+        java.util.LinkedHashMap<Long, ObjectNode> byId = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashSet<Long> needMaster = new java.util.LinkedHashSet<>();
         for (JsonNode item : planDetail.path("paper").path("paperItemOrderDto")) {
             for (JsonNode tk : item.path("itemDto").path("tranKinds")) {
-                if (tk.canConvertToLong()) {
-                    ids.add(tk.asLong());
+                if (tk.isObject() && tk.hasNonNull("id")) {
+                    long id = tk.path("id").asLong();
+                    if (byId.containsKey(id)) {
+                        continue;
+                    }
+                    ObjectNode o = objectMapper.createObjectNode();
+                    o.put("id", id);
+                    o.put("name", tk.path("name").asText("TranKind " + id));
+                    if (tk.hasNonNull("type")) {
+                        o.put("type", tk.path("type").asText());
+                    } else {
+                        o.putNull("type");
+                    }
+                    byId.put(id, o);
+                } else if (tk.canConvertToLong()) {
+                    needMaster.add(tk.asLong());
                 }
             }
         }
-        if (ids.isEmpty()) {
+        if (byId.isEmpty() && needMaster.isEmpty()) {
             return;
         }
-        java.util.Map<Long, JsonNode> master = new java.util.HashMap<>();
-        try {
-            for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
-                master.put(tk.path("id").asLong(), tk);
+        // Resolve any bare ids from the master (only when the plan gave ids, not objects).
+        if (!needMaster.isEmpty()) {
+            try {
+                java.util.Map<Long, JsonNode> master = new java.util.HashMap<>();
+                for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
+                    master.put(tk.path("id").asLong(), tk);
+                }
+                for (Long id : needMaster) {
+                    if (byId.containsKey(id)) {
+                        continue;
+                    }
+                    JsonNode m = master.get(id);
+                    ObjectNode o = objectMapper.createObjectNode();
+                    o.put("id", id);
+                    o.put("name", m == null ? ("TranKind " + id) : m.path("name").asText("TranKind " + id));
+                    if (m != null && m.hasNonNull("type")) {
+                        o.put("type", m.path("type").asText());
+                    } else {
+                        o.putNull("type");
+                    }
+                    byId.put(id, o);
+                }
+            } catch (RuntimeException e) {
+                log.warn("TranKind master lookup failed: {}", e.getMessage());
             }
-            if (!subAgents.contains("TRANKIND_TOOL")) {
-                subAgents.add("TRANKIND_TOOL");
-            }
-        } catch (RuntimeException e) {
-            log.warn("TranKind master lookup failed — ids without name/type: {}", e.getMessage());
         }
         ArrayNode arr = slots(state).putArray("planTranKinds");
-        for (Long id : ids) {
-            ObjectNode o = arr.addObject();
-            o.put("id", id);
-            JsonNode m = master.get(id);
-            o.put("name", m == null ? ("TranKind " + id) : m.path("name").asText("TranKind " + id));
-            if (m != null && m.hasNonNull("type")) {
-                o.put("type", m.path("type").asText());
-            } else {
-                o.putNull("type");
-            }
+        byId.values().forEach(arr::add);
+        if (!subAgents.contains("TRANKIND_TOOL")) {
+            subAgents.add("TRANKIND_TOOL");
         }
     }
 

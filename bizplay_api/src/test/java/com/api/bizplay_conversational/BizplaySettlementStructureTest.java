@@ -440,9 +440,10 @@ class BizplaySettlementStructureTest {
             assertTrue(e.has(k), "etcReceiptSaveRequests entry is missing the exact key: " + k);
             assertEquals(fields.path(k), e.path(k), "value mismatch for key: " + k);
         }
-        assertEquals(777L, e.path("id").asLong(), "linked to the created receipt id");
         assertEquals(888L, e.path("imageIds").get(0).asLong(), "the uploaded image is attached");
-        assertEquals(999L, e.path("issuedReceiptId").asLong(), "issued-receipt id from issued/bulk");
+        // The save DTO (EtcReceiptSaveRequest) rejects extras — no `id` / `issuedReceiptId` in the entry.
+        assertTrue(e.path("id").isMissingNode(), "no `id` — BizPlay rejects it on save");
+        assertTrue(e.path("issuedReceiptId").isMissingNode(), "no `issuedReceiptId` in the save body");
         // the expense counts toward the totals (no card receipts, so it's the whole amount)
         assertEquals(20000.0, doc.path("totalBstrAmount").asDouble(), 0.001);
         assertEquals(20000.0, doc.path("totalPersonalAmount").asDouble(), 0.001);
