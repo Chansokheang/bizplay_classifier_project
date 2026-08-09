@@ -3706,6 +3706,64 @@ async function submitManualComplete(expense, detail, file) {
   }
 }
 
+/* ---- Demo flow panel: step-by-step buttons to walk plan → settlement live ---- */
+function demoSend(msg, delay) {
+  setTimeout(() => {
+    $("agentInput").value = msg;
+    sendAgent({ keepLang: true });   // machine/opener text — don't flip the conversation language
+  }, delay || 0);
+}
+function runDemoStep(step) {
+  switch (step) {
+    case "plan":
+      openChatMode();
+      demoSend("부산으로 2026년 8월 25일부터 26일까지 국내 출장 계획을 만들어줘. 출장자는 나야.", 350);
+      break;
+    case "search":
+      openSettlementChat();
+      demoSend("2026-08-01 ~ 2026-08-31 출장 정산", 550);
+      break;
+    case "cards":
+      demoSend("card-types:CORP,PERSONAL,MY_DATA");
+      break;
+    case "manual":
+      demoSend("manual-expense");
+      break;
+    case "submit":
+      demoSend("제출해줘");
+      break;
+  }
+}
+function buildDemoPanel() {
+  if (document.getElementById("demoPanel")) return;
+  const step = (act, label, hint) => "<li>"
+    + (act
+        ? `<button type="button" class="demo-btn" data-demo="${act}">${esc(label)}</button>`
+        : `<span class="demo-do">${esc(label)}</span>`)
+    + (hint ? `<span class="demo-hint">${esc(hint)}</span>` : "") + "</li>";
+  const panel = document.createElement("div");
+  panel.id = "demoPanel";
+  panel.className = "demo-panel collapsed";
+  panel.innerHTML = `
+    <button type="button" class="demo-toggle" title="${esc(T("Demo flow", "데모 흐름"))}">
+      <span class="demo-dot"></span>${esc(T("Demo", "데모"))}</button>
+    <div class="demo-body">
+      <div class="demo-h">${esc(T("Plan → Settlement", "계획 → 정산"))}</div>
+      <ol class="demo-steps">
+        ${step("plan", T("Create domestic plan", "국내 출장 계획 만들기"), T("plan agent", "계획 에이전트"))}
+        ${step("search", T("Settle: search plans", "정산: 출장 검색"), T("→ click a plan chip", "→ 출장 칩 클릭"))}
+        ${step("", T("Pick expense type (교통비)", "경비 항목(교통비) 선택"), T("click the chip", "칩 클릭"))}
+        ${step("cards", T("Load card evidence", "카드 증빙 조회"), "")}
+        ${step("manual", T("Add manual expense", "직접 경비 입력"), T("→ Complete → fill → Register", "→ 전체 → 입력 → 등록"))}
+        ${step("submit", T("Submit to BizPlay", "BizPlay에 제출"), "")}
+      </ol>
+    </div>`;
+  document.body.appendChild(panel);
+  panel.querySelector(".demo-toggle").addEventListener("click", () => panel.classList.toggle("collapsed"));
+  panel.querySelectorAll("[data-demo]").forEach((b) =>
+    b.addEventListener("click", () => runDemoStep(b.getAttribute("data-demo"))));
+}
+
 /* The expense landed but the evidence stage is still open: add another, or close it. */
 function manualExpenseFollowUp() {
   const thread = $("agentThread");
@@ -7166,4 +7224,4 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); initMcp(); });
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); initMcp(); buildDemoPanel(); });
