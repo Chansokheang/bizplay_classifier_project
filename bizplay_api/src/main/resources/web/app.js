@@ -3414,25 +3414,22 @@ function readTransportDetail(w) {
   return detail;
 }
 
-/* supply/VAT are optional. Enter a VAT and Supply = Amount − VAT; leave VAT blank → both null.
- * originalSupply/originalVat are left null (not collected). */
-function splitVat(amount, vatRaw) {
-  const vat = (vatRaw === "" || vatRaw == null) ? null : num(vatRaw);
-  if (!vat || vat <= 0) {
-    return { supplyAmount: null, vatAmount: null, originalSupplyAmount: null, originalVatAmount: null };
-  }
-  return { vatAmount: vat, supplyAmount: Math.max(0, amount - vat), originalSupplyAmount: null, originalVatAmount: null };
-}
-/* Live-fill the read-only Supply field from Amount − VAT as the user types either one. */
-function autoSupplyFromVat(amtEl, vatEl, supplyEl) {
-  if (!amtEl || !vatEl || !supplyEl) return;
-  const recalc = () => {
-    const amt = num(amtEl.value);
-    const vat = vatEl.value === "" ? null : num(vatEl.value);
-    supplyEl.value = (vat && vat > 0) ? Math.max(0, amt - vat) : "";
+/* The user enters Supply (공급가액) + VAT (부가세); the Total (승인금액) = Supply + VAT. */
+function sumSupplyVat(supplyRaw, vatRaw) {
+  const supply = num(supplyRaw), vat = num(vatRaw);
+  return {
+    approvalAmount: supply + vat,
+    supplyAmount: supply, vatAmount: vat,
+    originalSupplyAmount: supply, originalVatAmount: vat,
   };
-  amtEl.addEventListener("input", recalc);
+}
+/* Live-fill the read-only Total field from Supply + VAT as the user types either one (UI preview). */
+function autoTotalFromSupplyVat(supplyEl, vatEl, totalEl) {
+  if (!supplyEl || !vatEl || !totalEl) return;
+  const recalc = () => { totalEl.value = num(supplyEl.value) + num(vatEl.value); };
+  supplyEl.addEventListener("input", recalc);
   vatEl.addEventListener("input", recalc);
+  recalc();
 }
 
 /* STEP 1 — register the receipt with the BASE fields only (POST …/manual-expense/create). The
@@ -3448,12 +3445,12 @@ function settlementManualExpenseForm() {
   const draft0 = (agent.draft && agent.draft[0]) || {};
   const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
 
-  // supply/VAT default to null (not entered). If a VAT is typed, Supply auto = Amount − VAT.
+  // User enters Supply + VAT; Total (승인금액) = Supply + VAT, previewed read-only.
   const baseAmounts = isTransport
     ? f(T("Amount", "승인금액"), money("approvalAmount"))
-    : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
-       ${f(T("VAT (optional)", "부가세 (선택)"), money("vatAmount"))}
-       ${f(T("Supply (auto)", "공급가액 (자동)"), `<input type="number" data-k="supplyAmount" readonly placeholder="—" tabindex="-1">`)}`;
+    : `${f(T("Supply", "공급가액"), money("supplyAmount"))}
+       ${f(T("VAT", "부가세"), money("vatAmount"))}
+       ${f(T("Total (auto)", "합계 (자동)"), `<input type="number" data-k="approvalAmount" readonly placeholder="0" tabindex="-1">`)}`;
 
   const html = `<div class="mx-grid">
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
@@ -3480,16 +3477,20 @@ function settlementManualExpenseForm() {
   const note = w.querySelector(".mx-note");
   const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
 
-  // Supply auto-fills from Amount − VAT the moment a VAT is entered; blank when VAT is empty.
-  if (!isTransport) autoSupplyFromVat(el("approvalAmount"), el("vatAmount"), el("supplyAmount"));
+  // Total (승인금액) previews live as Supply + VAT is typed.
+  if (!isTransport) autoTotalFromSupplyVat(el("supplyAmount"), el("vatAmount"), el("approvalAmount"));
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
-    const approvalAmount = num(el("approvalAmount").value);
+    const approvalAmount = isTransport
+      ? num(el("approvalAmount").value)
+      : num(el("supplyAmount").value) + num(el("vatAmount").value);   // total = supply + VAT
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
-    if (approvalAmount <= 0) return warn(T("Enter the approved amount.", "승인금액을 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(isTransport
+      ? T("Enter the approved amount.", "승인금액을 입력해 주세요.")
+      : T("Enter the supply and VAT amounts.", "공급가액과 부가세를 입력해 주세요."));
     const time = el("approvalTime").value || "00:00:00";
     const expense = {
       approvalDate,
@@ -3500,7 +3501,7 @@ function settlementManualExpenseForm() {
       approvalAmount,
       // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
     };
-    if (!isTransport) Object.assign(expense, splitVat(approvalAmount, el("vatAmount").value));
+    if (!isTransport) Object.assign(expense, sumSupplyVat(el("supplyAmount").value, el("vatAmount").value));
     note.textContent = "";
     note.classList.remove("mx-warn");
     done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`);
@@ -3675,9 +3676,9 @@ function settlementManualFullForm() {
   };
   const baseAmounts = isTransport
     ? f(T("Amount", "승인금액"), money("approvalAmount"))
-    : `${f(T("Amount", "승인금액"), money("approvalAmount"))}
-       ${f(T("VAT (optional)", "부가세 (선택)"), money("vatAmount"))}
-       ${f(T("Supply (auto)", "공급가액 (자동)"), `<input type="number" data-k="supplyAmount" readonly placeholder="—" tabindex="-1">`)}`;
+    : `${f(T("Supply", "공급가액"), money("supplyAmount"))}
+       ${f(T("VAT", "부가세"), money("vatAmount"))}
+       ${f(T("Total (auto)", "합계 (자동)"), `<input type="number" data-k="approvalAmount" readonly placeholder="0" tabindex="-1">`)}`;
   const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
   const detailSection = isTransport
     ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
@@ -3721,16 +3722,20 @@ function settlementManualFullForm() {
   if (vehSel && tpBox) {
     vehSel.addEventListener("change", () => renderTpSub(tpBox, vehSel.value, oversea));
   }
-  if (!isTransport) autoSupplyFromVat(el("approvalAmount"), el("vatAmount"), el("supplyAmount"));
+  if (!isTransport) autoTotalFromSupplyVat(el("supplyAmount"), el("vatAmount"), el("approvalAmount"));
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = el("image").files[0];
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
-    const approvalAmount = num(el("approvalAmount").value);
+    const approvalAmount = isTransport
+      ? num(el("approvalAmount").value)
+      : num(el("supplyAmount").value) + num(el("vatAmount").value);   // total = supply + VAT
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
-    if (approvalAmount <= 0) return warn(T("Enter the approved amount.", "승인금액을 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(isTransport
+      ? T("Enter the approved amount.", "승인금액을 입력해 주세요.")
+      : T("Enter the supply and VAT amounts.", "공급가액과 부가세를 입력해 주세요."));
     const time = el("approvalTime").value || "00:00:00";
     const expense = {
       approvalDate,
@@ -3740,7 +3745,7 @@ function settlementManualFullForm() {
       overseasUsed: el("overseasUsed").checked,
       approvalAmount,
     };
-    if (!isTransport) Object.assign(expense, splitVat(approvalAmount, el("vatAmount").value));
+    if (!isTransport) Object.assign(expense, sumSupplyVat(el("supplyAmount").value, el("vatAmount").value));
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -3833,11 +3838,10 @@ function runDemoStep(step) {
  * default) or NOT_ISSUED. Clicking a row loads its detail via the status-appropriate endpoint. */
 function settlementReceiptBrowser(status) {
   const st = status === "NOT_ISSUED" ? "NOT_ISSUED" : "NOT_DRAFTED";
-  const today = new Date().toISOString().slice(0, 10);
-  const start0 = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
-  const anchor = (agent.draft && agent.draft[0]) || {};
-  const startDefault = anchor.startDate || start0;
-  const endDefault = anchor.endDate || today;
+  const now = new Date();
+  const endDefault = now.toISOString().slice(0, 10);              // today
+  const monthAgo = new Date(now); monthAgo.setMonth(now.getMonth() - 1);
+  const startDefault = monthAgo.toISOString().slice(0, 10);       // today − 1 month
 
   const html = `<div class="rb-panel">
       <div class="rb-controls">
@@ -3891,6 +3895,9 @@ function settlementReceiptBrowser(status) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw apiError(json, res);
       const rows = (json && (json.data || json.payload)) || [];
+      // Newest first by registration date (receiptRegsDate) when present, else approval date.
+      rows.sort((a, b) => String(b.receiptRegsDate || b.approvalDate || "")
+        .localeCompare(String(a.receiptRegsDate || a.approvalDate || "")));
       if (!rows.length) {
         body.innerHTML = `<tr><td colspan="6" class="rb-empty">${esc(state.page > 0
           ? T("No more receipts.", "더 이상 영수증이 없어요.")
