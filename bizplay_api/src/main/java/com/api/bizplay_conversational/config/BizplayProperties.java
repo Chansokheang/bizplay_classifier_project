@@ -34,6 +34,9 @@ public class BizplayProperties {
      */
     private String defaultCorpUserId = "30447";
 
+    /** Settlement approver added after the DRAFT line (김도하). */
+    private String defaultApproverId = "30192";
+
     /** Product/tenant segment of the draft-save path: /api/v2/approval/{productCode}/bstr/plan/draft. */
     private String productCode = "seah";
 

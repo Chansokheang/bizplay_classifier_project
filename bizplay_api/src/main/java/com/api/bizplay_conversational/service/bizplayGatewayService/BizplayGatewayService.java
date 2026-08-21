@@ -55,6 +55,16 @@ public interface BizplayGatewayService {
      */
     JsonNode getPlanList(long travelerId, String startDate, String endDate, String token);
 
+    /**
+     * ④b The traveler's plans from the UNSCOPED path
+     * (GET /api/v2/approval/bstr/plan/list) — the only one that returns DRAFTED rows, i.e. the
+     * requests still waiting for an approver. {@link #getPlanList} is product-scoped and answers
+     * with APPROVED plans only, so it can never show what is still pending.
+     * <p>Caveats of this path, left to the caller: the period query is IGNORED (the provider
+     * returns the whole history), usageCnt is null, and each plan repeats once per approval line.
+     */
+    JsonNode getPendingPlanList(long travelerId, String startDate, String endDate, String token);
+
     /** ⑤ One plan's full detail by approvalId: GET /api/v2/approval/bstr/{approvalId}. */
     JsonNode getPlanDetail(long approvalId, String token);
 
@@ -108,6 +118,13 @@ public interface BizplayGatewayService {
      * used to resolve a plan's allowed tranKind ids to their name/type.
      */
     JsonNode getTranKindList(String token);
+
+    /** Budget departments (코스트센터) usable in a slip: the user's authorized list when one is
+     *  registered, else the corp-wide list. Never throws — an empty array on failure. */
+    JsonNode getBudgetDepartments(long corpUserId, String token);
+
+    /** ⑨ Settlement (출장정산서) documents in a period — POST filter, streaming JSON response. */
+    JsonNode getSettlementList(String startDate, String endDate, String token);
 
     /**
      * Transport terminals/stations (교통수단 별 역이름 목록): GET /api/v2/receipt/etc-card/terminal —

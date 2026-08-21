@@ -88,6 +88,32 @@ public class BizplayFormController {
         return ResponseEntity.ok(ApiResponse.ok(bizplayPlanAgentService.chat(request, token)));
     }
 
+    @Operation(summary = "⑨-b One settlement document by approvalId (GET /api/v2/approval/bstr/{id}). "
+            + "paper.paperKind.paperKindType == EXPENSE_REPORT confirms the id really is a settlement.")
+    @GetMapping("/settlements/{approvalId}")
+    public ResponseEntity<ApiResponse<JsonNode>> settlementDetail(
+            @org.springframework.web.bind.annotation.PathVariable("approvalId") long approvalId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/settlements/{} - corpNo={}", approvalId, corpNo);
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getPlanDetail(approvalId, token)));
+    }
+
+    @Operation(summary = "⑨ Settlement (출장정산서) documents saved in BizPlay for a period — the "
+            + "source of truth for the Expense Report table.")
+    @GetMapping("/settlements")
+    public ResponseEntity<ApiResponse<JsonNode>> settlements(
+            @RequestParam("corpNo") String corpNo,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        String from = (startDate == null || startDate.isBlank()) ? today.minusMonths(1).toString() : startDate;
+        String to = (endDate == null || endDate.isBlank()) ? today.toString() : endDate;
+        log.info("GET /bizplay/settlements - corpNo={}, {}~{}", corpNo, from, to);
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getSettlementList(from, to, token)));
+    }
+
     @Operation(summary = "Chat turn of the settlement (출장정산) agent: period question -> plan search "
             + "(④) -> plan import (⑤) -> evidence period/card-type questions -> receipt attach (⑥). "
             + "The session draft_json holds the sample-shaped settlement document.")
@@ -371,6 +397,51 @@ public class BizplayFormController {
                 .greetingSource(greeting.getSource())
                 .suggestionsSource(suggestions.getSource())
                 .build();
+    }
+
+    @Operation(summary = "Trip-plan requests by approval state. status=DRAFTED (default) lists the "
+            + "plans still waiting for an approver - those CANNOT be settled; status=APPROVED lists "
+            + "the settleable ones. Defaults to the last month. Rows are deduped by approvalId.")
+    @GetMapping("/plans/by-status")
+    public ResponseEntity<ApiResponse<JsonNode>> plansByStatus(
+            @RequestParam("corpNo") String corpNo,
+            @RequestParam(value = "travelerId", required = false) Long travelerId,
+            @RequestParam(value = "status", required = false, defaultValue = "DRAFTED") String status,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        String from = (startDate == null || startDate.isBlank()) ? today.minusMonths(1).toString() : startDate;
+        String to = (endDate == null || endDate.isBlank()) ? today.toString() : endDate;
+        long who = travelerId != null ? travelerId
+                : Long.parseLong(bizplayProperties.getDefaultCorpUserId().trim());
+        log.info("GET /bizplay/plans/by-status - corpNo={}, travelerId={}, status={}, {}~{}",
+                corpNo, who, status, from, to);
+        // DRAFTED rows exist ONLY on the unscoped path; the scoped one answers with APPROVED only.
+        JsonNode raw = "APPROVED".equalsIgnoreCase(status)
+                ? bizplayGatewayService.getPlanList(who, from, to, token)
+                : bizplayGatewayService.getPendingPlanList(who, from, to, token);
+        com.fasterxml.jackson.databind.node.ArrayNode out = objectMapper.createArrayNode();
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        if (raw != null && raw.isArray()) {
+            for (JsonNode p : raw) {
+                if (!status.equalsIgnoreCase(p.path("approvalStatusType").asText(""))) {
+                    continue;
+                }
+                // The unscoped path ignores the period and repeats a plan per approval line.
+                String start = p.path("bstrStartDate").asText("");
+                String end = p.path("bstrEndDate").asText("");
+                start = start.length() >= 10 ? start.substring(0, 10) : start;
+                end = end.length() >= 10 ? end.substring(0, 10) : end;
+                if (start.isEmpty() || end.isEmpty() || start.compareTo(to) > 0 || end.compareTo(from) < 0) {
+                    continue;
+                }
+                if (seen.add(p.path("approvalId").asLong())) {
+                    out.add(p);
+                }
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.ok(out));
     }
 
     @Operation(summary = "Manual (non-chat) plan create: values from the UI form are written into "

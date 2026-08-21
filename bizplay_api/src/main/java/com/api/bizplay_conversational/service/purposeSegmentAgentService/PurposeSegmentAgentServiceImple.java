@@ -38,6 +38,11 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
               instead of asking again.
             - If the message says nothing about the trip type, best=null and alternatives=[] (the user
               will be shown the full list).
+            - NEVER cross the domestic/overseas line to make a match. If the destination is domestic
+              but the catalog offers only overseas purposes (or the reverse), set best=null,
+              alternatives=[], and say which family is missing in "reason" - e.g.
+              "Gwangju is domestic but this catalog has no 국내 purpose". Filing a domestic trip
+              under 해외출장 is worse than asking.
             - Numbers must come from the catalog. Do not invent options.
             /no_think
             """;

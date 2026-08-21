@@ -21,7 +21,18 @@ bizplay:
     plan-draft: /api/v2/approval/{productCode}/bstr/plan/draft
     settlement-draft: /api/v2/approval/{productCode}/bstr/report/draft
     # ④ plan list (settlement anchor search)  /  ⑤ one plan's detail
-    plan-list: /api/v2/approval/bstr/plan/list
+    # Product-scoped on purpose: this path HONOURS startDate/endDate + searchPeriodType and
+    # populates usageCnt; the unscoped /approval/bstr/plan/list does neither. Literal 'seah'
+    # (not {productCode}) — bics 500s here. Provider answer 260810, 1-4/1-5.
+    plan-list: /api/v2/approval/seah/bstr/plan/list
+    # ④b plan list, UNSCOPED — the only path that returns DRAFTED (not-yet-approved) plans.
+    # The seah path above returns APPROVED rows only, so it can never answer "which of my
+    # requests is still waiting for approval?". Trade-offs of this path, handled in the gateway
+    # /agent: it IGNORES startDate/endDate (filter client-side), leaves usageCnt null, and
+    # repeats a plan once per approval line - so rows must be deduped by approvalId.
+    pending-plan-list: /api/v2/approval/bstr/plan/list
+    # ⑨ settlement (출장정산서) LIST — POST with a JSON filter, streaming JSON response.
+    settlement-list: /api/v2/approval/seah/bstr/all/list/streaming
     plan-detail: /api/v2/approval/bstr/{approvalId}
     # ⑥ unattached card receipts (settlement evidence)
     receipt-stream: /api/v2/receipt/{receiptProductCode}/not-attached/stream
@@ -33,6 +44,9 @@ bizplay:
     receipt-etc-detail: /api/v2/receipt-etc/{receiptId}
     # TranKind master (id → name/type), to resolve the plan's allowed tranKinds
     trankind-list: /api/v2/trankind/list
+    # Slip cost-center sources: the user's authorized budget departments, then the corp list.
+    budget-dept-user: /api/v2/budgetdepartment/user/list/eacc/authorized/{corpUserId}
+    budget-dept-corp: /api/v2/budgetdepartment/list
     # transport terminals/stations (id, vehicleType, name) for depart/arrival dropdowns
     etc-card-terminal: /api/v2/receipt/etc-card/terminal
     # personal-card general-expense browser (POST: startDate/endDate/approvalStatusTypeList/pageIndex/pageSize)

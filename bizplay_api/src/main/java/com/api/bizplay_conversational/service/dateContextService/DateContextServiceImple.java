@@ -26,7 +26,17 @@ public class DateContextServiceImple implements DateContextService {
             }
             sb.append(weekday(d)).append('=').append(d);
         }
-        sb.append(". Rules: bare/\"this\" weekday = soonest occurrence; \"next <weekday>\" = that ")
+        // Named anchors, spelled out. The calendar above technically contains them, but leaving the
+        // model to work out that "tomorrow" is today+1 made it intermittent: the same sentence
+        // ("a trip to Gwangju tomorrow") sometimes came back with no dates at all, and the flow
+        // then asked for a period the user had already given.
+        sb.append("Anchors: today/오늘=").append(today)
+                .append(", tomorrow/내일=").append(today.plusDays(1))
+                .append(", the day after tomorrow/모레=").append(today.plusDays(2))
+                .append(", yesterday/어제=").append(today.minusDays(1))
+                .append(", next week/다음주=").append(today.plusWeeks(1))
+                .append(". A single day mentioned alone is BOTH the start and the end date. ");
+        sb.append("Rules: bare/\"this\" weekday = soonest occurrence; \"next <weekday>\" = that ")
                 .append("weekday in NEXT week; \"in N days/weeks\" counts from today. Resolve every ")
                 .append("relative date to YYYY-MM-DD from this calendar — never guess, never output relative words.");
         return sb.toString();

@@ -174,6 +174,8 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         // The settlement (정산서) endpoint — deliberately DISTINCT from the plan draft's
         // /bstr/plan/draft. The body here is the 정산서 request-body shape, never the plan shape.
         String url = buildUrl(endpoints.getSettlementDraft(), "productCode", productCode());
+        // The exact outgoing body, for provider-side debugging (PORTAL_ERROR gives no field name).
+        log.info("Settlement draft body -> {}: {}", url, documents.toString());
         String bearer = resolveToken(token);
         try {
             String response = restClient.post()
@@ -368,6 +370,70 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getBudgetDepartments(long corpUserId, String token) {
+        try {
+            JsonNode mine = get(buildUrl(endpoints.getBudgetDeptUser(), "corpUserId", corpUserId), token);
+            if (mine != null && mine.isArray() && !mine.isEmpty()) {
+                return mine;
+            }
+        } catch (Exception e) {
+            log.info("No user-registered budget department ({}); falling back to the corp list.", rootMessage(e));
+        }
+        try {
+            JsonNode corp = get(buildUrl(endpoints.getBudgetDeptCorp()), token);
+            return corp != null && corp.isArray() ? corp : objectMapper.createArrayNode();
+        } catch (Exception e) {
+            log.warn("Budget department lookup failed: {}", rootMessage(e));
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    @Override
+    public JsonNode getSettlementList(String startDate, String endDate, String token) {
+        String url = buildUrl(endpoints.getSettlementList());
+        com.fasterxml.jackson.databind.node.ObjectNode filter = objectMapper.createObjectNode();
+        filter.put("pageSize", 0);
+        filter.put("startDate", startDate);
+        filter.put("endDate", endDate);
+        filter.putArray("paperKindTypes").add("EXPENSE_REPORT");
+        filter.put("menuType", "EACC_V3_EXPENSE_REPORT_LIST");
+        filter.put("searchPeriodType", "PAPER_REG_DATE");
+        filter.putNull("bstrStatusTypes");
+        filter.putNull("bstrSearchCriteria");
+        try {
+            // Raw bytes, not String — see the receipt stream above: String decoding mangles Hangul.
+            byte[] raw = restClient.post()
+                    .uri(java.net.URI.create(url))
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + resolveToken(token))
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(filter.toString())
+                    .retrieve()
+                    .body(byte[].class);
+            // Streaming response: CONCATENATED root-level JSON values, same as the receipt stream.
+            com.fasterxml.jackson.databind.node.ArrayNode docs = objectMapper.createArrayNode();
+            if (raw != null && raw.length > 0) {
+                try (com.fasterxml.jackson.core.JsonParser p = objectMapper.getFactory().createParser(raw)) {
+                    java.util.Iterator<JsonNode> it = objectMapper.readValues(p, JsonNode.class);
+                    while (it.hasNext()) {
+                        JsonNode n = it.next();
+                        if (n != null && n.isObject()) {
+                            docs.add(n);
+                        } else if (n != null && n.isArray()) {
+                            docs.addAll((com.fasterxml.jackson.databind.node.ArrayNode) n);
+                        }
+                    }
+                }
+            }
+            return docs;
+        } catch (Exception e) {
+            log.warn("BizPlay settlement list failed: POST {} -> {}", url, rootMessage(e));
+            throw new IllegalStateException("BizPlay settlement list failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
     public JsonNode getEtcCardTerminals(String token) {
         return getCached("terminals", buildUrl(endpoints.getEtcCardTerminal()), token);
     }
@@ -410,6 +476,15 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getPendingPlanList(long travelerId, String startDate, String endDate, String token) {
+        // Same query shape as the scoped call even though this path ignores the period — sending
+        // it keeps the provider's own request log readable, and the caller filters the rows.
+        String url = buildUrl(endpoints.getPendingPlanList()) + "?travelerId=" + travelerId
+                + "&searchPeriodType=BSTR_START_DATE&startDate=" + startDate + "&endDate=" + endDate;
+        return get(url, token);
+    }
+
+    @Override
     public JsonNode getPlanDetail(long approvalId, String token) {
         String url = buildUrl(endpoints.getPlanDetail(), "approvalId", approvalId);
         return get(url, token);
@@ -440,16 +515,18 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         }
         String bearer = resolveToken(token);
         try {
-            String raw = restClient.get()
+            // Raw bytes, not String: Spring decodes JSON as ISO-8859-1 and mangles Hangul
+            // (merchant names, departments) before Jackson ever sees it.
+            byte[] raw = restClient.get()
                     .uri(java.net.URI.create(url.toString()))   // pre-encoded commas must not be re-encoded
                     .header("accept", "*/*")
                     .header("X-RR-MODE", "NONE")
                     .header("Authorization", "Bearer " + bearer)
                     .retrieve()
-                    .body(String.class);
+                    .body(byte[].class);
             // The endpoint streams CONCATENATED root-level JSON objects — read them in sequence.
             com.fasterxml.jackson.databind.node.ArrayNode receipts = objectMapper.createArrayNode();
-            if (raw != null && !raw.isBlank()) {
+            if (raw != null && raw.length > 0) {
                 try (com.fasterxml.jackson.core.JsonParser p = objectMapper.getFactory().createParser(raw)) {
                     java.util.Iterator<JsonNode> it = objectMapper.readValues(p, JsonNode.class);
                     while (it.hasNext()) {

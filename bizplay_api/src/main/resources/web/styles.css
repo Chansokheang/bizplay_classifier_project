@@ -1442,3 +1442,59 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .bzw-group input[type="date"] { min-width: 0; }
 .bzw-group textarea { resize: vertical; }
 .trav-extra-wide { grid-column: 1 / -1; }
+
+/* Expense lines inside a settlement preview: compact, and the money columns line up. */
+.ev-table { width: 100%; font-size: 12.5px; }
+.ev-table th, .ev-table td { padding: 7px 10px; white-space: nowrap; }
+.ev-table .c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ev-table .c-dim { color: var(--muted); }
+
+/* Period filter in the report toolbar. Server-side: each change re-queries BizPlay, unlike
+   the search box beside it, which filters the rows already fetched. */
+.date-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.date-filter > label { font-size: 12px; font-weight: 600; color: var(--soft); white-space: nowrap; }
+.date-filter input[type="date"] { width: auto; min-width: 140px; font-size: 13px; padding: 7px 10px; }
+.date-filter .tilde { color: var(--muted); }
+.date-note { font-size: 12px; color: var(--bad-text); }
+
+/* Pending-approval plans: the same table, minus the affordances of a picker. Nothing here
+   is clickable — a settlement can only ride an approved plan. */
+.pp-readonly .pp-table tbody tr { cursor: default; }
+.pp-readonly .pp-table tbody tr:hover { background: transparent; }
+.pp-readonly .pp-status { text-align: center; }
+
+/* Plan picker: a plan that already has expense reports — shown, never hidden. */
+.pp-table .pp-usageCnt { text-align: center; }
+.pp-table td.pp-used { color: var(--primary); font-weight: 600; }
+
+/* ---- Settlements filed in BizPlay: the report tab's only table ---- */
+
+/* Rows open a provider-side preview. */
+.bz-settle-row { cursor: pointer; }
+.bz-settle-row:hover { background: var(--band); }
+.bz-settle-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.badge-ok { color: var(--ok, #0a7); border-color: currentColor; }
+
+/* The generic .grid centres its first column for the checkbox tables. This one leads
+   with the document number instead, so it stays left-aligned like every other cell. */
+.bz-grid th:first-child, .bz-grid td:first-child { text-align: left; padding: 12px 14px; }
+.bz-grid td { color: var(--text); }
+.bz-grid .c-doc { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--primary); }
+.bz-grid .c-title { max-width: 300px; font-weight: 500; }
+.bz-grid .c-plan { font-variant-numeric: tabular-nums; }
+/* Purpose, period and timestamps are supporting detail — quieter than the identifiers. */
+.bz-grid .c-dim { color: var(--muted); }
+
+/* Money right-aligns and lines up digit-for-digit down the column. */
+.grid .c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.grid tbody td.c-num { font-weight: 600; color: var(--text); }
+
+/* Approval status reads at a glance instead of as more grey uppercase text. */
+.st-pill {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+.st-ok      { background: #e6f6ed; color: var(--ok); }
+.st-warn    { background: var(--warn-bg); color: var(--warn-text); }
+.st-bad     { background: var(--bad-bg); color: var(--bad-text); }
+.st-neutral { background: var(--primary-soft); color: var(--soft); }

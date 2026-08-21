@@ -38,6 +38,10 @@ public class SlotFillerAgentServiceImple implements SlotFillerAgentService {
             - Dates: ISO yyyy-MM-dd. Today is %2$s. Resolve relative expressions against it
               ("last month" -> that month's first..last day; "지난달" likewise; a single month ->
               its first..last day). Emit startDate/endDate only when the user actually gave a period.
+            - Weekday phrases resolve on that same calendar and MUST land on the named weekday:
+              "last Tuesday" / "지난주 화요일" = the Tuesday of the week before this one (weeks run
+              Monday-Sunday); "this Tuesday" = the Tuesday of the current week. Double-check the
+              day you emit really is that weekday before answering.
             - cardTypes: a JSON array drawn from [CORP, PERSONAL, MY_DATA]. corporate/법인 -> CORP,
               personal/개인 -> PERSONAL, mydata/마이데이터 -> MY_DATA, all/전체 -> all three.
             - Free-text hints (e.g. planHint): copy the user's own words, trimmed.
@@ -73,7 +77,10 @@ public class SlotFillerAgentServiceImple implements SlotFillerAgentService {
         String fields = wantedSlots.entrySet().stream()
                 .map(e -> "- " + e.getKey() + ": " + e.getValue())
                 .collect(Collectors.joining("\n"));
-        String today = java.time.LocalDate.now().toString();
+        // Weekday included: without it the model guesses which day "last Tuesday" was.
+        java.time.LocalDate now = java.time.LocalDate.now();
+        String today = now + " (" + now.getDayOfWeek().getDisplayName(
+                java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + ")";
         List<Message> prompt = List.of(
                 new SystemMessage(agentPromptService.resolve("settlement-slot-extract", EXTRACT_PROMPT)
                         .formatted(fields, today)),

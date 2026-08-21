@@ -221,6 +221,9 @@ function setLanguage(lang) {
   // the active language is a no-op, so this is safe to call any time.
   translateTree(document.body, lang);
   LANG = lang;
+  // The switch owns the agent's language too — take it now, not on the next send, so chips,
+  // the calendar and every T()-built string that already reads chatLang follow immediately.
+  chatLang = LANG;
   localStorage.setItem("bizplay.lang", LANG);
   document.documentElement.lang = LANG;
   document.querySelectorAll(".lang-btn").forEach((b) =>
@@ -2632,6 +2635,21 @@ function init() {
   // $("openAgentBtn").addEventListener("click", openAgent);
   $("openChatBtn").addEventListener("click", openChatMode);
   $("openSettleChatBtn").addEventListener("click", openSettlementChat);
+  const bzRef = $("bzSettleRefresh");
+  if (bzRef) bzRef.addEventListener("click", loadBizplaySettlements);
+  // Period filter: a picked date is a complete intent, so it re-queries BizPlay straight away —
+  // no Apply button to forget. "Last month" puts the default period back.
+  ["bzSettleStart", "bzSettleEnd"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("change", loadBizplaySettlements);
+  });
+  const bz1m = $("bzSettleRange1m");
+  if (bz1m) bz1m.addEventListener("click", () => {
+    const d = bzSettleDefaultRange();
+    $("bzSettleStart").value = d.start;
+    $("bzSettleEnd").value = d.end;
+    loadBizplaySettlements();
+  });
   $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
@@ -2704,37 +2722,18 @@ function init() {
     if (row) openDetail(row.getAttribute("data-plan-row"));
   });
 
-  // --- Report tab (structured) ---
-  $("reportRefresh").addEventListener("click", loadReports);
-  $("reportSearch").addEventListener("input", () => {
-    $("reportSearchClear").classList.toggle("hidden", !$("reportSearch").value);
-    renderReports();
-  });
-  $("reportSearchClear").addEventListener("click", () => {
-    $("reportSearch").value = "";
-    $("reportSearchClear").classList.add("hidden");
-    renderReports();
-    $("reportSearch").focus();
-  });
+  // --- Report tab: one table, the settlements filed in BizPlay ---
   $("openReportCreateBtn").addEventListener("click", () => openReportCreate());
-  $("reportBody").addEventListener("click", (ev) => {
-    if (ev.target.closest(".c-check")) return;
-    // The JSON button must not also open the row detail behind it.
-    const dl = ev.target.closest("[data-report-json]");
-    if (dl) { ev.stopPropagation(); downloadReportJson(dl.getAttribute("data-report-json")); return; }
-    const viewBtn = ev.target.closest("[data-report-key]");
-    if (viewBtn) {
-      const key = viewBtn.getAttribute("data-report-key");
-      if (key.startsWith("settle:")) showSettlementDetail(key.slice(7));   // chat settlement detail modal
-      else openReportDetail(key);
-    }
+  $("bzSettleSearch").addEventListener("input", () => {
+    $("bzSettleSearchClear").classList.toggle("hidden", !$("bzSettleSearch").value);
+    renderBizplaySettlements();
   });
-  $("reportBody").addEventListener("change", (ev) => {
-    if (ev.target.classList.contains("report-chk")) updateReportSelBar();
+  $("bzSettleSearchClear").addEventListener("click", () => {
+    $("bzSettleSearch").value = "";
+    $("bzSettleSearchClear").classList.add("hidden");
+    renderBizplaySettlements();
+    $("bzSettleSearch").focus();
   });
-  $("reportSelectAll").addEventListener("change", toggleReportSelectAll);
-  $("reportSelClear").addEventListener("click", clearReportSelection);
-  $("reportSelDelete").addEventListener("click", deleteSelectedReports);
   $("rcDeleteBtn").addEventListener("click", deleteCurrentReport);
 
   // Confirm dialog
@@ -3173,7 +3172,22 @@ function openSettlementChat() {
   // otherwise open on the starter hero.
   const stored = localStorage.getItem("bizplay.settle.session");
   if (stored) restoreSettleSession(stored);
-  else loadSettlementStarter();
+  else openSettlementOnPlans();
+}
+
+/* The settlement chat opens ON THE ANSWER: the approved trip plans of the last week that carry no
+ * settlement yet, plus a calendar for searching another period. Nothing to read, nothing to pick
+ * from a menu — the first thing on screen is the list of trips the user could settle right now.
+ *
+ * RETIRED (kept for reference, do not delete): the starter hero — a greeting plus four canned
+ * example prompts (loadSettlementStarter() / renderSettlementHero()). The user asked for the
+ * plans directly instead. The /agents/settlement/starter endpoint and its per-corp prompts are
+ * untouched server-side. */
+function openSettlementOnPlans() {
+  $("agentInput").value = LANG === "ko"
+    ? "정산할 출장을 찾아줘"
+    : "find the trips I can settle";
+  sendAgent({ keepLang: true, echoAs: null, silentUser: true });
 }
 
 /* Reload a saved settlement session from the DB and re-render its registered-expenses table, so the
@@ -3229,16 +3243,27 @@ async function loadSettlementStarter() {
   }
 }
 
+/* "Good morning/afternoon/evening" by the viewer's own clock — the settlement chat opens
+ * with a greeting rather than a bare question. */
+function timeGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return T("Good morning", "좋은 아침이에요");
+  if (h < 18) return T("Good afternoon", "안녕하세요");
+  return T("Good evening", "좋은 저녁이에요");
+}
+
 function renderSettlementHero() {
   const thread = $("agentThread");
   const starters = settleStarterSuggestions && settleStarterSuggestions.length
     ? settleStarterSuggestions : [];
   thread.innerHTML = `<div class="chat-hero" id="chatHero">
     <span class="ch-ico">${svgIcon("import", "ico-lg")}</span>
-    <h3 class="ch-title">${esc(T("Which trip should we settle?", "어떤 출장을 정산할까요?"))}</h3>
+    <h3 class="ch-title">${esc(timeGreeting())}</h3>
     <p class="ch-sub">${esc(settleStarterMessage
-      || T("Tell me which trip to settle — I'll pull the plan and its card receipts and draft the 정산서 for you.",
-           "정산할 출장을 알려주시면 계획과 카드 영수증을 불러와 정산서를 만들어 드릴게요."))}</p>
+      || T("Shall we put together a settlement report? Tell me which trip — by name or by period. "
+           + "If the request plan (출장계획서) isn't filed yet, create it on the Request Plan page first.",
+           "출장 정산서를 작성해 드릴까요? 어떤 출장인지 출장명이나 기간으로 알려주세요. "
+           + "아직 출장계획서를 작성하지 않으셨다면 출장 신청 화면에서 먼저 작성해 주세요."))}</p>
     <div class="ch-cards">
       ${starters.map((s) => `<button type="button" class="ch-card">${svgIcon("chat")} <span>${esc(s)}</span></button>`).join("")}
     </div>
@@ -3268,6 +3293,20 @@ function settlementDateAsk() {
     { allowPast: true, echo: false });
 }
 
+/* The plan list is never the only way in: alongside it the chat offers a calendar so the user can
+ * search any other period for an approved request. Same range picker as the evidence question,
+ * different question — hence its own wording. */
+function settlementPlanPeriodAsk() {
+  guideDates(
+    T("If you want to find another approval request, please choose the period to find:",
+      "다른 승인된 출장 신청을 찾으려면 조회할 기간을 선택해 주세요:"),
+    (start, end) => {
+      $("agentInput").value = `${start} ~ ${end}`;
+      sendAgent({ keepLang: true });   // machine-formatted dates, not the user's language
+    },
+    { allowPast: true, echo: false });
+}
+
 /* Final settlement summary — read-only card. Provider save is NOT implemented yet,
  * so the flow deliberately ends here with no save button. */
 function settlementSummaryCard(draft) {
@@ -3289,35 +3328,50 @@ function settlementSummaryCard(draft) {
       <div class="pc-head"><span class="b-ico">${svgIcon("import")}</span> ${esc(T("Settlement summary", "정산 요약"))}</div>
       <div class="pc-body">${body}</div>
       <div class="pc-foot"><span class="pc-note"></span>
-        <button type="button" class="btn btn-primary pc-save">${esc(T("Save", "저장"))}</button></div></div>`;
+        <button type="button" class="btn btn-primary pc-save">${esc(T("Submit to BizPlay", "BizPlay에 제출"))}</button></div></div>`;
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
   const btn = wrap.querySelector(".pc-save");
   const note = wrap.querySelector(".pc-note");
-  btn.addEventListener("click", () => saveSettlementToDb(btn, note));
+  btn.addEventListener("click", () => submitSettlementToBizplay(btn, note));
 }
 
-/* Finalize the settlement in OUR DB (status APPROVED) — independent of the BizPlay report/draft POST. */
-async function saveSettlementToDb(btn, note) {
+/* ⑦ Finish the settlement: POST it to BizPlay. This is the same /create endpoint the create-flow
+ * uses — it applies the approver picked in the chat (김도하 by default), sanitises the body and
+ * sends it to the provider's /bstr/report/draft, so the document lands in the approver's queue.
+ *
+ * RETIRED (kept for reference, do not delete): this button used to call
+ * /agents/settlement/{id}/save, which finalised the session in OUR Postgres with status APPROVED
+ * and never contacted BizPlay. It reported "Saved." exactly the same way, so a settlement could
+ * look filed while the provider had never heard of it. The endpoint still exists server-side.
+ *   const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${…}/save?corpNo=${…}`, {method:"POST"});
+ */
+async function submitSettlementToBizplay(btn, note) {
   if (!agent.sessionId) { note.textContent = T("No settlement in progress.", "진행 중인 정산이 없어요."); return; }
   btn.disabled = true;
   const prev = btn.textContent;
-  btn.textContent = T("Saving…", "저장 중…");
+  btn.textContent = T("Submitting…", "제출 중…");
+  note.textContent = "";
   try {
-    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}/save`
-      + `?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "POST" });
+    const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}/create`
+      + `?corpNo=${encodeURIComponent(CORP_NO)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",                                       // no explicit approval line: the agent adds its own
+      });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
-    agent.status = data.status || "APPROVED";
-    btn.textContent = "✓ " + T("Saved", "저장됨");
-    note.textContent = T("Saved.", "저장되었습니다.");
-    localStorage.removeItem("bizplay.settle.session");   // finalized — next open starts fresh
-    setTimeout(() => {                                    // let the ✓ show, then close + refresh the report table
+    agent.status = data.status || "POSTED";
+    btn.textContent = "✓ " + T("Submitted", "제출됨");
+    note.textContent = T("Sent to BizPlay for approval.", "BizPlay로 결재 요청했습니다.");
+    localStorage.removeItem("bizplay.settle.session");   // finished — next open starts fresh
+    setTimeout(() => {                                    // let the ✓ show, then close + show the new row
       closeCreate();
-      loadReports();
+      loadBizplaySettlements();
     }, 700);
   } catch (e) {
+    // A provider rejection must not read as success — the draft stays open so it can be retried.
     btn.disabled = false;
     btn.textContent = prev;
     note.textContent = "⚠ " + friendlyError(e.message);
@@ -3415,19 +3469,23 @@ function readTransportDetail(w) {
 }
 
 /* The user enters Supply (공급가액) + VAT (부가세); the Total (승인금액) = Supply + VAT. */
-function sumSupplyVat(supplyRaw, vatRaw) {
-  const supply = num(supplyRaw), vat = num(vatRaw);
+function splitTotalVat(totalRaw, vatRaw) {
+  const total = num(totalRaw);
+  const vat = Math.min(num(vatRaw), total);        // tax can never exceed the amount paid
   return {
-    approvalAmount: supply + vat,
-    supplyAmount: supply, vatAmount: vat,
-    originalSupplyAmount: supply, originalVatAmount: vat,
+    approvalAmount: total,
+    supplyAmount: total - vat, vatAmount: vat,
+    originalSupplyAmount: total - vat, originalVatAmount: vat,
   };
 }
-/* Live-fill the read-only Total field from Supply + VAT as the user types either one (UI preview). */
-function autoTotalFromSupplyVat(supplyEl, vatEl, totalEl) {
-  if (!supplyEl || !vatEl || !totalEl) return;
-  const recalc = () => { totalEl.value = num(supplyEl.value) + num(vatEl.value); };
-  supplyEl.addEventListener("input", recalc);
+/* Live-fill the read-only Supply field from Total - VAT as the user types either one (UI preview). */
+function autoSupplyFromTotalVat(totalEl, vatEl, supplyEl) {
+  if (!totalEl || !vatEl || !supplyEl) return;
+  const recalc = () => {
+    const total = num(totalEl.value);
+    supplyEl.value = Math.max(0, total - Math.min(num(vatEl.value), total));
+  };
+  totalEl.addEventListener("input", recalc);
   vatEl.addEventListener("input", recalc);
   recalc();
 }
@@ -3445,10 +3503,13 @@ function settlementManualExpenseForm() {
   const draft0 = (agent.draft && agent.draft[0]) || {};
   const oversea = String(draft0.bstrType || "").toUpperCase() === "OVERSEA";
 
-  // Every receipt: user enters Supply + VAT; Total (승인금액) = Supply + VAT, previewed read-only.
-  const baseAmounts = `${f(T("Supply", "공급가액"), money("supplyAmount"))}
-       ${f(T("VAT", "부가세"), money("vatAmount"))}
-       ${f(T("Total (auto)", "합계 (자동)"), `<input type="number" data-k="approvalAmount" readonly placeholder="0" tabindex="-1">`)}`;
+  // Every receipt: user enters the Total paid + the VAT on it; Supply (공급가액) = Total - VAT,
+  // previewed read-only.
+  // RETIRED (kept for reference, do not delete): VAT + derived Supply inputs. The provider's
+  // etc-receipt body carries supplyAmount/vatAmount as null, so the form asks the total only.
+  //     ${f(T("VAT", "부가세"), money("vatAmount"))}
+  //     ${f(T("Supply (auto)", "공급가액 (자동)"), `<input ... data-k="supplyAmount" readonly>`)}
+  const baseAmounts = f(T("Total", "승인금액"), money("approvalAmount"));
 
   const html = `<div class="mx-grid">
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
@@ -3475,16 +3536,14 @@ function settlementManualExpenseForm() {
   const note = w.querySelector(".mx-note");
   const warn = (msg) => { note.textContent = msg; note.classList.add("mx-warn"); };
 
-  // Total (승인금액) previews live as Supply + VAT is typed.
-  autoTotalFromSupplyVat(el("supplyAmount"), el("vatAmount"), el("approvalAmount"));
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
-    const approvalAmount = num(el("supplyAmount").value) + num(el("vatAmount").value);   // total = supply + VAT
+    const approvalAmount = num(el("approvalAmount").value);   // supply = total - VAT
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
-    if (approvalAmount <= 0) return warn(T("Enter the supply and VAT amounts.", "공급가액과 부가세를 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(T("Enter the total amount.", "승인금액을 입력해 주세요."));
     const time = el("approvalTime").value || "00:00:00";
     const expense = {
       approvalDate,
@@ -3495,7 +3554,7 @@ function settlementManualExpenseForm() {
       approvalAmount,
       // mestCorpNo + tranKindId are left out on purpose — the agent fills them.
     };
-    Object.assign(expense, sumSupplyVat(el("supplyAmount").value, el("vatAmount").value));
+    Object.assign(expense, { supplyAmount: null, vatAmount: null });   // provider expects null
     note.textContent = "";
     note.classList.remove("mx-warn");
     done(`${mestName} · ${approvalDate} · ₩${approvalAmount.toLocaleString()}`);
@@ -3668,9 +3727,11 @@ function settlementManualFullForm() {
     foodDivisionType: [T("Meal category", "식대 구분"), `<input type="text" data-d="foodDivisionType">`],
     personCount: [T("Headcount", "인원수"), `<input type="number" data-d="personCount">`],
   };
-  const baseAmounts = `${f(T("Supply", "공급가액"), money("supplyAmount"))}
-       ${f(T("VAT", "부가세"), money("vatAmount"))}
-       ${f(T("Total (auto)", "합계 (자동)"), `<input type="number" data-k="approvalAmount" readonly placeholder="0" tabindex="-1">`)}`;
+  // RETIRED (kept for reference, do not delete): VAT + derived Supply inputs. The provider's
+  // etc-receipt body carries supplyAmount/vatAmount as null, so the form asks the total only.
+  //     ${f(T("VAT", "부가세"), money("vatAmount"))}
+  //     ${f(T("Supply (auto)", "공급가액 (자동)"), `<input ... data-k="supplyAmount" readonly>`)}
+  const baseAmounts = f(T("Total", "승인금액"), money("approvalAmount"));
   const veh = oversea ? TP_VEH_OVERSEA : TP_VEH_DOMESTIC;
   const detailSection = isTransport
     ? `<div class="mx-sub">${esc(T("Transport details", "교통 정보"))}</div>
@@ -3714,16 +3775,15 @@ function settlementManualFullForm() {
   if (vehSel && tpBox) {
     vehSel.addEventListener("change", () => renderTpSub(tpBox, vehSel.value, oversea));
   }
-  autoTotalFromSupplyVat(el("supplyAmount"), el("vatAmount"), el("approvalAmount"));
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = el("image").files[0];
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
-    const approvalAmount = num(el("supplyAmount").value) + num(el("vatAmount").value);   // total = supply + VAT
+    const approvalAmount = num(el("approvalAmount").value);   // supply = total - VAT
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
-    if (approvalAmount <= 0) return warn(T("Enter the supply and VAT amounts.", "공급가액과 부가세를 입력해 주세요."));
+    if (approvalAmount <= 0) return warn(T("Enter the total amount.", "승인금액을 입력해 주세요."));
     const time = el("approvalTime").value || "00:00:00";
     const expense = {
       approvalDate,
@@ -3733,7 +3793,7 @@ function settlementManualFullForm() {
       overseasUsed: el("overseasUsed").checked,
       approvalAmount,
     };
-    Object.assign(expense, sumSupplyVat(el("supplyAmount").value, el("vatAmount").value));
+    Object.assign(expense, { supplyAmount: null, vatAmount: null });   // provider expects null
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -4657,14 +4717,11 @@ async function sendAgent(opts) {
   // Mirror the user's language — but only from text they actually typed. Chip
   // clicks send composed text that may contain Korean template/staff names
   // (e.g. "Trip type: 테스트(유성린)") and must not flip an English conversation.
-  const keepLang = !!(opts && opts.keepLang === true);
-  // Proportion, not presence: "Which department is 김도하 in" is an English
-  // sentence quoting a Korean name — it must not flip the conversation to Korean.
-  if (message && !keepLang) {
-    const hangul = (message.match(/[가-힣]/g) || []).length;
-    const latin = (message.match(/[A-Za-z]/g) || []).length;
-    chatLang = hangul > 0 && hangul * 3 > latin ? "ko" : "en";
-  }
+  // The ENG/KOR switch owns the reply language for the WHOLE system, agent included:
+  // pick KOR and the agent answers in Korean even when you type in English.
+  // (RETIRED: the language used to follow the typed message —
+  //  chatLang = hangul > 0 && hangul * 3 > latin ? "ko" : "en";)
+  chatLang = LANG === "ko" ? "ko" : "en";
   if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
 
   // Settlement: a "show my receipts" ask opens the personal-card browser (calendar + issued/
@@ -4740,7 +4797,11 @@ async function sendAgent(opts) {
   // (trankind:11719, receipt:all, receipts-done…) that the agent's state machine needs
   // verbatim — but the thread must read like a conversation, so it echoes the label the
   // user actually clicked ("숙박비") instead of the wire value.
-  appendMsg("user", (opts && opts.echoAs) || message, { files: agent.pending.map((f) => f.filename) });
+  // silentUser: the settlement chat opens by asking the agent for the settleable plans on the
+  // user's behalf. Printing that as if they typed it would be a lie in the transcript.
+  if (!(opts && opts.silentUser)) {
+    appendMsg("user", (opts && opts.echoAs) || message, { files: agent.pending.map((f) => f.filename) });
+  }
   $("agentInput").value = "";
   const sentFiles = agent.pending.slice();
   agent.pending = [];
@@ -4787,6 +4848,13 @@ async function sendAgent(opts) {
     // fields the user already filled via wizard chips (shown bubble stays clean).
     // Settlement chats skip it — the trip-form context is another flow's state.
     if (chatOnly && body.message && !agent.settle) body.message = formContextPrefix() + body.message;
+    // Settlement skips the trip-form context, but still has to carry the language choice —
+    // the ENG/KOR switch decides the reply language, not the language the user typed in.
+    else if (agent.settle && body.message) {
+      body.message = (chatLang === "ko"
+        ? "(Respond in Korean only, no English.) "
+        : "(Respond in English only, no Korean.) ") + body.message;
+    }
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4846,7 +4914,11 @@ async function sendAgent(opts) {
         if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
         const wantsDates = data.intent === "AWAIT_PERIOD" || data.intent === "EVIDENCE_PERIOD_PENDING"
           || (data.pendingChoices || []).some((g) => g.kind === "EVIDENCE_PERIOD");
+        // Plans on offer: the picker answers "settle one of these", the calendar answers
+        // "none of these — look in another period".
+        const showsPlans = (data.pendingChoices || []).some((g) => g.kind === "PLAN");
         if (wantsDates) settlementDateAsk();
+        else if (showsPlans) settlementPlanPeriodAsk();
         // No card receipt for this trip: the expense is typed in and its image attached,
         // then posted multipart (a file can't ride a chat turn).
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
@@ -5022,6 +5094,12 @@ function planPickTable(group) {
     ["period", T("Period", "기간")],
     ["drafter", T("Drafter", "기안자")],
     ["registrar", T("Registered by", "등록자")],
+    // When the plan was filed. Plans repeat titles, destinations and even trip dates, so this is
+    // the column that answers "which one did I just create?" — the list arrives newest-first.
+    ["created", T("Created", "작성일시")],
+    // Write count, not a filter: a plan can legitimately carry several reports
+    // (companions file their own, additional reports are allowed).
+    ["usageCnt", T("Reports", "작성 건수")],
   ];
   const cell = (m, key) => (key === "period"
     ? [m.startDate, m.endDate].filter(Boolean).join(" ~ ")
@@ -5036,7 +5114,12 @@ function planPickTable(group) {
         <tbody>${picks.map((o, i) => `<tr class="pp-row" data-i="${i}" tabindex="0">${
           COLS.map(([k]) => {
             const v = cell(o.meta, k);
-            return `<td class="pp-${k}" title="${esc(v)}">${esc(v)}</td>`;
+            const settled = k === "usageCnt" && num(v) > 0;
+            const tip = settled
+              ? T(`Already has ${v} expense report(s) — a further one is still allowed.`,
+                  `이미 ${v}건의 정산서가 작성되었어요 — 추가 작성도 가능합니다.`)
+              : v;
+            return `<td class="pp-${k}${settled ? " pp-used" : ""}" title="${esc(tip)}">${esc(v)}</td>`;
           }).join("")}</tr>`).join("")}</tbody>
       </table>
     </div>`;
@@ -5055,6 +5138,43 @@ function planPickTable(group) {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
     });
   });
+  return box;
+}
+
+/* Trip plans that are still DRAFTED — waiting for an approver. Same shape as the picker but
+ * READ-ONLY: a settlement can only ride an approved plan, so there is nothing to click here.
+ * The point of the table is to show the user what is blocking them. */
+function pendingPlanTable(group) {
+  const picks = (group.options || []).filter((o) => o.meta);
+  if (!picks.length) return document.createElement("div");
+  const COLS = [
+    ["docNo", T("Doc no.", "문서번호")],
+    ["title", T("Title", "제목")],
+    ["purpose", T("Purpose", "목적")],
+    ["period", T("Period", "기간")],
+    ["drafter", T("Drafter", "기안자")],
+    ["created", T("Created", "작성일시")],
+    ["status", T("Approval", "결재")],
+  ];
+  const cell = (m, key) => (key === "period"
+    ? [m.startDate, m.endDate].filter(Boolean).join(" ~ ")
+    : m[key]) || "—";
+  const box = document.createElement("div");
+  box.className = "plan-pick pp-readonly";
+  box.innerHTML = `
+    ${group.name ? `<div class="pp-cap">${esc(group.name)}</div>` : ""}
+    <div class="pp-scroll">
+      <table class="pp-table">
+        <thead><tr>${COLS.map(([k, label]) => `<th class="pp-${k}">${esc(label)}</th>`).join("")}</tr></thead>
+        <tbody>${picks.map((o) => `<tr>${
+          COLS.map(([k]) => {
+            const v = cell(o.meta, k);
+            return k === "status"
+              ? `<td class="pp-status"><span class="st-pill st-warn">${esc(v)}</span></td>`
+              : `<td class="pp-${k}" title="${esc(v)}">${esc(v)}</td>`;
+          }).join("")}</tr>`).join("")}</tbody>
+      </table>
+    </div>`;
   return box;
 }
 
@@ -5153,6 +5273,12 @@ function appendMsg(role, text, meta = {}) {
       // Trip plans carry too many columns for a chip — they get a table of their own.
       if (g.kind === "PLAN" && (g.options || []).some((o) => o.meta)) {
         wrap.appendChild(planPickTable(g));
+        return;
+      }
+      // Plans still waiting for an approver: the same columns, but nothing to click —
+      // BizPlay refuses a settlement whose plan is not approved yet.
+      if (g.kind === "PLAN_PENDING" && (g.options || []).some((o) => o.meta)) {
+        wrap.appendChild(pendingPlanTable(g));
         return;
       }
       // Found receipts → a table (one row + Attach per receipt), action options as chips below.
@@ -5954,14 +6080,14 @@ function showTab(name) {
   ["plan", "approve", "report", "audit"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
   animatePane(name);
   if (name === "approve") loadApprovals();
-  if (name === "report") loadReports();
+  if (name === "report") { loadBizplaySettlements(); }
   if (name === "audit") loadAudits();
 }
 
 /* Re-fetch whichever tab is visible (used after the corp number changes). */
 function reloadActiveTab() {
   if (currentTab === "approve") loadApprovals();
-  else if (currentTab === "report") loadReports();
+  else if (currentTab === "report") { loadBizplaySettlements(); }
   else if (currentTab === "audit") loadAudits();
   else loadPlans();
 }
@@ -6121,8 +6247,249 @@ function reportLineDate(line) {
   return (t && (t.usageDate || t.evidenceDate)) || (c && (c.evidenceDate || c.proofDate || c.startDate)) || "";
 }
 
+/* ---- Settlements saved in BizPlay (출장정산서) — GET /bizplay/settlements.
+        This is the only settlement list the report tab shows: the provider is the record.
+        Fetch fills bzSettleCache; renderBizplaySettlements() paints it through the search box. ---- */
+let bzSettleCache = [];
+/* Every fetch takes a ticket. Changing a date can fire a second request while the first is still
+   in flight, and the slower one must not paint over the newer one's rows. */
+let bzSettleSeq = 0;
+
+/* The period sent to BizPlay. The provider searches PAPER_REG_DATE, so this bounds the
+ * REGISTERED column — when the settlement was filed — not the trip period. Defaults to the
+ * last month, which is also what the server falls back to when the dates are omitted. */
+function bzSettleDefaultRange() {
+  const today = new Date();
+  const from = new Date(today);
+  from.setMonth(from.getMonth() - 1);
+  return { start: isoDay(from), end: isoDay(today) };
+}
+function isoDay(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+/* Fills the two date inputs on first use so the table never queries a period the user can't see. */
+function bzSettleRange() {
+  const s = $("bzSettleStart"), e = $("bzSettleEnd");
+  if (!s || !e) return bzSettleDefaultRange();
+  if (!s.value || !e.value) {
+    const d = bzSettleDefaultRange();
+    if (!s.value) s.value = d.start;
+    if (!e.value) e.value = d.end;
+  }
+  return { start: s.value, end: e.value };
+}
+
+async function loadBizplaySettlements() {
+  const body = $("bzSettleBody");
+  if (!body) return;
+  const { start, end } = bzSettleRange();
+  const note = $("bzSettleRangeNote");
+  // Reversed dates would return an empty list with no explanation — say so instead of querying.
+  if (start && end && start > end) {
+    if (note) note.textContent = T("Start date is after the end date.", "시작일이 종료일보다 뒤입니다.");
+    body.innerHTML = `<tr><td colspan="9" class="empty-row">${esc(
+      T("Start date is after the end date.", "시작일이 종료일보다 뒤입니다."))}</td></tr>`;
+    setBzSettleCounts(0, 0);
+    return;
+  }
+  if (note) note.textContent = "";
+  body.innerHTML = `<tr><td colspan="9" class="empty-row">${esc(T("Loading…", "불러오는 중…"))}</td></tr>`;
+  const foot = $("bzSettleFootRange");
+  if (foot) foot.textContent = `BizPlay · ${start} ~ ${end}`;
+  const ticket = ++bzSettleSeq;
+  try {
+    const url = `${BZ_API_BASE()}/settlements?corpNo=${encodeURIComponent(CORP_NO)}`
+      + `&startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (ticket !== bzSettleSeq) return;          // a newer period is already on screen
+    if (!res.ok) throw apiError(json, res);
+    bzSettleCache = json.data || json.payload || [];
+    renderBizplaySettlements();
+  } catch (e) {
+    if (ticket !== bzSettleSeq) return;
+    bzSettleCache = [];
+    body.innerHTML = `<tr><td colspan="9" class="empty-row">${esc(friendlyError(e.message))}</td></tr>`;
+    setBzSettleCounts(0, 0);
+  }
+}
+
+function setBzSettleCounts(shown, total) {
+  const c = $("bzSettleCount"); if (c) c.textContent = total;
+  const a = $("bzSettleShown"); if (a) a.textContent = shown;
+  const b = $("bzSettleTotal"); if (b) b.textContent = total;
+}
+
+/* DRAFTED is still in flight, APPROVED is done, anything rejected/returned reads as a problem. */
+function settleStatusClass(status) {
+  const s = String(status || "").toUpperCase();
+  if (s === "APPROVED" || s === "COMPLETED") return "st-ok";
+  if (s.includes("REJECT") || s.includes("RETURN") || s.includes("CANCEL")) return "st-bad";
+  if (s === "PROGRESS" || s.includes("PROCEED")) return "st-warn";
+  return "st-neutral";
+}
+
+function renderBizplaySettlements() {
+  const body = $("bzSettleBody");
+  if (!body) return;
+  const inp = $("bzSettleSearch");
+  const q = ((inp && inp.value) || "").trim().toLowerCase();
+  const rows = bzSettleCache.filter((r) => !q || [
+    r.docNo, r.title, r.bstrPlanDocNo, r.bstrPurpose, r.bstrSegmentName,
+    r.draftUserName, r.approvalStatusType, r.bstrStartDate, r.bstrEndDate,
+  ].some((v) => String(v || "").toLowerCase().includes(q)));
+
+  setBzSettleCounts(rows.length, bzSettleCache.length);
+
+  if (!rows.length) {
+    // Name the period the user actually chose — "the last month" would be a lie once they filter.
+    const r = bzSettleRange();
+    body.innerHTML = `<tr><td colspan="9" class="empty-row">${esc(
+      bzSettleCache.length
+        ? T("No settlement matches that search.", "검색 결과가 없습니다.")
+        : T(`No settlement registered in BizPlay between ${r.start} and ${r.end}.`,
+            `${r.start} ~ ${r.end} 기간에 BizPlay에 등록된 정산서가 없습니다.`))}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map((r) => {
+    const period = [r.bstrStartDate, r.bstrEndDate].filter(Boolean).join(" ~ ") || "—";
+    const purpose = [r.bstrPurpose, r.bstrSegmentName].filter(Boolean).join(" · ") || "—";
+    const reg = (r.draftDateTime || "").slice(0, 16).replace("T", " ");
+    const status = r.approvalStatusType || "—";
+    return `<tr class="bz-settle-row" data-aid="${esc(String(r.approvalId || ""))}" tabindex="0" title="${esc(T("Open the settlement", "정산서 열기"))}">
+      <td class="c-doc">${esc(r.docNo || "—")}</td>
+      <td class="c-title" title="${esc(r.title || "")}">${esc(r.title || "—")}</td>
+      <td class="c-plan">${esc(r.bstrPlanDocNo || "—")}</td>
+      <td class="c-dim">${esc(purpose)}</td>
+      <td class="c-dim">${esc(period)}</td>
+      <td>${esc(r.draftUserName || "—")}</td>
+      <td class="c-num">${esc(fmtMoney(num(r.totalBstrAmount)))}</td>
+      <td><span class="st-pill ${settleStatusClass(status)}">${esc(status)}</span></td>
+      <td class="c-dim">${esc(reg || "—")}</td>
+    </tr>`;
+  }).join("");
+
+  body.querySelectorAll(".bz-settle-row").forEach((tr) => {
+    const open = () => showSettlementDetail(tr.getAttribute("data-aid"));
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+  });
+  animateRowsIn("bzSettleBody");
+}
+
+/* Preview one settlement straight from BizPlay: GET /bizplay/settlements/{approvalId}.
+   paper.paperKind.paperKindType === "EXPENSE_REPORT" is the provider's own proof that this
+   approvalId really is a saved settlement — shown as a badge. */
+/* The expenses a saved settlement carries. They come back under `receipts[]` — NOT under
+ * `bstrReceipts`, which the provider returns empty on every document, its own included. Each row
+ * nests `issuedReceiptDtos[]`, the ISSUED child that carries the tranKind and the split amounts. */
+function settleEvidenceHtml(d) {
+  const rows = d.receipts || [];
+  const head = `<div class="pc-head">${esc(T("Expenses", "경비 내역"))}`
+    + ` <span class="muted">${rows.length}</span></div>`;
+  if (!rows.length) {
+    return `<div class="prev-card">${head}<div class="pc-body"><div class="pc-row"><span class="pc-v">`
+      + `${esc(T("No expense line on this settlement.", "이 정산서에는 경비 내역이 없습니다."))}`
+      + `</span></div></div></div>`;
+  }
+  const body = rows.map((r) => {
+    const ir = (r.issuedReceiptDtos || [])[0] || {};
+    const kind = ir.tranKindName || r.tranKindName || "—";
+    const amount = num(ir.issuedAmt) || num(r.approvalAmount);
+    const vat = num(ir.vatAmt != null ? ir.vatAmt : r.vatAmount);
+    const supply = num(ir.splAmt != null ? ir.splAmt : r.supplyAmount);
+    return `<tr>
+      <td>${esc(r.approvalDate || "—")}</td>
+      <td title="${esc(r.mestName || "")}">${esc(r.mestName || "—")}</td>
+      <td>${esc(kind)}</td>
+      <td>${esc(r.cardType || "—")}</td>
+      <td class="c-num">${esc(fmtMoney(supply))}</td>
+      <td class="c-num">${esc(fmtMoney(vat))}</td>
+      <td class="c-num">${esc(fmtMoney(amount))}</td>
+      <td class="c-dim">${esc(String(r.id || "—"))}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="prev-card">${head}<div class="pc-body">
+    <div class="pp-scroll"><table class="pp-table ev-table">
+      <thead><tr>
+        <th>${esc(T("Date", "사용일"))}</th><th>${esc(T("Merchant", "가맹점"))}</th>
+        <th>${esc(T("Type", "경비항목"))}</th><th>${esc(T("Card", "카드"))}</th>
+        <th class="c-num">${esc(T("Supply", "공급가액"))}</th>
+        <th class="c-num">${esc(T("VAT", "부가세"))}</th>
+        <th class="c-num">${esc(T("Total", "합계"))}</th>
+        <th>${esc(T("Receipt id", "영수증 ID"))}</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+  </div></div>`;
+}
+
+/* The form slots (issuedItems). The provider returns every slot the paper defines — 15 of them
+ * here — so listing the count says nothing; only the ones carrying a value or a selection are
+ * real answers. A selection's label lives in selections[].selectionName, not in `value`. */
+function settleFormItemsHtml(d) {
+  const filled = (d.issuedItems || []).map((x) => {
+    const name = (x.item && x.item.name) || "";
+    const sel = (x.selections || []).map((o) => o.selectionName).filter(Boolean).join(", ");
+    const value = sel || x.value || x.value2 || "";
+    return value ? { name, value } : null;
+  }).filter(Boolean);
+  if (!filled.length) return "";
+  return `<div class="prev-card"><div class="pc-head">${esc(T("Form entries", "입력 항목"))}`
+    + ` <span class="muted">${filled.length}/${(d.issuedItems || []).length}</span></div>
+    <div class="pc-body">${filled.map((f) =>
+      `<div class="pc-row"><span class="pc-k">${esc(f.name)}</span>`
+      + `<span class="pc-v">${esc(f.value)}</span></div>`).join("")}</div></div>`;
+}
+
+async function showSettlementDetail(approvalId) {
+  if (!approvalId) return;
+  const host = document.getElementById("bzSettleDetail");
+  host.innerHTML = `<div class="card"><p class="card-note">${esc(T("Loading…", "불러오는 중…"))}</p></div>`;
+  host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/settlements/${encodeURIComponent(approvalId)}?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const json = await res.json();
+    if (!res.ok) throw apiError(json, res);
+    const d = json.data || json.payload || {};
+    const kind = (d.paper && d.paper.paperKind && d.paper.paperKind.paperKindType) || "";
+    const ok = kind === "EXPENSE_REPORT";
+    const lines = (d.approvalLines || []).map((l) => {
+      const s = l.signer || {};
+      const status = l.approvalLineStatusType || "";
+      return `<div class="pc-row"><span class="pc-k">${esc(l.approvalKindType || "")}</span>
+        <span class="pc-v">${esc(s.name || "—")} <span class="badge-src${status === "APPROVED" ? " badge-ok" : ""}">${esc(status)}</span></span></div>`;
+    }).join("") || `<div class="pc-row"><span class="pc-v">—</span></div>`;
+    const row = (k, v) => `<div class="pc-row"><span class="pc-k">${esc(k)}</span><span class="pc-v">${esc(v ?? "—")}</span></div>`;
+    host.innerHTML = `<div class="card">
+      <div class="card-head">
+        <h3>${esc(d.docNo || "")} <span class="badge-src${ok ? " badge-ok" : " badge-off"}">${esc(kind || T("unknown kind", "종류 미확인"))}</span></h3>
+        <button class="btn btn-quiet btn-sm" onclick="document.getElementById('bzSettleDetail').innerHTML=''">✕</button>
+      </div>
+      <div class="prev-card"><div class="pc-body">
+        ${row(T("Title", "제목"), d.title)}
+        ${row(T("Purpose", "목적"), [d.bstrPurposeName || d.bstrPurpose, d.bstrSegmentName].filter(Boolean).join(" · "))}
+        ${row(T("Trip period", "출장기간"), [d.bstrStartDate, d.bstrEndDate].filter(Boolean).join(" ~ "))}
+        ${row(T("Drafter", "기안자"), d.draftUserName)}
+        ${row(T("From plan", "출장계획"), d.bstrPlanApprovalId)}
+        ${row(T("Settlement amount", "정산금액"), fmtMoney(num(d.totalSettleAmount)))}
+      </div></div>
+      ${settleEvidenceHtml(d)}
+      ${settleFormItemsHtml(d)}
+      <div class="prev-card"><div class="pc-head">${esc(T("Approval line", "결재선"))}</div>
+        <div class="pc-body">${lines}</div></div>
+    </div>`;
+  } catch (e) {
+    host.innerHTML = `<div class="card"><p class="card-note">${esc(friendlyError(e.message))}</p></div>`;
+  }
+}
+
 async function loadReports() {
   const body = $("reportBody");
+  // The local-drafts table was removed from the report tab — BizPlay is the record now.
+  // Callers that used to refresh it get the provider list refreshed instead.
+  if (!body) { loadBizplaySettlements(); return; }
   body.innerHTML = loadingRow(15);
   beginLoad();
   try {

@@ -308,7 +308,10 @@ public class CustomAgentServiceImple implements CustomAgentService {
         long hangul = message.codePoints().filter(cp ->
                 (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F)).count();
         long latin = message.codePoints().filter(Character::isAlphabetic).count() - hangul;
-        boolean korean = hangul > 0 && hangul * 3 > latin;
+        // The site's ENG/KOR switch wins when the chat sent its marker — otherwise a Korean
+        // user typing an English word gets an English answer from a custom agent.
+        boolean korean = message.contains("Respond in Korean only")
+                || (!message.contains("Respond in English only") && hangul > 0 && hangul * 3 > latin);
         system.append(korean
                 ? "The user wrote in Korean — the \"answer\" text MUST be in Korean only.\n"
                 : "The user wrote in English — the \"answer\" text MUST be in English only.\n");

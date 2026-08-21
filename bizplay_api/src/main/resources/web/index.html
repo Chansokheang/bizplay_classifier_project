@@ -358,10 +358,13 @@
 
     <!-- ===================== TAB 3: EXPENSE REPORT ===================== -->
     <section id="tab-report" class="tab-pane hidden">
+      <!-- The settlements filed in BizPlay are the only record shown here. Locally-drafted
+           rows from our own database used to sit in a second table below; that table was
+           removed so the page has one source of truth. -->
       <div class="list-head">
-        <span class="list-meta"><strong id="reportCount">0</strong> expense reports</span>
+        <span class="list-meta"><strong id="bzSettleCount">0</strong> settlements filed in BizPlay</span>
         <div class="head-actions">
-          <button id="reportRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
+          <button id="bzSettleRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
           <button id="openSettleChatBtn" class="btn btn-quiet" title="Settle a finished trip in chat — pick the plan, evidence period and receipts"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Settle in Chat</button>
           <button id="openReportCreateBtn" class="btn btn-primary">+ Create Report</button>
         </div>
@@ -370,43 +373,41 @@
       <div class="toolbar">
         <div class="search-box">
           <span class="search-ico"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></span>
-          <input id="reportSearch" type="text" autocomplete="off"
-                 placeholder="Search doc no, trip, traveler, dept, purpose, status" />
-          <button id="reportSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+          <input id="bzSettleSearch" type="text" autocomplete="off"
+                 placeholder="Search document, title, plan, purpose, drafter, status" />
+          <button id="bzSettleSearchClear" class="search-clear hidden" aria-label="Clear search">✕</button>
+        </div>
+        <!-- Server-side period filter. The provider searches on PAPER_REG_DATE, so these dates
+             bound the REGISTERED column (when the settlement was filed), not the trip period.
+             Changing either one re-queries BizPlay; the search box above filters what came back. -->
+        <div class="date-filter">
+          <label for="bzSettleStart">Registered</label>
+          <input type="date" id="bzSettleStart" aria-label="Registered from" />
+          <span class="tilde">→</span>
+          <input type="date" id="bzSettleEnd" aria-label="Registered to" />
+          <button id="bzSettleRange1m" class="btn btn-quiet btn-sm" title="Reset to the last month">Last month</button>
+          <span id="bzSettleRangeNote" class="date-note"></span>
         </div>
       </div>
 
-      <!-- Bulk-selection toolbar (shown when ≥1 report is checked) -->
-      <div id="reportSelBar" class="sel-bar hidden">
-        <span class="sel-count"><strong id="reportSelCount">0</strong> selected</span>
-        <div class="sel-actions">
-          <button id="reportSelClear" class="btn btn-quiet btn-sm">Clear</button>
-          <button id="reportSelDelete" class="btn btn-danger btn-sm"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg> Remove</button>
-        </div>
-      </div>
+      <div id="bzSettleDetail"></div>
 
       <div class="card">
-        <table class="grid">
-          <colgroup>
-            <col /><col /><col /><col /><col /><col /><col /><col />
-            <col /><col /><col /><col /><col /><col /><col />
-          </colgroup>
+        <table class="grid bz-grid">
           <thead>
             <tr>
-              <th><input type="checkbox" id="reportSelectAll" class="chk" aria-label="Select all reports" /></th>
-              <th class="c-no">No</th>
-              <th>Document</th><th>Trip</th><th>Traveler</th><th>Dept.</th><th>Purpose</th>
-              <th>Period</th><th>Lines</th><th>Total</th><th>Status</th><th>Audit</th><th>Updated</th>
-              <th class="c-json">JSON</th><th>Actions</th>
+              <th>Document</th><th>Title</th><th>From plan</th><th>Purpose</th>
+              <th>Period</th><th>Drafter</th><th class="c-num">Total</th>
+              <th>Status</th><th>Registered</th>
             </tr>
           </thead>
-          <tbody id="reportBody"><tr><td colspan="15" class="empty-row">Loading…</td></tr></tbody>
+          <tbody id="bzSettleBody"><tr><td colspan="9" class="empty-row">Loading…</td></tr></tbody>
         </table>
       </div>
 
       <div class="list-foot">
-        <span class="foot-info">Showing <strong id="reportShown">0</strong> of <strong id="reportTotal">0</strong> reports</span>
-        <span class="foot-page">100 items</span>
+        <span class="foot-info">Showing <strong id="bzSettleShown">0</strong> of <strong id="bzSettleTotal">0</strong> settlements</span>
+        <span class="foot-page" id="bzSettleFootRange">BizPlay</span>
       </div>
     </section>
 

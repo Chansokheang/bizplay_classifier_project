@@ -42,6 +42,9 @@ public class AgentPromptServiceImple implements AgentPromptService {
     private static final String SETTLEMENT_SUGGESTIONS_DEFAULT = String.join("\n",
             "지난달 부산 출장 정산해줘",
             "Settle my Gwangju trip on the corporate card",
+            // The pending-plans tool: a DRAFTED plan cannot be settled, so make the question
+            // discoverable rather than leaving the user to wonder why a trip is missing.
+            "Which of my trip requests are still waiting for approval?",
             "이번 분기 출장 영수증 첨부해서 정산서 작성해줘");
 
     /** Agent name -> compiled-in default, registered by each agent on startup / first call. */

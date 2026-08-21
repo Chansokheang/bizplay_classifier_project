@@ -48,7 +48,17 @@ public class BizplayEndpoints {
     private String settlementDraft = "/api/v2/approval/{productCode}/bstr/report/draft";
 
     /** ④ Plan list (settlement anchor search). Query string added in the gateway. */
-    private String planList = "/api/v2/approval/bstr/plan/list";
+    // Product-scoped path: unlike /approval/bstr/plan/list it HONOURS startDate/endDate
+    // + searchPeriodType and populates usageCnt (provider answer 260810, 1-4/1-5).
+    private String planList = "/api/v2/approval/seah/bstr/plan/list";
+
+    /**
+     * ④b Plan list, UNSCOPED — the only variant that returns DRAFTED (not-yet-approved) plans;
+     * the seah path returns APPROVED rows only. It ignores the period query, leaves usageCnt
+     * null and repeats a plan per approval line, so the caller filters and dedupes.
+     */
+    private String pendingPlanList = "/api/v2/approval/bstr/plan/list";
+    private String settlementList = "/api/v2/approval/seah/bstr/all/list/streaming";
 
     /** ⑤ One plan's detail: needs {approvalId}. */
     private String planDetail = "/api/v2/approval/bstr/{approvalId}";
@@ -70,6 +80,8 @@ public class BizplayEndpoints {
 
     /** TranKind master (id → name/type): GET, no params. */
     private String trankindList = "/api/v2/trankind/list";
+    private String budgetDeptUser = "/api/v2/budgetdepartment/user/list/eacc/authorized/{corpUserId}";
+    private String budgetDeptCorp = "/api/v2/budgetdepartment/list";
 
     /** Transport terminals (id, vehicleType, name): GET → TerminalDto[] for depart/arrival dropdowns. */
     private String etcCardTerminal = "/api/v2/receipt/etc-card/terminal";
