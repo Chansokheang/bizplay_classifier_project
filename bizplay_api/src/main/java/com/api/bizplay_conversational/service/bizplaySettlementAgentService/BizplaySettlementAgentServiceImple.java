@@ -56,6 +56,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * approved — BizPlay will not accept it as a settlement anchor, so the agent shows those
      * plans only to explain WHY they cannot be settled yet.
      */
+    /** 기타증빙 — the "other evidence" TranKind, excluded from every receipt list the provider builds. */
+    private static final long OTHER_EVIDENCE_TRANKIND_ID = 11717L;
     private static final String STATUS_APPROVED = "APPROVED";
     private static final String STATUS_DRAFTED = "DRAFTED";
     /** The plan-search window used when the user names no period. */
@@ -66,6 +68,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static final int WIDE_SEARCH_MONTHS = 6;
     /** Chip token for the pending-plans tool, so the UI can offer it without phrasing anything. */
     private static final Pattern PENDING_PLANS_TOKEN = Pattern.compile("(?i)\\s*pending-plans\\s*");
+    /** Disambiguated stop pick: stop:from|to:{nodeId}. */
+    private static final Pattern STOP_PICK = Pattern.compile("(?i)\\s*stop:(from|to):([A-Za-z0-9_-]+).*");
     /** The settlement body's per-kind amount slots, in the sample's order. */
     private static final String[] COST_SLOTS = {"dailyCostAmount", "lodgingCostAmount",
             "fuelCostAmount", "foodCostAmount", "incidentalCostAmount", "publicFixCostAmount"};
@@ -150,7 +154,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // guardrail, which can misread a bare machine token as an injection attempt.
         boolean machineToken = message.matches(
                 "(?i)\\s*(settle-plan:|card-types:|receipt:|receipts-done|evidence-period:|manual-expense"
-                        + "|submit|trankind:|expense-confirm|expense-cancel|approver:|pending-plans).*");
+                        + "|submit|trankind:|expense-confirm|expense-cancel|approver:|pending-plans|settle-start|stop:).*");
         // The guardrail check and the slot extraction both read only the raw message and have no
         // data dependency, so the orchestrator fans them out in PARALLEL on the agent pool — the
         // turn waits on the slower of the two, not their sum. (Data-dependent sub-agents such as the
@@ -1916,7 +1920,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
             ObjectNode fields = expenseFieldsFromPending(pending);
             ObjectNode detail = expenseDetailFromPending(pending, state);
-            enrichTransportDetail(detail, bizplayToken);   // routeType / seatClass / terminal ids
+            enrichTransportDetail(detail, pending.path("seatGrade").asText(""), bizplayToken);
             state.remove("pendingExpense");
             appendTurn(session, "user", message);
             saveState(session, state);
@@ -1924,6 +1928,29 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // Same call the form's "Register receipt" makes — one etc-card POST, then the draft.
             return addManualExpense(session.getId().toString(), corpNo, fields, detail,
                     null, null, bizplayToken);
+        }
+        // A disambiguated stop: write the catalog's own label into the expense being built, so the
+        // next pass resolves it exactly instead of ambiguously.
+        Matcher stop = STOP_PICK.matcher(message);
+        if (stop.matches() && building) {
+            String field = "from".equalsIgnoreCase(stop.group(1)) ? "depart" : "arrival";
+            String label = nodeName(vehicleNodes(pending.path("vehicleType").asText(""), bizplayToken),
+                    stop.group(2), "");
+            if (!label.isBlank()) {
+                pending.put(field, label);
+            }
+            List<Slot> after = expenseSlots(state);
+            List<Slot> stillMissing = missingExpenseSlots(pending, after);
+            if (!stillMissing.isEmpty()) {
+                Slot next = stillMissing.get(0);
+                return simpleTurn(session, state, message, formFollowUpAgentService.composeFollowUp(
+                        t(ko, "receipt", "영수증"), List.of(t(ko, next.en(), next.ko())), ko),
+                        "EXPENSE_SLOT_PENDING", null);
+            }
+            BizplayPlanAgentResponse ask = askAmbiguousStop(session, state, pending, message, bizplayToken, ko);
+            return ask != null ? ask
+                    : simpleTurn(session, state, message, expensePreview(pending, after, ko),
+                            "EXPENSE_PREVIEW", expenseConfirmChips(ko));
         }
         if (machineToken || isDraftQuestion(message)) {
             return null;   // chips and questions belong to the stage machine / draft Q&A
@@ -1966,8 +1993,104 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     t(ko, "receipt", "영수증"), List.of(t(ko, next.en(), next.ko())), ko);
             return simpleTurn(session, state, message, ask, "EXPENSE_SLOT_PENDING", null);
         }
+        // A stop that matches several places in the catalog is not something to guess at: the
+        // traveller knows which one they used, and a wrong node is a wrong receipt.
+        BizplayPlanAgentResponse ambiguous =
+                askAmbiguousStop(session, state, pending, message, bizplayToken, ko);
+        if (ambiguous != null) {
+            return ambiguous;
+        }
         return simpleTurn(session, state, message, expensePreview(pending, slots, ko),
                 "EXPENSE_PREVIEW", expenseConfirmChips(ko));
+    }
+
+    /**
+     * When a departure or arrival name matches more than one stop in the vehicle's node catalog,
+     * return a turn that asks which one; null when both ends are unambiguous (or resolve exactly,
+     * or match the terminal master, or match nothing at all - none of which is a choice).
+     */
+    private BizplayPlanAgentResponse askAmbiguousStop(ConversationalAgentSession session,
+                                                      ObjectNode state, ObjectNode pending,
+                                                      String message, String token, boolean ko) {
+        String vehicle = pending.path("vehicleType").asText("");
+        if (vehicle.isBlank()) {
+            return null;
+        }
+        JsonNode nodes = vehicleNodes(vehicle, token);
+        if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
+            return null;
+        }
+        JsonNode terminals = null;
+        try {
+            terminals = bizplayGatewayService.getEtcCardTerminals(token);
+        } catch (Exception e) {
+            log.warn("Terminal master unavailable while checking stops: {}", e.getMessage());
+        }
+        for (String[] end : new String[][]{{"depart", "from"}, {"arrival", "to"}}) {
+            String name = pending.path(end[0]).asText("");
+            if (name.isBlank() || terminalId(terminals, vehicle, name) != null) {
+                continue;   // a hub the terminal master already pins down
+            }
+            if (nodeId(nodes, name) != null) {
+                continue;   // resolves to exactly one stop
+            }
+            ArrayNode options = nodeCandidates(nodes, name);
+            if (options.size() < 2) {
+                continue;   // nothing matched: the plain name is kept, no question worth asking
+            }
+            List<TripPlanAgentResponse.Option> chips = new ArrayList<>();
+            for (JsonNode o : options) {
+                chips.add(TripPlanAgentResponse.Option.builder()
+                        .label(o.path("nodeName").asText(""))
+                        .sendText("stop:" + end[1] + ":" + o.path("nodeId").asText(""))
+                        .build());
+            }
+            String ask = "depart".equals(end[0])
+                    ? t(ko, "There are several stops called \"" + name + "\" - which one did you leave from?",
+                            "\"" + name + "\" 정류장이 여러 곳이에요 - 어디에서 출발하셨나요?")
+                    : t(ko, "There are several stops called \"" + name + "\" - which one did you arrive at?",
+                            "\"" + name + "\" 정류장이 여러 곳이에요 - 어디에 도착하셨나요?");
+            return simpleTurn(session, state, message, ask, "STOP_PICK_PENDING",
+                    List.of(TripPlanAgentResponse.PendingChoice.builder()
+                            .kind("STOP").name(t(ko, "stop", "정류장")).options(chips).build()));
+        }
+        return null;
+    }
+
+    /** The node catalog for a vehicle, or null - never throws, the caller treats null as "no help". */
+    private JsonNode vehicleNodes(String vehicleType, String token) {
+        if (vehicleType == null || vehicleType.isBlank()) {
+            return null;
+        }
+        try {
+            return bizplayGatewayService.getVehicleNodes(vehicleType, token);
+        } catch (Exception e) {
+            log.warn("Node list unavailable for {}: {}", vehicleType, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Every stop whose catalog name contains what the user said, capped for a chip row. This is the
+     * "wider" match of {@link #nodeId} - the one that goes ambiguous when a name like 금호리조트
+     * covers both 봉개 and 교래.
+     */
+    private ArrayNode nodeCandidates(JsonNode nodes, String name) {
+        ArrayNode out = objectMapper.createArrayNode();
+        if (nodes == null || !nodes.isArray() || name == null || name.isBlank()) {
+            return out;
+        }
+        String wanted = name.trim().toLowerCase(java.util.Locale.ROOT);
+        for (JsonNode n : nodes) {
+            String candidate = n.path("nodeName").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+            if (!candidate.isEmpty() && candidate.contains(wanted)) {
+                out.add(n.deepCopy());
+                if (out.size() >= CHIP_LIMIT) {
+                    break;
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -2060,11 +2183,26 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             new Slot("vehicleType", "transport", "교통수단",
                     "one of AIR, KTX, SRT, TRAIN, BUS, CBUS, TAXI, RENTAL, AIRPORT_LIMOUSINE, OTHER"
                             + " — KTX/SRT stay as themselves, 기차/열차 -> TRAIN, 고속버스 -> BUS,"
-                            + " 시외버스 -> CBUS, 택시 -> TAXI, 렌터카 -> RENTAL, 항공/비행기 -> AIR", true),
+                            + " 시외버스 -> CBUS, 택시 -> TAXI, 렌터카 -> RENTAL, 항공/비행기 -> AIR."
+                            + " The vehicle word is usually written in the message itself: if one of"
+                            + " those words appears, ALWAYS emit the matching value. Do this even when"
+                            + " the place names are unfamiliar or carry no 역/공항/터미널 suffix"
+                            + " — small stations like 가남 or 감공장호원 are still stations, and they never"
+                            + " change what the vehicle was", true),
             new Slot("depart", "departure", "출발지",
-                    "where the trip legs started (station / airport / city), the user's own words", true),
+                    "where the trip legs started, copied verbatim from the user. A bare place name"
+                            + " with no 역/공항 suffix (가남, 광주) is a perfectly valid answer"
+                            + " — never omit it because the name looks unfamiliar", true),
             new Slot("arrival", "arrival", "도착지",
-                    "where the trip legs ended (station / airport / city), the user's own words", true));
+                    "where the trip legs ended, copied verbatim from the user. A bare place name"
+                            + " with no 역/공항 suffix is a perfectly valid answer", true),
+            // Optional, and normalised to OUR tokens rather than the provider's — their wire values
+            // differ per vehicle (economyClass / ECONOMY_KTX / standard) and only the 일반 grade is
+            // confirmed, so the mapping to a real value happens in code, not here.
+            new Slot("seatGrade", "seat grade", "좌석등급",
+                    "the seat grade IF the user named one — STANDARD for 일반/general/economy,"
+                            + " SUPERIOR for 우등, PREMIUM for 프리미엄. Omit the field entirely"
+                            + " when no grade is mentioned", false));
 
     /** Lodging (숙박비) receipts carry the stay dates — distinct from the payment date. */
     private static final List<Slot> EXPENSE_ROOM_SLOTS = List.of(
@@ -2263,10 +2401,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         slots.put("evidenceEnd", end);
         ArrayNode ct = slots.putArray("cardTypes");
         cardTypes.forEach(ct::add);
-        // No TranKind scoping — the provider's filter is (tranKindId IN ids OR IS NULL), which returns
-        // the same rows anyway, and an unscoped search matches the user's working call (tranKindIds=).
+        // Scope to the expense type the user picked. The provider serves one list per TranKind —
+        // lodging, transport, other evidence — and a receipt belongs to exactly one of them: it can
+        // only be shown, and only be attached, under its own kind. Every one of their three sample
+        // calls also excludes 11717, including the "other evidence" call that selects it.
+        Long pickedKind = slots.hasNonNull("evidenceTranKindId")
+                ? slots.path("evidenceTranKindId").asLong() : null;
         JsonNode receipts = bizplayGatewayService.getUnattachedReceipts(
-                corpUserId, start, end, cardTypes, null, null, token);
+                corpUserId, start, end, cardTypes,
+                pickedKind == null ? null : List.of(pickedKind),
+                List.of(OTHER_EVIDENCE_TRANKIND_ID), token);
         subAgents.add("RECEIPT_LOOKUP_TOOL");
         ArrayNode candidates = objectMapper.createArrayNode();
         if (receipts != null && receipts.isArray()) {
@@ -2277,7 +2421,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 // Enforce the trip window ourselves: the provider's list endpoints have been seen
                 // ignoring their date params (same rows for every range), so filtering here is what
                 // actually keeps out-of-trip receipts off the list.
-                if (!withinWindow(r.path("approvalDate").asText(""), start, end)) {
+                // Same reasoning as the query: judge a receipt by when it was USED, falling back to
+                // the payment date for kinds that carry no usage dates (a taxi, a meal).
+                String used = r.path("usedStartDate").asText("");
+                if (used.isBlank()) {
+                    used = r.path("approvalDate").asText("");
+                }
+                if (!withinWindow(used, start, end)) {
                     continue;
                 }
                 candidates.add(trimReceipt(r));
@@ -2645,7 +2795,30 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static final java.util.Map<String, String> SEAT_CLASS_BY_VEHICLE = java.util.Map.of(
             "AIR", "economyClass",
             "KTX", "ECONOMY_KTX",
-            "SRT", "ECONOMY_KTX");
+            "SRT", "ECONOMY_KTX",
+            // Both bus kinds offer \uc77c\ubc18 / \uc6b0\ub4f1 / \ud504\ub9ac\ubbf8\uc5c4, and \uc77c\ubc18 is "standard" in the provider's
+            // own CBUS and BUS samples. \uc6b0\ub4f1 / \ud504\ub9ac\ubbf8\uc5c4 have no confirmed wire value, so they stay
+            // null rather than guessed \u2014 the field is optional on the form.
+            "CBUS", "standard",
+            "BUS", "standard");
+
+    /**
+     * Bus seat grades: what the UI shows -> what the JSON carries. Buses are the only vehicles with
+     * a real choice; a flight or a train has one fixed value, so this map is consulted for BUS and
+     * CBUS only. Keys are the slot-filler's normalised tokens, not the user's words.
+     */
+    private static final java.util.Map<String, String> BUS_SEAT_GRADES = java.util.Map.of(
+            // Lowercase, per the provider's own CBUS and express-bus captures — the field is not
+            // validated server-side, so the captured spelling is the only reliable source.
+            "STANDARD", "standard",     // 일반
+            "SUPERIOR", "Superior",     // 우등
+            "EXCELLENT", "Superior",    // the extractor's older token for 우등
+            "PREMIUM", "Premium");      // 프리미엄
+
+    /** Bus kinds share the three-grade seat catalog; every other vehicle has a single fixed value. */
+    private static boolean isBus(String vehicleType) {
+        return "BUS".equals(vehicleType) || "CBUS".equals(vehicleType);
+    }
 
     /**
      * Fill the transport fields the provider's samples carry beyond what the sentence gives us:
@@ -2657,7 +2830,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * Rail stations outside the terminal master use a separate {@code departNodeId} ("NAT…") code
      * that this list does not carry; those stay null too rather than be invented.
      */
-    private void enrichTransportDetail(ObjectNode detail, String token) {
+    private void enrichTransportDetail(ObjectNode detail, String seatGrade, String token) {
         if (detail == null || !detail.hasNonNull("vehicleType")) {
             return;
         }
@@ -2665,25 +2838,142 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (!detail.hasNonNull("routeType")) {
             detail.put("routeType", "ONEWAY");   // every transport sample is one-way
         }
-        String seat = SEAT_CLASS_BY_VEHICLE.get(vehicle);
-        if (seat != null && !detail.hasNonNull("seatClass")) {
-            detail.put("seatClass", seat);
+        // Seat grade. Buses carry all three (UI 일반/우등/프리미엄 -> wire Standard/Superior/Premium);
+        // a flight or a train has one fixed value and no grade to choose, so a grade named against
+        // those is ignored rather than forced into their enum. The provider does NOT validate this
+        // field — it stored a deliberately bogus value verbatim — so an unknown grade must stay
+        // empty rather than be guessed, or the receipt carries a code nothing recognises.
+        if (!detail.hasNonNull("seatClass")) {
+            String grade = seatGrade == null ? "" : seatGrade.trim().toUpperCase(java.util.Locale.ROOT);
+            String graded = BUS_SEAT_GRADES.get(grade);
+            if (graded != null && BUS_SEAT_GRADES.containsKey("STANDARD")
+                    && SEAT_CLASS_BY_VEHICLE.containsKey(vehicle) && isBus(vehicle)) {
+                detail.put("seatClass", graded);
+            } else {
+                String seat = SEAT_CLASS_BY_VEHICLE.get(vehicle);
+                if (seat != null) {
+                    detail.put("seatClass", seat);   // the vehicle's only/default grade
+                }
+                if (!grade.isEmpty() && graded == null) {
+                    log.info("Seat grade {} is not one of the three bus grades — using {} for {}.",
+                            grade, seat, vehicle);
+                }
+            }
         }
-        JsonNode terminals;
+        String fromName = detail.path("depart").asText("");
+        String toName = detail.path("arrival").asText("");
+
+        // Two locator systems, and a place lives in one or the other. The terminal master holds the
+        // big hubs (13 airports, 244 rail stations, 158 bus terminals) and is addressed by numeric
+        // id; the node list holds everything else - 2117 intercity-bus stops, 347 rail stations
+        // including the small ones - and is addressed by a string code. Try the master first
+        // because a numeric terminal id is what the provider's AIR sample uses, then fall back to
+        // the node code, which is what their CBUS and KTX samples use.
         try {
-            terminals = bizplayGatewayService.getEtcCardTerminals(token);
+            JsonNode terminals = bizplayGatewayService.getEtcCardTerminals(token);
+            Long from = terminalId(terminals, vehicle, fromName);
+            Long to = terminalId(terminals, vehicle, toName);
+            if (from != null) {
+                detail.put("departTerminalId", from);
+            }
+            if (to != null) {
+                detail.put("arrivalTerminalId", to);
+            }
         } catch (Exception e) {
-            log.warn("Terminal master lookup failed ({}); depart/arrival stay as names.", e.getMessage());
+            log.warn("Terminal master lookup failed ({}); trying the node list.", e.getMessage());
+        }
+        boolean needFrom = !detail.hasNonNull("departTerminalId") && !fromName.isBlank();
+        boolean needTo = !detail.hasNonNull("arrivalTerminalId") && !toName.isBlank();
+        if (!needFrom && !needTo) {
             return;
         }
-        Long from = terminalId(terminals, vehicle, detail.path("depart").asText(""));
-        Long to = terminalId(terminals, vehicle, detail.path("arrival").asText(""));
-        if (from != null) {
-            detail.put("departTerminalId", from);
+        try {
+            JsonNode nodes = bizplayGatewayService.getVehicleNodes(vehicle, token);
+            if (needFrom) {
+                String id = nodeId(nodes, fromName);
+                if (id != null) {
+                    detail.put("departNodeId", id);
+                    detail.put("depart", nodeName(nodes, id, fromName));   // the provider's own label
+                }
+            }
+            if (needTo) {
+                String id = nodeId(nodes, toName);
+                if (id != null) {
+                    detail.put("arrivalNodeId", id);
+                    detail.put("arrival", nodeName(nodes, id, toName));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Node lookup failed for {} ({}); depart/arrival stay as plain names.",
+                    vehicle, e.getMessage());
         }
-        if (to != null) {
-            detail.put("arrivalTerminalId", to);
+    }
+
+    /**
+     * A spoken place name -> its node code, searched IN CODE over the cached node list. The list
+     * runs to thousands of stops, so it is never handed to the model: exact match first, then the
+     * generic-word-stripped form, then containment, and only when exactly one candidate contains
+     * the name - an ambiguous "\uac15\ub989" that matches nine stops resolves to nothing rather than
+     * the wrong one.
+     */
+    private String nodeId(JsonNode nodes, String name) {
+        if (nodes == null || !nodes.isArray() || name == null || name.isBlank()) {
+            return null;
         }
+        String wanted = name.trim().toLowerCase(java.util.Locale.ROOT);
+        String wantedCore = placeCore(wanted);
+        String coreHit = null;
+        String widerHit = null;   // the catalog name CONTAINS what the user said - the strong case
+        int widerCount = 0;
+        String narrowerHit = null;   // the user said MORE than the catalog name - the weak case
+        int narrowerCount = 0;
+        for (JsonNode n : nodes) {
+            String candidate = n.path("nodeName").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+            if (candidate.isEmpty()) {
+                continue;
+            }
+            if (candidate.equals(wanted)) {
+                return n.path("nodeId").asText(null);
+            }
+            if (coreHit == null && !wantedCore.isEmpty() && wantedCore.equals(placeCore(candidate))) {
+                coreHit = n.path("nodeId").asText(null);
+            }
+            // Direction matters. The catalog writes "131 금호리조트(봉개)" while people say
+            // "금호리조트(봉개)", so the catalog name containing the spoken one is a real match.
+            // The reverse - a two-character stop like "금호" sitting inside what they said - is
+            // noise, and counting both together made every specific stop look ambiguous.
+            if (candidate.contains(wanted)) {
+                widerCount++;
+                if (widerHit == null) {
+                    widerHit = n.path("nodeId").asText(null);
+                }
+            } else if (wanted.contains(candidate)) {
+                narrowerCount++;
+                if (narrowerHit == null) {
+                    narrowerHit = n.path("nodeId").asText(null);
+                }
+            }
+        }
+        if (coreHit != null) {
+            return coreHit;
+        }
+        if (widerCount == 1) {
+            return widerHit;
+        }
+        // Still ambiguous ("금호리조트" matches both 봉개 and 교래) - resolve nothing rather than
+        // guess a stop the traveller never went to; the receipt keeps the plain name and still issues.
+        return (widerCount == 0 && narrowerCount == 1) ? narrowerHit : null;
+    }
+
+    /** The provider's own label for a node id, so the saved depart/arrival matches their catalog. */
+    private String nodeName(JsonNode nodes, String id, String fallback) {
+        for (JsonNode n : nodes) {
+            if (id.equals(n.path("nodeId").asText(null))) {
+                String label = n.path("nodeName").asText("");
+                return label.isBlank() ? fallback : label;
+            }
+        }
+        return fallback;
     }
 
     /**
@@ -3203,6 +3493,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         if (s.contains("기타") || s.contains("etc") || s.contains("other")) {
             types.add("ETC");   // 기타증빙 — where manual/etc-card receipts live
+            types.add("BZP_POINT");   // the provider pairs the two in every receipt-list sample
         }
         if (s.contains("전체") || s.contains("all")) {
             return List.of("CORP", "PERSONAL", "MY_DATA", "ETC");

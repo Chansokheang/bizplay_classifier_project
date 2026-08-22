@@ -3184,9 +3184,10 @@ function openSettlementChat() {
  * plans directly instead. The /agents/settlement/starter endpoint and its per-corp prompts are
  * untouched server-side. */
 function openSettlementOnPlans() {
-  $("agentInput").value = LANG === "ko"
-    ? "정산할 출장을 찾아줘"
-    : "find the trips I can settle";
+  // A TOKEN, not a sentence. Phrased in words ("find the trips I can settle") the opener went
+  // through the LLM, which read it as "show me the plans waiting for approval" and opened the
+  // chat on the wrong tool. A machine token skips the guardrail and slot extraction entirely.
+  $("agentInput").value = "settle-start";
   sendAgent({ keepLang: true, echoAs: null, silentUser: true });
 }
 

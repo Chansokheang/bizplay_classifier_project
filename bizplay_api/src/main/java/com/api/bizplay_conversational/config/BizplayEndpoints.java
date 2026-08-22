@@ -86,6 +86,13 @@ public class BizplayEndpoints {
     /** Transport terminals (id, vehicleType, name): GET → TerminalDto[] for depart/arrival dropdowns. */
     private String etcCardTerminal = "/api/v2/receipt/etc-card/terminal";
 
+    /**
+     * Public-transport NODES for one vehicle type: {nodeId, nodeName, vehicleType}. The second
+     * locator system beside the terminal master - it is what carries CBUS stops and the small rail
+     * stations (NAT.../NAI...). Needs {vehicleType}.
+     */
+    private String vehicleNodes = "/api/v2/misc/public-api/nodes/{vehicleType}";
+
     /** Personal-card general-expense browser: POST {startDate,endDate,approvalStatusTypeList,pageIndex,pageSize}. */
     private String generalExpense = "/api/v3/receipt/cloud/personal-card/my/general-expense";
 

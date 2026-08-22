@@ -49,6 +49,10 @@ bizplay:
     budget-dept-corp: /api/v2/budgetdepartment/list
     # transport terminals/stations (id, vehicleType, name) for depart/arrival dropdowns
     etc-card-terminal: /api/v2/receipt/etc-card/terminal
+    # public-transport NODES per vehicle: {nodeId, nodeName, vehicleType}. The OTHER locator
+    # system - CBUS 2117 stops, KTX 347 stations, BUS 230, AIR 15 (TRAIN/SRT empty). Reference
+    # data, so the gateway caches it; far too large to hand to an LLM, hence the search helper.
+    vehicle-nodes: /api/v2/misc/public-api/nodes/{vehicleType}
     # personal-card general-expense browser (POST: startDate/endDate/approvalStatusTypeList/pageIndex/pageSize)
     general-expense: /api/v3/receipt/cloud/personal-card/my/general-expense
     # one receipt's full detail (NOT_ISSUED) / attach uploaded files to a receipt

@@ -439,6 +439,13 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getVehicleNodes(String vehicleType, String token) {
+        String kind = (vehicleType == null || vehicleType.isBlank()) ? "CBUS" : vehicleType.trim();
+        return getCached("nodes:" + kind,
+                buildUrl(endpoints.getVehicleNodes(), "vehicleType", kind), token);
+    }
+
+    @Override
     public String patchEtcReceiptDetail(long receiptId, JsonNode detail, String token) {
         if (detail == null || !detail.isObject()) {
             throw new IllegalArgumentException("Receipt detail is required.");
@@ -497,9 +504,13 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
                                           java.util.List<Long> excludeTranKindIds, String token) {
         String types = (cardTypes == null || cardTypes.isEmpty())
                 ? "CORP" : String.join("%2C", cardTypes);
+        // usedStartDate/usedEndDate, NOT startDate/endDate. The provider filters the first pair on
+        // when the expense was USED and the second on when it was PAID, and evidence belongs to a
+        // trip by its usage: their own accommodation sample is a hotel paid 08-17 for a stay on
+        // 08-14~15, which a payment-date filter drops from the trip it actually belongs to.
         StringBuilder url = new StringBuilder(
                 buildUrl(endpoints.getReceiptStream(), "receiptProductCode", properties.getReceiptProductCode()))
-                .append("?startDate=").append(startDate).append("&endDate=").append(endDate)
+                .append("?usedStartDate=").append(startDate).append("&usedEndDate=").append(endDate)
                 .append("&receiptStatusTypeList=YET%2CISSUED")
                 .append("&corpUserIds=").append(corpUserId)
                 .append("&cardTypeList=").append(types)

@@ -134,6 +134,13 @@ public interface BizplayGatewayService {
     JsonNode getEtcCardTerminals(String token);
 
     /**
+     * Public-transport nodes for one vehicle type (CBUS, KTX, BUS, AIR): an array of
+     * {@code {nodeId, nodeName, vehicleType}}. Cached - it is static reference data and CBUS alone
+     * returns over two thousand stops.
+     */
+    JsonNode getVehicleNodes(String vehicleType, String token);
+
+    /**
      * ⑧ Update a created etc receipt's ADDITIONAL detail (기타증빙 단건 수정): PATCH
      * /api/v2/receipt-etc/{receiptId} with a ReceiptEtcDto body (etcReceiptType, usedStartDate/End,
      * vehicleType, depart/arrival, …). Optional — only called when the user supplies extra info.
