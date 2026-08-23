@@ -181,6 +181,41 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             // --- Sub-agent [A]: Purpose & Segment resolution -------------------------------------
             JsonNode catalog = bizplayGatewayService.getPurposeCatalog(request.getCorpUserId(), bizplayToken);
             List<PurposeOption> options = purposeSegmentAgentService.flattenCatalog(catalog);
+
+            // The form asks these as two fields - Travel Purpose, then Trip Type - so the chat does
+            // too. A flat row of "purpose · segment" chips forced the user to read every
+            // combination at once; picking the purpose first narrows it to that purpose's own
+            // trip types, and a purpose with none skips the second question entirely.
+            java.util.regex.Matcher purposePick = PURPOSE_PICK.matcher(message);
+            if (purposePick.matches()) {
+                long purposeId = Long.parseLong(purposePick.group(1));
+                List<PurposeOption> ofPurpose = new ArrayList<>();
+                for (PurposeOption o : options) {
+                    if (o.getPurposeId() == purposeId) {
+                        ofPurpose.add(o);
+                    }
+                }
+                if (ofPurpose.size() == 1) {
+                    // No trip types on this purpose - the single option IS the answer.
+                    turnText = ofPurpose.get(0).getSendText();
+                } else if (!ofPurpose.isEmpty()) {
+                    appendTurn(session, "user", message);
+                    String ask = t(ko, "Which trip type? ", "출장 유형을 선택해 주세요. ");
+                    appendTurn(session, "assistant", ask);
+                    saveState(session, state);
+                    ConversationalAgentSession savedSeg = sessionRepo.save(session);
+                    return BizplayPlanAgentResponse.builder()
+                            .sessionId(savedSeg.getId().toString())
+                            .status(savedSeg.getStatus() == null ? null : savedSeg.getStatus().name())
+                            .intent("SEGMENT_SELECTION")
+                            .subAgents(List.of("PURPOSE_SEGMENT_AGENT"))
+                            .reply(ask)
+                            .pendingChoices(List.of(segmentChoice(ofPurpose)))
+                            .draftJson(savedSeg.getDraftJson())
+                            .build();
+                }
+            }
+
             PurposeResolutionResult res = purposeSegmentAgentService.resolve(turnText, options);
             subAgents.add("PURPOSE_SEGMENT_AGENT");
 
@@ -217,7 +252,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             } else {
                 intent = "PURPOSE_SELECTION";
                 state.withArray("staged").add(turnText);
-                pendingChoices = List.of(toPendingChoice(res.getCandidates()));
+                pendingChoices = List.of(purposeChoice(res.getCandidates(), options));
                 reply.append(t(ko,
                         "What kind of trip are you planning? Pick the one that fits below — "
                                 + "or just tell me where you're going and I'll pick for you. ",
@@ -1025,6 +1060,60 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return sb.toString();
     }
 
+    /** Chip token for step one: the Travel Purpose on its own. */
+    private static final java.util.regex.Pattern PURPOSE_PICK =
+            // The chat pastes a form-state preamble in front of every message, so the token has to
+            // be found ANYWHERE in the text — an anchored match never fired from the UI at all.
+            java.util.regex.Pattern.compile("(?i).*purpose:(\\d+).*", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * Step one: one chip per Travel Purpose. Candidates come from the resolver (it may already have
+     * narrowed things), but the segments are looked up across the WHOLE catalog so a purpose whose
+     * trip types were filtered out still leads somewhere.
+     */
+    private TripPlanAgentResponse.PendingChoice purposeChoice(List<PurposeOption> candidates,
+                                                             List<PurposeOption> all) {
+        java.util.LinkedHashMap<Long, String> byPurpose = new java.util.LinkedHashMap<>();
+        for (PurposeOption c : candidates) {
+            byPurpose.putIfAbsent(c.getPurposeId(), c.getPurposeName());
+        }
+        List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+        for (java.util.Map.Entry<Long, String> e : byPurpose.entrySet()) {
+            long id = e.getKey();
+            int segments = 0;
+            for (PurposeOption o : all) {
+                if (o.getPurposeId() == id && o.getSegmentId() != null) {
+                    segments++;
+                }
+            }
+            java.util.Map<String, String> meta = new java.util.LinkedHashMap<>();
+            meta.put("segments", String.valueOf(segments));
+            options.add(TripPlanAgentResponse.Option.builder()
+                    .label(e.getValue())
+                    .sendText("purpose:" + id)
+                    .meta(meta)
+                    .build());
+        }
+        return TripPlanAgentResponse.PendingChoice.builder()
+                .kind("PURPOSE").name("travel purpose").options(options).build();
+    }
+
+    /** Step two: the trip types of the purpose just picked. */
+    private TripPlanAgentResponse.PendingChoice segmentChoice(List<PurposeOption> ofPurpose) {
+        List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+        for (PurposeOption c : ofPurpose) {
+            String label = c.getSegmentName() == null || c.getSegmentName().isBlank()
+                    ? c.getPurposeName() : c.getSegmentName();
+            options.add(TripPlanAgentResponse.Option.builder()
+                    .label(label)
+                    .sendText(c.getSendText())
+                    .build());
+        }
+        return TripPlanAgentResponse.PendingChoice.builder()
+                .kind("SEGMENT").name("trip type").options(options).build();
+    }
+
+    /** RETIRED (kept for reference, do not delete): the flat "purpose · segment" chip row. */
     private TripPlanAgentResponse.PendingChoice toPendingChoice(List<PurposeOption> candidates) {
         List<TripPlanAgentResponse.Option> options = new ArrayList<>();
         for (PurposeOption c : candidates) {

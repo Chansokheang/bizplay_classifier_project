@@ -56,8 +56,6 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * approved — BizPlay will not accept it as a settlement anchor, so the agent shows those
      * plans only to explain WHY they cannot be settled yet.
      */
-    /** 기타증빙 — the "other evidence" TranKind, excluded from every receipt list the provider builds. */
-    private static final long OTHER_EVIDENCE_TRANKIND_ID = 11717L;
     private static final String STATUS_APPROVED = "APPROVED";
     private static final String STATUS_DRAFTED = "DRAFTED";
     /** The plan-search window used when the user names no period. */
@@ -1353,8 +1351,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             ObjectNode state, long corpUserId, String token,
             List<String> subAgents, StringBuilder reply, boolean ko) {
         LocalDate today = LocalDate.now();
+        // A week EITHER SIDE of today, not a week behind it. Approval happens before the trip, and
+        // people settle a trip that is under way or about to be - a backward-only window hid every
+        // upcoming trip, so a plan approved this morning for tomorrow never appeared on opening.
         String start = today.minusDays(OPENING_SEARCH_DAYS).toString();
-        String end = today.toString();
+        String end = today.plusDays(OPENING_SEARCH_DAYS).toString();
         JsonNode list = bizplayGatewayService.getPlanList(corpUserId, start, end, token);
         subAgents.add("PLAN_SEARCH_TOOL");
         ArrayNode approved = planCandidates(list, start, end, CHIP_LIMIT, STATUS_APPROVED);
@@ -1373,7 +1374,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 widened = true;
             } else {
                 start = today.minusDays(OPENING_SEARCH_DAYS).toString();
-                end = today.toString();
+                end = today.plusDays(OPENING_SEARCH_DAYS).toString();
             }
         }
         if (approved.isEmpty()) {
@@ -1406,8 +1407,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         if (widened) {
             reply.append(t(ko,
-                    "(Nothing in the last " + OPENING_SEARCH_DAYS + " days, so I looked wider.) ",
-                    "(\uCD5C\uADFC " + OPENING_SEARCH_DAYS + "\uC77C\uC5D0\uB294 \uC5C6\uC5B4\uC11C \uAE30\uAC04\uC744 \uB113\uD600 \uC870\uD68C\uD588\uC5B4\uC694.) "));
+                    "(Nothing within " + OPENING_SEARCH_DAYS + " days of today, so I looked wider.) ",
+                    "(\uC624\uB298 \uAE30\uC900 " + OPENING_SEARCH_DAYS + "\uC77C \uC774\uB0B4\uC5D0\uB294 \uC5C6\uC5B4\uC11C \uAE30\uAC04\uC744 \uB113\uD600 \uC870\uD68C\uD588\uC5B4\uC694.) "));
         }
         return planChipsFromState(state, ko);
     }
@@ -1766,10 +1767,17 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     "Which expense type would you like to add? ",
                     "어떤 경비 항목을 추가할까요? "));
         } else {
-            state.put("stage", "AWAIT_CARD_TYPES");
+            // The form lists no expense types, so there is no kind a receipt could be filed under —
+            // and one registered without a kind is created NOT ISSUED and can never be attached.
+            // Name the paper so an admin can fix it rather than leaving a dead end.
+            state.put("stage", "AWAIT_PLAN_PICK");
             reply.append(head).append(t(ko,
-                    "Which card types should I search for evidence? ",
-                    "증빙을 조회할 카드 종류를 알려주세요. "));
+                    "This trip's form lists no expense types, so I can't register or attach evidence "
+                            + "against it — the paper needs its 경비 항목 set up in BizPlay first. "
+                            + "Pick another trip if you have one. ",
+                    "이 출장의 양식에 경비 항목이 지정되어 있지 않아 증빙을 등록하거나 첨부할 수 없어요 — "
+                            + "BizPlay에서 해당 양식에 경비 항목을 먼저 설정해 주세요. "
+                            + "다른 출장이 있다면 선택해 주세요. "));
         }
     }
 
@@ -1945,7 +1953,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 Slot next = stillMissing.get(0);
                 return simpleTurn(session, state, message, formFollowUpAgentService.composeFollowUp(
                         t(ko, "receipt", "영수증"), List.of(t(ko, next.en(), next.ko())), ko),
-                        "EXPENSE_SLOT_PENDING", null);
+                        "EXPENSE_SLOT_PENDING", expenseAbandonChips(ko));
             }
             BizplayPlanAgentResponse ask = askAmbiguousStop(session, state, pending, message, bizplayToken, ko);
             return ask != null ? ask
@@ -1966,10 +1974,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             if (kindTurn != null) {
                 return kindTurn;
             }
+        } else {
+            // The kind is already set — from a chip, or from the previous expense — but the user may
+            // be describing a DIFFERENT one now ("숙박비로 Osaka Bay Hotel…" while 교통비 was picked).
+            // Checked on EVERY expense turn, not just mid-build: the kind is named in the opening
+            // sentence, before anything is pending. Without it the lodging expense inherited the
+            // transport slots and the flow asked for a vehicle that was never going to come.
+            switchExpenseKindIfNamed(state, pending, message, bizplayToken, ko);
         }
 
         List<Slot> slots = expenseSlots(state);
         int filled = fillExpenseSlots(pending, message, slots, ko);
+        filled += backfillVehicleType(pending, message);
         if (!building && filled == 0) {
             state.remove("pendingExpense");
             return null;   // nothing expense-like in this message — not our turn
@@ -1991,7 +2007,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             Slot next = missing.get(0);
             String ask = formFollowUpAgentService.composeFollowUp(
                     t(ko, "receipt", "영수증"), List.of(t(ko, next.en(), next.ko())), ko);
-            return simpleTurn(session, state, message, ask, "EXPENSE_SLOT_PENDING", null);
+            // Always offer the exit. A question the user cannot answer - the wrong expense kind, or
+            // a receipt they have changed their mind about - otherwise repeats forever, and typing
+            // "done" or "skip" at it does nothing because neither is a slot value.
+            return simpleTurn(session, state, message, ask, "EXPENSE_SLOT_PENDING", expenseAbandonChips(ko));
         }
         // A stop that matches several places in the catalog is not something to guess at: the
         // traveller knows which one they used, and a wrong node is a wrong receipt.
@@ -2141,6 +2160,62 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         return simpleTurn(session, state, message, ask, "TRANKIND_PENDING", tranKindChips(state, ko));
     }
 
+    /**
+     * Naming another expense type mid-build switches to it, and drops the answers that belonged to
+     * the old one — a hotel keeps no departure station, a taxi keeps no check-out date. Silent when
+     * the message names nothing recognisable, so ordinary answers never disturb the chosen kind.
+     */
+    private void switchExpenseKindIfNamed(ObjectNode state, ObjectNode pending, String message,
+                                          String token, boolean ko) {
+        ArrayNode kinds = (ArrayNode) slots(state).withArray("planTranKinds");
+        if (kinds.isEmpty() || message == null || message.isBlank()) {
+            return;
+        }
+        List<String> names = new ArrayList<>();
+        for (JsonNode k : kinds) {
+            String n = k.path("name").asText("");
+            if (!n.isBlank()) {
+                names.add(n);
+            }
+        }
+        String guess;
+        try {
+            guess = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "expenseKind", "the expense category the user names in THIS message — EXACTLY one "
+                            + "of: " + String.join(", ", names) + ". Omit the field unless they name "
+                            + "one explicitly"), ko).path("expenseKind").asText("").trim();
+        } catch (Exception e) {
+            return;
+        }
+        if (guess.isEmpty()) {
+            return;
+        }
+        for (JsonNode k : kinds) {
+            if (guess.equalsIgnoreCase(k.path("name").asText(""))
+                    && k.path("id").asLong() != slots(state).path("evidenceTranKindId").asLong()) {
+                selectTranKind(state, k.path("id").asLong());
+                for (String stale : new String[]{"vehicleType", "depart", "arrival", "seatGrade",
+                        "usedStartDate", "usedEndDate"}) {
+                    pending.remove(stale);
+                }
+                log.info("Expense kind switched mid-build to {} — kind-specific answers cleared.",
+                        k.path("name").asText(""));
+                return;
+            }
+        }
+    }
+
+    /** The way out of a half-built receipt, on every question that could otherwise repeat forever. */
+    private List<TripPlanAgentResponse.PendingChoice> expenseAbandonChips(boolean ko) {
+        return List.of(TripPlanAgentResponse.PendingChoice.builder()
+                .kind("EXPENSE_ABANDON")
+                .name(t(ko, "or", "또는"))
+                .options(List.of(TripPlanAgentResponse.Option.builder()
+                        .label(t(ko, "Cancel this receipt", "이 영수증 취소"))
+                        .sendText("expense-cancel").build()))
+                .build());
+    }
+
     /** Persist the turn and answer with reply + chips — the shape every branch above returns. */
     private BizplayPlanAgentResponse simpleTurn(ConversationalAgentSession session, ObjectNode state,
                                                 String message, String reply, String intent,
@@ -2258,6 +2333,52 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /** Required slots still empty, in ask order. */
+    /**
+     * The vehicle words, in the order they must be tested: the longer compound wins, or
+     * 시외버스 would be read as 버스. These are the provider's own enum values, not
+     * conversational phrasing - matching them is normalising data, not guessing intent.
+     */
+    private static final java.util.List<String[]> VEHICLE_WORDS = java.util.List.of(
+            new String[]{"공항리무진", "AIRPORT_LIMOUSINE"},
+            new String[]{"리무진", "AIRPORT_LIMOUSINE"},
+            new String[]{"limousine", "AIRPORT_LIMOUSINE"},
+            new String[]{"시외버스", "CBUS"},
+            new String[]{"고속버스", "BUS"},
+            new String[]{"ktx", "KTX"},
+            new String[]{"srt", "SRT"},
+            new String[]{"렌터카", "RENTAL"},
+            new String[]{"rental", "RENTAL"},
+            new String[]{"택시", "TAXI"},
+            new String[]{"taxi", "TAXI"},
+            new String[]{"기차", "TRAIN"},
+            new String[]{"열차", "TRAIN"},
+            new String[]{"train", "TRAIN"},
+            new String[]{"비행기", "AIR"},
+            new String[]{"항공", "AIR"},
+            new String[]{"flight", "AIR"},
+            new String[]{"버스", "BUS"});
+
+    /**
+     * Backstop for the vehicle when the extractor drops it. A thousand-separator in the amount is
+     * enough to do that - "KTX 43,500원 서울역에서 대전역까지" came back with no vehicle
+     * three times out of three, while the same sentence written 43500원 parsed fine. The word is
+     * sitting in the message either way, so re-asking for it reads as not listening.
+     */
+    private int backfillVehicleType(ObjectNode pending, String message) {
+        if (message == null || message.isBlank() || !pending.path("vehicleType").asText("").isBlank()) {
+            return 0;
+        }
+        String haystack = message.toLowerCase(java.util.Locale.ROOT);
+        for (String[] pair : VEHICLE_WORDS) {
+            if (haystack.contains(pair[0])) {
+                pending.put("vehicleType", pair[1]);
+                log.info("Vehicle {} recovered from the message text after the extractor missed it.", pair[1]);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
     private List<Slot> missingExpenseSlots(ObjectNode pending, List<Slot> slots) {
         List<Slot> missing = new ArrayList<>();
         for (Slot s : slots) {
@@ -2285,7 +2406,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 continue;
             }
             if ("approvalAmount".equals(s.key())) {
-                v = "₩" + String.format("%,d", pending.path(s.key()).asLong());
+                // Show the currency the user actually named. Stamping ₩ on a USD amount made a
+                // 45-dollar taxi read as 45 won in the very card meant for checking it.
+                String cur = pending.path("currencyCode").asText("KRW");
+                String amount = String.format("%,d", pending.path(s.key()).asLong());
+                v = "KRW".equalsIgnoreCase(cur) || cur.isBlank() ? "₩" + amount : amount + " " + cur;
             }
             sb.append("· ").append(t(ko, s.en(), s.ko())).append(": ").append(v).append('\n');
         }
@@ -2401,16 +2526,20 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         slots.put("evidenceEnd", end);
         ArrayNode ct = slots.putArray("cardTypes");
         cardTypes.forEach(ct::add);
-        // Scope to the expense type the user picked. The provider serves one list per TranKind —
-        // lodging, transport, other evidence — and a receipt belongs to exactly one of them: it can
-        // only be shown, and only be attached, under its own kind. Every one of their three sample
-        // calls also excludes 11717, including the "other evidence" call that selects it.
+        // Scope to the expense type the user picked: a receipt belongs to exactly one TranKind and
+        // may only be listed, and only be attached, under that kind. WHICH kinds exist is decided
+        // by the plan's own paper — two here (교통비/숙박비), none there, more elsewhere — so the
+        // filter is always the picked id, never a fixed catalogue.
+        //
+        // No excludeTranKindIds: the provider's samples all carry excludeTranKindIds=11717, but
+        // 11717 (기타증빙) is simply one kind on THEIR form and appears on none of these plans.
+        // Measured against this corp's data it changes nothing (58 rows either way), so hardcoding
+        // another form's id would be superstition, not filtering.
         Long pickedKind = slots.hasNonNull("evidenceTranKindId")
                 ? slots.path("evidenceTranKindId").asLong() : null;
         JsonNode receipts = bizplayGatewayService.getUnattachedReceipts(
                 corpUserId, start, end, cardTypes,
-                pickedKind == null ? null : List.of(pickedKind),
-                List.of(OTHER_EVIDENCE_TRANKIND_ID), token);
+                pickedKind == null ? null : List.of(pickedKind), null, token);
         subAgents.add("RECEIPT_LOOKUP_TOOL");
         ArrayNode candidates = objectMapper.createArrayNode();
         if (receipts != null && receipts.isArray()) {
@@ -3264,9 +3393,19 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /** After import: TranKind chips when the plan carries them, else jump to card-type selection. */
+    /**
+     * What to offer once a plan is imported: its expense types. A paper that pins none used to fall
+     * through to the card-type question, which let a receipt be registered with no kind — created
+     * NOT ISSUED and impossible to attach. There is nothing safe to offer in that case, so the
+     * caller says why instead (see {@link #formPinsNoKinds}).
+     */
     private List<TripPlanAgentResponse.PendingChoice> afterImportChips(ObjectNode state, boolean ko) {
-        return slots(state).withArray("planTranKinds").isEmpty()
-                ? cardTypeChips(ko) : tranKindChips(state, ko);
+        return slots(state).withArray("planTranKinds").isEmpty() ? null : tranKindChips(state, ko);
+    }
+
+    /** True when the imported plan's form lists no expense types — a form misconfiguration. */
+    private boolean formPinsNoKinds(ObjectNode state) {
+        return slots(state).withArray("planTranKinds").isEmpty();
     }
 
     /** One chip per allowed TranKind (sendText = trankind:{id}); null when the plan has none. */
@@ -3605,36 +3744,19 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 log.warn("TranKind master lookup failed: {}", e.getMessage());
             }
         }
+        // RETIRED (kept for reference, do not delete): a fallback that loaded the corp's whole
+        // TranKind master whenever a paper pinned none, so the flow still had something to offer.
+        // It filled the gap but broke the rule that the FORM decides which kinds a trip may claim -
+        // it offered kinds like 취소수수료 or 테스트 숙박비 on plans whose paper never sanctioned them.
+        // A paper that pins nothing is a configuration error and now reads as one; the settlement
+        // says so and stops rather than inventing a catalogue. (Reference: paper 24354 pins its
+        // kinds on the 사전출장(노출) item; paper 27803 has no such item.)
+        //     if (byId.isEmpty()) { for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) … }
         if (byId.isEmpty()) {
-            // Some papers pin no TranKinds at all (출장계획서tes, for one). Without a kind the flow
-            // never asks which expense type this is, and an etc-card receipt POSTed with a null
-            // tranKindId is created NOT ISSUED — which makes it impossible to attach to any
-            // settlement. Fall back to the corp's whole TranKind master so the question still
-            // gets asked and every registered receipt carries a kind.
-            try {
-                for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
-                    // The master holds 72 rows, most of them untyped test entries. Only the kinds
-                    // an etc-card receipt can carry are worth offering: flagged for etc-card use,
-                    // active, and typed (the type is what drives the detail fields).
-                    if (!tk.path("activated").asBoolean(true) || !tk.hasNonNull("id")
-                            || !tk.path("etcCardUsed").asBoolean(false) || !tk.hasNonNull("type")) {
-                        continue;
-                    }
-                    ObjectNode o = objectMapper.createObjectNode();
-                    o.put("id", tk.path("id").asLong());
-                    o.put("name", tk.path("name").asText(""));
-                    if (tk.hasNonNull("type")) {
-                        o.put("type", tk.path("type").asText());
-                    } else {
-                        o.putNull("type");
-                    }
-                    byId.put(tk.path("id").asLong(), o);
-                }
-                log.info("Plan {} pins no TranKinds — offering the corp master instead ({} kinds).",
-                        planDetail.path("docNo").asText(""), byId.size());
-            } catch (RuntimeException e) {
-                log.warn("TranKind master fallback failed: {}", e.getMessage());
-            }
+            log.warn("Paper {} on plan {} pins no TranKinds - receipt registration cannot proceed "
+                            + "until the form lists its expense types.",
+                    planDetail.path("paper").path("id").asLong(),
+                    planDetail.path("docNo").asText(""));
         }
         ArrayNode arr = slots(state).putArray("planTranKinds");
         byId.values().forEach(arr::add);
