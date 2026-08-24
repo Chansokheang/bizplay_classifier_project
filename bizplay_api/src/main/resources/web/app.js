@@ -3204,7 +3204,7 @@ async function restoreSettleSession(sessionId) {
     const receipts = (draft && draft[0] && draft[0].etcReceiptSaveRequests) || [];
     if (!receipts.length) {                          // nothing worth restoring → fresh start
       localStorage.removeItem("bizplay.settle.session");
-      loadSettlementStarter();
+      openSettlementOnPlans();                       // the plan list, NOT the retired starter hero
       return;
     }
     agent.sessionId = data.sessionId || sessionId;
@@ -3216,13 +3216,15 @@ async function restoreSettleSession(sessionId) {
     manualExpenseFollowUp();                          // continue (add another) or finish
   } catch {
     localStorage.removeItem("bizplay.settle.session");
-    loadSettlementStarter();
+    openSettlementOnPlans();                         // same: the answer, not a greeting
   }
 }
 
-/* The settlement opener, per corp: GET /bizplay/agents/settlement/starter. Rendered as
- * the chat hero; the agent then speaks on the first real message. If the endpoint is
- * unreachable we keep the previous behavior and auto-send the opener turn instead. */
+/* RETIRED (kept for reference, do not delete): the per-corp settlement starter hero -
+ * GET /bizplay/agents/settlement/starter, rendered as a greeting plus canned example
+ * prompts. Every caller now opens on the plan list instead (openSettlementOnPlans), which
+ * is what the user asked for: the answer on screen, not a menu to read. The endpoint and
+ * its per-corp prompts are untouched server-side and still editable in Settings. */
 let settleStarterMessage = null;         // greeting (null until fetched for THIS corp)
 let settleStarterSuggestions = null;     // clickable starters
 async function loadSettlementStarter() {

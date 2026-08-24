@@ -1984,8 +1984,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
 
         List<Slot> slots = expenseSlots(state);
+        // What the previous turn asked for: the ask is always the FIRST still-missing slot, so
+        // recomputing it here - before this message is merged - names the question on screen.
+        List<Slot> asked = building ? missingExpenseSlots(pending, slots) : List.of();
+        Slot answering = asked.isEmpty() ? null : asked.get(0);
         int filled = fillExpenseSlots(pending, message, slots, ko);
         filled += backfillVehicleType(pending, message);
+        filled += backfillIsoDates(pending, message, slots);
+        filled -= dropInventedToday(pending, message);
+        filled += fillAskedSlot(pending, message, answering, ko);
+        filled += defaultLodgingPaymentDate(pending);
         if (!building && filled == 0) {
             state.remove("pendingExpense");
             return null;   // nothing expense-like in this message — not our turn
@@ -2377,6 +2385,140 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
         }
         return 0;
+    }
+
+    /**
+     * Words and shapes that mean "this message mentions a date". Deliberately generous - the only
+     * job is to tell "택시비 18000원" (no date at all) apart from anything that does name one.
+     */
+    private static final java.util.regex.Pattern DATE_MENTIONED = java.util.regex.Pattern.compile(
+            "(?iu)(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[./-]\\d{1,2}|\\d{1,2}\\s*\uc6d4|\\d{1,2}\\s*\uc77c"
+            + "|\uc624\ub298|\uc5b4\uc81c|\ub0b4\uc77c|\ubaa8\ub808|\uadf8\uc81c|\uc9c0\ub09c|\uc774\ubc88|\uc694\uc77c"
+            + "|today|yesterday|tomorrow|last|this|next"
+            + "|mon|tue|wed|thu|fri|sat|sun"
+            + "|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)");
+
+    /**
+     * The extractor is told what today's date is, so that when a message names no date at all it
+     * tends to answer with today rather than nothing. "택시비 18000원" came back stamped
+     * 2026-08-24 on a trip that ran 08-27~28 - evidence dated outside the trip it belongs to, filed
+     * without anyone being asked. Today is only dropped when the message mentions no date
+     * whatsoever, so a real "오늘 택시비" still means today.
+     *
+     * The payment date legitimately falls outside the trip window (the provider's own sample pays
+     * on 08-17 for a stay on 08-14~15), so this asks rather than clamping to the trip period.
+     */
+    private int dropInventedToday(ObjectNode pending, String message) {
+        String date = pending.path("approvalDate").asText("");
+        if (date.isBlank() || !date.equals(LocalDate.now().toString())) {
+            return 0;
+        }
+        if (message != null && DATE_MENTIONED.matcher(message).find()) {
+            return 0;   // they said something date-like - today may well be what they meant
+        }
+        pending.remove("approvalDate");
+        log.info("Dropped an invented approvalDate of today - the message named no date, so the "
+                + "flow will ask instead of stamping the receipt with the wrong day.");
+        return 1;
+    }
+
+    /**
+     * Second, narrow pass for the one slot the user was actually asked about. The broad pass offers
+     * the model every slot at once, so an answer to "what was the date of the receipt?" gets mapped
+     * to whichever date field fits best - on a lodging receipt that is check-in/check-out, already
+     * filled, leaving approvalDate empty and the same question on screen again. Re-sending the
+     * whole sentence does not help, because it maps the same way every time.
+     *
+     * Only runs when the broad pass left the asked slot empty, so a message that answered properly
+     * is never re-interpreted.
+     */
+    private int fillAskedSlot(ObjectNode pending, String message, Slot answering, boolean ko) {
+        if (answering == null || message == null || message.isBlank()) {
+            return 0;
+        }
+        JsonNode have = pending.path(answering.key());
+        boolean stillEmpty = have.isMissingNode() || have.isNull() || have.asText("").isBlank()
+                || ("approvalAmount".equals(answering.key()) && have.asDouble(0) <= 0);
+        if (!stillEmpty) {
+            return 0;
+        }
+        try {
+            JsonNode got = slotFillerAgentService.extract(message,
+                    java.util.Map.of(answering.key(), answering.meaning()), ko);
+            JsonNode v = got.path(answering.key());
+            if (!v.isMissingNode() && !v.isNull() && !v.asText("").isBlank()) {
+                pending.set(answering.key(), v.deepCopy());
+                log.info("Slot {} filled by the focused pass - the broad extraction had mapped the "
+                        + "answer elsewhere.", answering.key());
+                return 1;
+            }
+        } catch (Exception e) {
+            log.warn("Focused slot extraction failed for {}: {}", answering.key(), e.getMessage());
+        }
+        return 0;
+    }
+
+    /**
+     * A manually entered hotel receipt is paid for the stay it describes, so the check-in date is
+     * the payment date unless the traveller says otherwise. Asking separately produced a question
+     * with no good answer - "8월 27일부터 29일까지" is the stay, and every rephrasing of it
+     * mapped back to the stay. (Card receipts are different: their payment date comes from the
+     * transaction, which really can sit outside the stay - the provider's own sample pays 08-17
+     * for 08-14~15. That path never reaches here.)
+     */
+    private int defaultLodgingPaymentDate(ObjectNode pending) {
+        String stay = pending.path("usedStartDate").asText("");
+        if (stay.isBlank() || !pending.path("approvalDate").asText("").isBlank()) {
+            return 0;
+        }
+        pending.put("approvalDate", stay);
+        log.info("Lodging payment date defaulted to the check-in date {}.", stay);
+        return 1;
+    }
+
+    /** The date slots, in the order they are asked - which is the order a bare answer fills them. */
+    private static final List<String> DATE_SLOT_KEYS =
+            List.of("approvalDate", "usedStartDate", "usedEndDate");
+
+    /**
+     * Backstop for a date the extractor dropped, in the same spirit as
+     * {@link #backfillVehicleType}. Answering "영수증의 일자는 언제인가요?" with a bare
+     * "2026-08-27" came back empty every time - with no words around it the model cannot tell
+     * which of approvalDate / usedStartDate / usedEndDate is meant, so it emits none of them and
+     * the same question is asked again, forever. "8월 27일" parses fine, so the loop only hit
+     * users who typed the ISO form the slot itself asks for.
+     *
+     * Dates found are assigned to the still-empty date slots in ask order, so one date answers the
+     * question on screen and "2026-08-27 2026-08-28" fills check-in and check-out together.
+     */
+    private int backfillIsoDates(ObjectNode pending, String message, List<Slot> slots) {
+        if (message == null || message.isBlank()) {
+            return 0;
+        }
+        Matcher m = ISO_DATE.matcher(message);   // the class's existing yyyy-MM-dd pattern
+        List<String> found = new ArrayList<>();
+        while (m.find()) {
+            found.add(m.group(1));
+        }
+        if (found.isEmpty()) {
+            return 0;
+        }
+        List<String> open = new ArrayList<>();
+        for (String key : DATE_SLOT_KEYS) {
+            boolean inPlay = slots.stream().anyMatch(sl -> sl.key().equals(key));
+            JsonNode v = pending.path(key);
+            if (inPlay && (v.isMissingNode() || v.isNull() || v.asText("").isBlank())) {
+                open.add(key);
+            }
+        }
+        int filled = 0;
+        for (int i = 0; i < open.size() && i < found.size(); i++) {
+            pending.put(open.get(i), found.get(i));
+            log.info("Date {} recovered from the message text into {} after the extractor missed it.",
+                    found.get(i), open.get(i));
+            filled++;
+        }
+        return filled;
     }
 
     private List<Slot> missingExpenseSlots(ObjectNode pending, List<Slot> slots) {
@@ -3303,7 +3445,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             return;
         }
         JsonNode doc = documents.get(0);
-        int n = doc.path("bstrReceipts").size();
+        // BOTH evidence arrays, the same pair recomputeTotals() sums. Counting only
+        // bstrReceipts reported "0 receipt(s), total ₩627000" on a settlement whose three
+        // lines were all manually registered - card receipts land in bstrReceipts, manual
+        // ones in etcReceiptSaveRequests, and a settlement can be made of either or both.
+        int n = doc.path("bstrReceipts").size() + doc.path("etcReceiptSaveRequests").size();
         reply.append(t(ko,
                 "Settlement draft for \"" + doc.path("title").asText("") + "\": " + n
                         + " receipt(s), total ₩" + doc.path("totalBstrAmount").asText("0")
