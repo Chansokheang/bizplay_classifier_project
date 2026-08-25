@@ -50,6 +50,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static final Pattern RECEIPTS_DONE = Pattern.compile("(?i).*(receipts-done|첨부 ?완료|evidence done).*");
     /** Receipts shown as chips per page — the rest stay listed in the reply text. */
     private static final int CHIP_LIMIT = 12;
+    /** How many rows to read before filtering. Big enough that the window, not the cap,
+     *  decides what is considered - the cap only decides what is DISPLAYED. */
+    private static final int SCAN_LIMIT = 500;
     /**
      * The two plan states this flow cares about (BizPlay's approvalStatusType).
      * APPROVED = an approver signed it, so a settlement may ride it. DRAFTED = filed but not yet
@@ -61,6 +64,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     /** The plan-search window used when the user names no period. */
     private static final int DEFAULT_SEARCH_MONTHS = 1;
     /** The settlement chat OPENS on this window: the trips just finished are the ones to settle. */
+    /** RETIRED (kept for reference, do not delete): the opening window was a week either side
+     *  of today. It hid approved-but-unsettled trips older than that - the one thing the
+     *  settlement opener exists to surface - so the opener now scans WIDE_SEARCH_MONTHS. */
+    @SuppressWarnings("unused")
     private static final int OPENING_SEARCH_DAYS = 7;
     /** How far the search widens when the default window turns up no approved plan. */
     private static final int WIDE_SEARCH_MONTHS = 6;
@@ -506,6 +513,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         intent = "PLAN_SEARCH";
                         chips = searchPlans(state, corpUserId, period[0], period[1],
                                 bizplayToken, subAgents, reply, ko);
+                        if (chips == null) {
+                            intent = "AWAIT_PLAN_PERIOD";   // nothing found -> offer the calendar
+                        }
                     } else {
                         // Nothing fetched yet (the user opened with a trip name, not a period) —
                         // search by that name over the recent months before trying to pick.
@@ -665,6 +675,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     intent = "PLAN_SEARCH";
                     chips = searchPlans(state, corpUserId, period[0], period[1],
                             bizplayToken, subAgents, reply, ko);
+                    if (chips == null) {
+                        intent = "AWAIT_PLAN_PERIOD";   // nothing found -> offer the calendar
+                    }
                 } else if (!hintWords(nameHint).isEmpty()) {
                     // Named a trip but no period ("settle the KSHRD trip") — search by name over
                     // the recent months and answer with a preview / a table / a way forward.
@@ -1351,64 +1364,48 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             ObjectNode state, long corpUserId, String token,
             List<String> subAgents, StringBuilder reply, boolean ko) {
         LocalDate today = LocalDate.now();
-        // A week EITHER SIDE of today, not a week behind it. Approval happens before the trip, and
-        // people settle a trip that is under way or about to be - a backward-only window hid every
-        // upcoming trip, so a plan approved this morning for tomorrow never appeared on opening.
-        String start = today.minusDays(OPENING_SEARCH_DAYS).toString();
-        String end = today.plusDays(OPENING_SEARCH_DAYS).toString();
+        // Six months either side, not a week. An approved plan nobody has settled is the one thing
+        // this screen must never hide, and a narrow opening window did exactly that - a trip on
+        // 08-10 simply did not appear, with nothing on screen to say it existed. The window reaches
+        // forward as well as back because approval happens before the travel does.
+        String start = today.minusMonths(WIDE_SEARCH_MONTHS).toString();
+        String end = today.plusMonths(WIDE_SEARCH_MONTHS).toString();
         JsonNode list = bizplayGatewayService.getPlanList(corpUserId, start, end, token);
         subAgents.add("PLAN_SEARCH_TOOL");
-        ArrayNode approved = planCandidates(list, start, end, CHIP_LIMIT, STATUS_APPROVED);
-        boolean widened = false;
-        // A week is a narrow window on purpose, and what the user came for is a plan they can
-        // still settle. So widen when the week holds nothing — and equally when everything in it
-        // has already been settled, since offering only spent plans answers the wrong question.
-        if (approved.isEmpty() || unsettledOf(approved).isEmpty()) {
-            start = today.minusMonths(WIDE_SEARCH_MONTHS).toString();
-            end = today.plusMonths(WIDE_SEARCH_MONTHS).toString();
-            list = bizplayGatewayService.getPlanList(corpUserId, start, end, token);
-            ArrayNode wider = planCandidates(list, start, end, CHIP_LIMIT, STATUS_APPROVED);
-            // Only take the wider answer if it actually improves on the week's.
-            if (!unsettledOf(wider).isEmpty() || approved.isEmpty()) {
-                approved = wider;
-                widened = true;
-            } else {
-                start = today.minusDays(OPENING_SEARCH_DAYS).toString();
-                end = today.plusDays(OPENING_SEARCH_DAYS).toString();
-            }
-        }
+        // Scan the whole window, THEN trim. Capping at CHIP_LIMIT before the unsettled filter let
+        // already-settled plans spend the budget and push the unsettled ones off the end, which is
+        // the opposite of what this screen is for.
+        ArrayNode approved = planCandidates(list, start, end, SCAN_LIMIT, STATUS_APPROVED);
         if (approved.isEmpty()) {
-            // No approved plan anywhere near today. The useful answer is what IS there:
-            // the requests still sitting with an approver.
+            // No approved plan at all. The useful answer is what IS there: the requests still
+            // sitting with an approver.
             return pendingPlans(state, corpUserId, token, subAgents, reply, ko);
         }
-        // What the user actually came for: approved AND not yet settled. Plans that already
-        // carry a settlement are legitimate targets too (companions, additional reports), so
-        // they are the fallback rather than hidden outright.
+        // What the user came for: approved AND not yet settled. Plans that already carry a
+        // settlement are legitimate targets too (companions, additional reports), so they are the
+        // fallback rather than hidden outright.
         ArrayNode unsettled = unsettledOf(approved);
         boolean onlyUnsettled = !unsettled.isEmpty();
-        ArrayNode shown = onlyUnsettled ? unsettled : approved;
+        ArrayNode all = onlyUnsettled ? unsettled : approved;
+        int total = all.size();
+        ArrayNode shown = trimTo(all, CHIP_LIMIT);
         state.set("planCandidates", shown);
         state.put("stage", "AWAIT_PLAN_PICK");
 
-        String period = start + " ~ " + end;
         if (onlyUnsettled) {
             reply.append(t(ko,
-                    shown.size() + " approved trip plan(s) with no settlement yet ("
-                            + period + "). Pick one to settle it. ",
-                    period + " \uAE30\uAC04\uC5D0 \uC2B9\uC778\uB410\uC9C0\uB9CC \uC544\uC9C1 \uC815\uC0B0\uD558\uC9C0 \uC54A\uC740 \uCD9C\uC7A5 \uACC4\uD68D\uC774 "
-                            + shown.size() + "\uAC74 \uC788\uC5B4\uC694. \uC815\uC0B0\uD560 \uCD9C\uC7A5\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694. "));
+                    total + " approved trip plan(s) with no settlement yet. Pick one to settle it. ",
+                    "승인됐지만 아직 정산하지 않은 출장 계획이 " + total + "건 있어요. 정산할 출장을 선택해 주세요. "));
         } else {
             reply.append(t(ko,
-                    "Every approved plan in " + period + " already carries a settlement. You can "
-                            + "still file another one on any of them \u2014 pick the trip to settle. ",
-                    period + " \uAE30\uAC04\uC758 \uC2B9\uC778\uB41C \uACC4\uD68D\uC740 \uBAA8\uB450 \uC774\uBBF8 \uC815\uC0B0\uC11C\uAC00 \uC788\uC5B4\uC694. "
-                            + "\uCD94\uAC00 \uC791\uC131\uB3C4 \uAC00\uB2A5\uD558\uB2C8 \uC815\uC0B0\uD560 \uCD9C\uC7A5\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694. "));
+                    "Every approved plan already carries a settlement. You can still file another "
+                            + "one on any of them — pick the trip to settle. ",
+                    "승인된 계획은 모두 이미 정산서가 있어요. 추가 작성도 가능하니 정산할 출장을 선택해 주세요. "));
         }
-        if (widened) {
+        if (total > shown.size()) {
             reply.append(t(ko,
-                    "(Nothing within " + OPENING_SEARCH_DAYS + " days of today, so I looked wider.) ",
-                    "(\uC624\uB298 \uAE30\uC900 " + OPENING_SEARCH_DAYS + "\uC77C \uC774\uB0B4\uC5D0\uB294 \uC5C6\uC5B4\uC11C \uAE30\uAC04\uC744 \uB113\uD600 \uC870\uD68C\uD588\uC5B4\uC694.) "));
+                    "Showing the " + shown.size() + " most recent — use the calendar for an older period. ",
+                    "최근 " + shown.size() + "건만 표시했어요 — 더 이전 기간은 아래 달력에서 선택해 주세요. "));
         }
         return planChipsFromState(state, ko);
     }
@@ -2040,8 +2037,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                                                       ObjectNode state, ObjectNode pending,
                                                       String message, String token, boolean ko) {
         String vehicle = pending.path("vehicleType").asText("");
-        if (vehicle.isBlank()) {
-            return null;
+        if (vehicle.isBlank() || LOCATOR_FREE_VEHICLES.contains(vehicle)) {
+            return null;   // no stop catalogue to be ambiguous about
         }
         JsonNode nodes = vehicleNodes(vehicle, token);
         if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
@@ -2250,7 +2247,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static final List<Slot> EXPENSE_SLOTS = List.of(
             new Slot("mestName", "merchant", "가맹점",
                     "merchant / store / carrier name the money was paid to (e.g. \"KTX\", \"서울역 카페\")", true),
-            new Slot("approvalDate", "date", "일자",
+            new Slot("approvalDate", "receipt date", "일자",
                     "date of the expense, ISO yyyy-MM-dd", true),
             new Slot("approvalAmount", "amount", "금액",
                     "total amount paid, digits only, no currency symbol or separators", true),
@@ -2264,19 +2261,21 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     /** Transport (교통비) receipts carry a detail block on top of the base. */
     private static final List<Slot> EXPENSE_TRANSPORT_SLOTS = List.of(
             new Slot("vehicleType", "transport", "교통수단",
-                    "one of AIR, KTX, SRT, TRAIN, BUS, CBUS, TAXI, RENTAL, AIRPORT_LIMOUSINE, OTHER"
+                    "one of AIR, KTX, SRT, TRAIN, BUS, CBUS, TAXI, RENTAL, CORP_CAR, AIRPORT_LIMOUSINE, OTHER"
                             + " — KTX/SRT stay as themselves, 기차/열차 -> TRAIN, 고속버스 -> BUS,"
-                            + " 시외버스 -> CBUS, 택시 -> TAXI, 렌터카 -> RENTAL, 항공/비행기 -> AIR."
+                            + " 시외버스 -> CBUS, 택시 -> TAXI, 렌터카 -> RENTAL, 항공/비행기 -> AIR,"
+                            + " 법인차량/회사차량 -> CORP_CAR, 공항리무진 -> AIRPORT_LIMOUSINE,"
+                            + " 기타 교통수단 -> OTHER."
                             + " The vehicle word is usually written in the message itself: if one of"
                             + " those words appears, ALWAYS emit the matching value. Do this even when"
                             + " the place names are unfamiliar or carry no 역/공항/터미널 suffix"
                             + " — small stations like 가남 or 감공장호원 are still stations, and they never"
                             + " change what the vehicle was", true),
-            new Slot("depart", "departure", "출발지",
+            new Slot("depart", "departure place", "출발지",
                     "where the trip legs started, copied verbatim from the user. A bare place name"
                             + " with no 역/공항 suffix (가남, 광주) is a perfectly valid answer"
                             + " — never omit it because the name looks unfamiliar", true),
-            new Slot("arrival", "arrival", "도착지",
+            new Slot("arrival", "arrival place", "도착지",
                     "where the trip legs ended, copied verbatim from the user. A bare place name"
                             + " with no 역/공항 suffix is a perfectly valid answer", true),
             // Optional, and normalised to OUR tokens rather than the provider's — their wire values
@@ -2347,6 +2346,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * conversational phrasing - matching them is normalising data, not guessing intent.
      */
     private static final java.util.List<String[]> VEHICLE_WORDS = java.util.List.of(
+            new String[]{"법인차량", "CORP_CAR"},
+            new String[]{"법인 차량", "CORP_CAR"},
+            new String[]{"회사차량", "CORP_CAR"},
+            new String[]{"company car", "CORP_CAR"},
+            new String[]{"corporate car", "CORP_CAR"},
+            new String[]{"기타 교통수단", "OTHER"},
+            new String[]{"기타교통", "OTHER"},
             new String[]{"공항리무진", "AIRPORT_LIMOUSINE"},
             new String[]{"리무진", "AIRPORT_LIMOUSINE"},
             new String[]{"limousine", "AIRPORT_LIMOUSINE"},
@@ -3086,6 +3092,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             "EXCELLENT", "Superior",    // the extractor's older token for 우등
             "PREMIUM", "Premium");      // 프리미엄
 
+    /**
+     * Vehicles that travel between places rather than between STOPS. A hired car, a company car,
+     * an airport limousine and "other" are all driven wherever the traveller needs to go, so they
+     * have no timetable, no seat and nothing to resolve against either locator catalogue. The
+     * provider's RENTAL, CORP_CAR, AIRPORT_LIMOUSINE and OTHER samples agree exactly: routeType,
+     * seatClass and all four locator ids null, with only the plain depart/arrival names carried.
+     */
+    private static final java.util.Set<String> LOCATOR_FREE_VEHICLES =
+            java.util.Set.of("RENTAL", "CORP_CAR", "AIRPORT_LIMOUSINE", "OTHER");
+
     /** Bus kinds share the three-grade seat catalog; every other vehicle has a single fixed value. */
     private static boolean isBus(String vehicleType) {
         return "BUS".equals(vehicleType) || "CBUS".equals(vehicleType);
@@ -3106,6 +3122,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             return;
         }
         String vehicle = detail.path("vehicleType").asText("");
+        // A hired car has no route, no seat and no terminal: the provider's own RENTAL sample
+        // carries routeType, seatClass, departTerminalId, arrivalTerminalId, departNodeId and
+        // arrivalNodeId ALL null, with depart/arrival as plain place names ("Seoul" -> "Busan").
+        // Returning here keeps them null and skips two catalogue lookups that could only ever
+        // mismatch - there is no rental terminal to find.
+        if (LOCATOR_FREE_VEHICLES.contains(vehicle)) {
+            log.info("{} carries no route/seat/terminal fields - leaving them null per the sample.",
+                    vehicle);
+            return;
+        }
         if (!detail.hasNonNull("routeType")) {
             detail.put("routeType", "ONEWAY");   // every transport sample is one-way
         }
@@ -3285,6 +3311,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /** The plans in this list that carry no settlement yet (usageCnt 0) — what "still to settle" means. */
+    /** The first {@code limit} rows, or the array itself when it already fits. */
+    private ArrayNode trimTo(ArrayNode rows, int limit) {
+        if (rows.size() <= limit) {
+            return rows;
+        }
+        ArrayNode out = objectMapper.createArrayNode();
+        for (int i = 0; i < limit; i++) {
+            out.add(rows.get(i));
+        }
+        return out;
+    }
+
     private ArrayNode unsettledOf(ArrayNode approved) {
         ArrayNode out = objectMapper.createArrayNode();
         for (JsonNode c : approved) {
@@ -3732,14 +3770,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     // --- deterministic parsing -----------------------------------------------------
 
     /** Two explicit ISO dates, or a relative Korean/English window word. Null = not given. */
-    private String[] extractPeriod(String message) {
-        List<String> dates = new ArrayList<>();
-        Matcher m = ISO_DATE.matcher(message);
-        while (m.find()) {
-            dates.add(m.group(1));
+    /** yyyy-MM-dd, and the ways people actually type it: 2026.08.25, 2026/08/25, 2026 08 25. */
+    private static final Pattern LOOSE_DATE = Pattern.compile(
+            "\\b(\\d{4})[-./\\s](\\d{1,2})[-./\\s](\\d{1,2})\\b");
+
+    /** Every date in the message, in the order written. Impossible dates are skipped. */
+    private List<String> looseDates(String message) {
+        List<String> out = new ArrayList<>();
+        if (message == null || message.isBlank()) {
+            return out;
         }
+        Matcher m = LOOSE_DATE.matcher(message);
+        while (m.find()) {
+            try {
+                out.add(LocalDate.of(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)),
+                        Integer.parseInt(m.group(3))).toString());
+            } catch (RuntimeException ignored) {
+                // 2026-13-40 is text that looks like a date but is not one.
+            }
+        }
+        return out;
+    }
+
+    private String[] extractPeriod(String message) {
+        List<String> dates = looseDates(message);
         if (dates.size() >= 2) {
             return new String[]{dates.get(0), dates.get(1)};
+        }
+        if (dates.size() == 1) {
+            // One date means THAT DAY, not "no period given". Returning null here left the
+            // previous period sitting in the slot bag, so "find me the plan at 2026-08-25" re-ran
+            // the old 08-02~08-03 search and answered with the old dates - three times running.
+            return new String[]{dates.get(0), dates.get(0)};
         }
         LocalDate today = LocalDate.now();
         String s = message.toLowerCase();
@@ -3953,7 +4015,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private void gatherIntoSlots(ObjectNode state, String message, JsonNode extracted) {
         ObjectNode s = slots(state);
         String[] period = extractPeriod(message);
-        if (period != null) {
+        boolean periodThisTurn = period != null;
+        if (periodThisTurn) {
             s.put("startDate", period[0]);
             s.put("endDate", period[1]);
         }
@@ -3962,15 +4025,19 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             ArrayNode ct = s.putArray("cardTypes");
             words.forEach(ct::add);
         }
-        mergeExtracted(s, extracted);
+        mergeExtracted(s, extracted, periodThisTurn);
     }
 
     /** Merge the LLM-extracted slots, filling only what the deterministic parsers left empty. */
-    private void mergeExtracted(ObjectNode s, JsonNode ex) {
+    private void mergeExtracted(ObjectNode s, JsonNode ex, boolean periodThisTurn) {
         if (ex == null || !ex.isObject()) {
             return;
         }
-        if (!s.hasNonNull("startDate") && ex.hasNonNull("startDate") && ex.hasNonNull("endDate")) {
+        // The old guard was "only if no period is stored", which meant the FIRST period a session
+        // ever saw could never be replaced - every later date the user typed was ignored and the
+        // original search ran again. What must not be overwritten is a period parsed
+        // deterministically from THIS message; anything older is stale by definition.
+        if (!periodThisTurn && ex.hasNonNull("startDate") && ex.hasNonNull("endDate")) {
             s.put("startDate", ex.get("startDate").asText());
             s.put("endDate", ex.get("endDate").asText());
         }

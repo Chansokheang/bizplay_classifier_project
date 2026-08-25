@@ -13,21 +13,22 @@ LABEL version="1.1"
 
 WORKDIR /workspace
 
-# Copy Maven wrapper and dependencies configuration
-COPY pom.xml mvnw mvnw.cmd ./
-COPY .mvn .mvn
+# The POM alone first, so the dependency layer stays cached until dependencies change.
+COPY pom.xml ./
 
-# Make Maven wrapper executable
-RUN chmod +x mvnw
-
-# Download dependencies (cached layer)
-RUN ./mvnw -q -DskipTests dependency:go-offline || true
+# The wrapper is deliberately NOT used here. This base image already ships Maven 3.9.9,
+# while ./mvnw downloads its own distribution (3.9.12, see .mvn/wrapper) from
+# repo.maven.apache.org on every cold build - a second network dependency the build does
+# not need, plus the exec-bit and CRLF pitfalls a wrapper copied from a Windows checkout
+# brings with it.
+RUN mvn -B -DskipTests dependency:go-offline || true
 
 # Copy source code
 COPY src src
 
-# Build the application
-RUN ./mvnw -q -DskipTests clean package
+# Build the application. No -q: when this step fails inside Docker the log IS the
+# diagnosis, and a quiet Maven leaves nothing behind but a line number.
+RUN mvn -B -DskipTests clean package
 
 # --------------------------
 # Stage 2: Runtime
@@ -38,8 +39,9 @@ LABEL maintainer="BizPlay Team"
 LABEL description="BizPlay Classifier API - Runtime Image"
 LABEL version="1.1"
 
-# Install curl for health checks
-RUN apk add --no-cache curl
+# No package install here on purpose. curl was only ever used by the HEALTHCHECK below,
+# and Alpine already ships BusyBox wget - so reaching out to the Alpine CDN mid-build
+# bought nothing, and failed closed on any network that cannot reach it.
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S bizplay && \
@@ -58,7 +60,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/v3/api-docs || exit 1
+  CMD wget -q -O /dev/null http://localhost:8080/v3/api-docs || exit 1
 
 # JVM optimization flags
 ENV JAVA_OPTS="-XX:+UseContainerSupport \

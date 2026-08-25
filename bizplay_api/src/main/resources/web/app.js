@@ -3404,9 +3404,11 @@ const TP_TRAIN_TYPES = [["KTX", "KTX", "KTX"], ["SRT", "SRT", "SRT"], ["ITX", "I
   ["Saemaeul", "새마을호", "SAEMAEUL"], ["Mugunghwa", "무궁화호", "MUGUNGHWA"]];
 const TP_VEH_DOMESTIC = [["Air", "항공", "AIR"], ["Train", "열차", "__TRAIN__"], ["Express bus", "고속버스", "BUS"],
   ["Intercity bus", "시외버스", "CBUS"], ["Taxi", "택시", "TAXI"], ["Rental car", "렌터카", "RENTAL"],
+  ["Company car", "법인차량", "CORP_CAR"],
   ["Airport limo", "공항 리무진", "AIRPORT_LIMOUSINE"], ["Other", "기타 교통수단", "OTHER"]];
 const TP_VEH_OVERSEA = [["Air", "항공", "AIR"], ["Train", "열차", "TRAIN"], ["Express bus", "고속버스", "BUS"],
   ["Intercity bus", "시외버스", "CBUS"], ["Taxi", "택시", "TAXI"], ["Rental car", "렌터카", "RENTAL"],
+  ["Company car", "법인차량", "CORP_CAR"],
   ["Airport limo", "공항 리무진", "AIRPORT_LIMOUSINE"], ["Other", "기타 교통수단", "OTHER"],
   ["Airport transfer", "공항이동", "AIRPORT_TRANSFER"], ["Intercity transport", "시외교통", "INTERCITY_TRANSPORT"],
   ["Local transport", "현지교통", "LOCAL_TRANSPORT"]];
@@ -3429,9 +3431,14 @@ async function renderTpSub(container, vehicleValue, oversea) {
   const isTrainGroup = vehicleValue === "__TRAIN__";
   const isTrain = isTrainGroup || ["TRAIN", "KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA"].includes(vehicleValue);
   const useTerminals = !oversea && (isAir || isTrainGroup);   // domestic AIR/train → id dropdowns
+  // These four are driven wherever the traveller needs to go: no route, no seat, no terminal.
+  // The provider's RENTAL, CORP_CAR, AIRPORT_LIMOUSINE and OTHER samples all keep routeType,
+  // seatClass and the locator ids null and carry only the plain place names. Offering a
+  // One-way / Round-trip dropdown would put a value in a field their samples leave empty.
+  const noRoute = ["RENTAL", "CORP_CAR", "AIRPORT_LIMOUSINE", "OTHER"].includes(vehicleValue);
   const parts = [];
   if (isTrainGroup) parts.push(f(T("Train type", "열차종류"), `<select data-tp="trainType">${optsL(TP_TRAIN_TYPES, T("Select", "선택"))}</select>`));
-  parts.push(f(T("Route", "노선종류"), `<select data-tp="routeType">${optsL(TP_ROUTE)}</select>`));
+  if (!noRoute) parts.push(f(T("Route", "노선종류"), `<select data-tp="routeType">${optsL(TP_ROUTE)}</select>`));
   parts.push(f(T("Used date", "이용일"), `<input type="date" data-tp="usedStartDate">`));
   if (useTerminals) {
     parts.push(f(T("From", "출발지"), `<select data-tp="departSel"><option value="">${esc(T("Loading…", "불러오는 중…"))}</option></select>`));
@@ -4922,6 +4929,10 @@ async function sendAgent(opts) {
         const showsPlans = (data.pendingChoices || []).some((g) => g.kind === "PLAN");
         if (wantsDates) settlementDateAsk();
         else if (showsPlans) settlementPlanPeriodAsk();
+        // Nothing matched the period the user asked for. The plan list is empty, so the branch
+        // above cannot fire - and without this the chat said "try a different period" while
+        // offering no way to pick one.
+        else if (data.intent === "AWAIT_PLAN_PERIOD") settlementPlanPeriodAsk();
         // No card receipt for this trip: the expense is typed in and its image attached,
         // then posted multipart (a file can't ride a chat turn).
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
