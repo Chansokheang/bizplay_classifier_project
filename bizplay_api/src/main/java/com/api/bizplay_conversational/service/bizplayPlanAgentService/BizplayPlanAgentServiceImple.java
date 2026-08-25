@@ -287,6 +287,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             validateDestinationIfKorean(state, subAgents, reply, ko);
         }
 
+        // The origin rides inside the BSTR_PERIOD value, so once the dates are complete the mapper
+        // stops writing that field and a later "출발지는 인천이야" had nowhere to land - the user
+        // said it twice and the draft still read origin=null. The place is sitting in the message
+        // either way, so read it deterministically rather than re-asking.
+        backfillOrigin(state, turnText);
+
         // --- Validation + Sub-agent [D]: follow-up question ---------------------------------------
         List<String> missing = List.of();
         if (!documents.isEmpty() && clarify != null) {
@@ -1203,6 +1209,20 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 notFound.add(r.input());
             }
         }
+        // Drop what could not be resolved. Leaving it in state made the SAME warning repeat on
+        // every later turn - the name is re-queued each time - and a real name given afterwards
+        // was APPENDED beside the bad one instead of replacing it, so the traveller list grew
+        // ['인천에서 출발해', '김충북']. A name nobody recognises is not a traveller; say so once
+        // and forget it, which also leaves the text free to be read as what it really was.
+        for (String bad : notFound) {
+            ArrayNode held = state.withArray("travelers");
+            for (int i = held.size() - 1; i >= 0; i--) {
+                if (bad.equals(held.get(i).asText(""))) {
+                    held.remove(i);
+                }
+            }
+            log.info("Traveler '{}' did not match the roster - dropped rather than kept pending.", bad);
+        }
         if (notFound.size() == 1) {
             reply.append(t(ko,
                     "I couldn't find '" + notFound.get(0) + "' in the staff list — could you double-check the name? ",
@@ -1252,6 +1272,35 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
         ids.add(id);
+    }
+
+    /** "인천에서 출발", "출발지는 인천", "from Incheon" - the ways an origin gets stated on its own. */
+    private static final java.util.regex.Pattern ORIGIN_PHRASE = java.util.regex.Pattern.compile(
+            "(?i)(?:출발지(?:는|은|가|이)?\\s*|from\\s+)([\\p{L}\\p{N}]{2,20})|([\\p{L}\\p{N}]{2,20})에서\\s*출발");
+
+    /**
+     * Read an origin the user stated on its own and write it to state. Only fills a blank
+     * origin, or replaces one when the message names it explicitly - a place mentioned in
+     * passing must not overwrite what the form already holds.
+     */
+    private void backfillOrigin(ObjectNode state, String message) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+        java.util.regex.Matcher m = ORIGIN_PHRASE.matcher(message);
+        if (!m.find()) {
+            return;
+        }
+        String place = m.group(1) != null ? m.group(1) : m.group(2);
+        if (place == null || place.isBlank()) {
+            return;
+        }
+        String current = state.path("origin").asText("");
+        if (place.equals(current)) {
+            return;
+        }
+        state.put("origin", place);
+        log.info("Origin '{}' read from the message after the form mapper left it empty.", place);
     }
 
     /**
