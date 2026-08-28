@@ -194,6 +194,17 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
 
         ConversationalAgentSession session = resolveSession(request);
+        if (session.getStatus() == ConversationalAgentSession.AgentStatus.POSTED
+                && !isDraftQuestion(message)) {
+            // This session's settlement is already FILED — its record must stay untouched (the
+            // saved-settlements table reads it). A new message here means the NEXT settlement:
+            // roll over to a fresh session; the response carries the new sessionId and the UI
+            // follows it. Questions about the filed draft still answer from the old session.
+            log.info("Session {} is POSTED — rolling over to a fresh settlement conversation.",
+                    session.getId());
+            request.setSessionId(null);
+            session = resolveSession(request);
+        }
         ObjectNode state = loadState(session);
         seedStaticUser(state);                              // travelerId/corpUserId slots = static default
         ArrayNode documents = documents(session);
@@ -3999,42 +4010,47 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      */
     private List<TripPlanAgentResponse.PendingChoice> submitChips(boolean ko, String bizplayToken) {
         List<TripPlanAgentResponse.PendingChoice> groups = new ArrayList<>();
-        List<TripPlanAgentResponse.Option> people = new ArrayList<>();
-        long drafter = 0;
-        try {
-            drafter = Long.parseLong(bizplayProperties.getDefaultCorpUserId());
-        } catch (RuntimeException ignored) {
-            drafter = 0;
-        }
-        try {
-            Long corpId = corporationIdFromToken(bizplayToken);
-            JsonNode roster = corpId == null ? null
-                    : bizplayGatewayService.getCorporationUsers(corpId, bizplayToken);
-            JsonNode users = roster == null ? null : (roster.has("users") ? roster.get("users") : roster);
-            if (users != null && users.isArray()) {
-                for (JsonNode u : users) {
-                    long uid = u.path("corporationUserId").asLong();
-                    if (uid <= 0 || uid == drafter || people.size() >= 8) {
-                        continue;
-                    }
-                    String dept = u.path("departments").path(0).path("departmentName").asText("");
-                    String pos = u.path("positionName").asText("");
-                    people.add(TripPlanAgentResponse.Option.builder()
-                            .label(u.path("userName").asText("?")
-                                    + (dept.isEmpty() ? "" : " · " + dept)
-                                    + (pos.isEmpty() ? "" : " · " + pos))
-                            .sendText("approver:" + uid)
-                            .build());
-                }
-            }
-        } catch (Exception e) {
-            log.info("Approver roster unavailable ({}) - submit uses the default approver.", e.getMessage());
-        }
-        if (!people.isEmpty()) {
-            groups.add(TripPlanAgentResponse.PendingChoice.builder()
-                    .kind("APPROVER").name(t(ko, "who approves this?", "누가 결재하나요?"))
-                    .options(people).build());
-        }
+        // RETIRED (kept for reference, do not delete): the "who approves this?" chip roster.
+        // Removed on request — the approver is now named in WORDS ("결재는 김도하한테 받을게",
+        // resolved by approverByName against the same roster) or the default approver applies.
+        // Re-enable by restoring this block.
+        //
+        // List<TripPlanAgentResponse.Option> people = new ArrayList<>();
+        // long drafter = 0;
+        // try {
+        //     drafter = Long.parseLong(bizplayProperties.getDefaultCorpUserId());
+        // } catch (RuntimeException ignored) {
+        //     drafter = 0;
+        // }
+        // try {
+        //     Long corpId = corporationIdFromToken(bizplayToken);
+        //     JsonNode roster = corpId == null ? null
+        //             : bizplayGatewayService.getCorporationUsers(corpId, bizplayToken);
+        //     JsonNode users = roster == null ? null : (roster.has("users") ? roster.get("users") : roster);
+        //     if (users != null && users.isArray()) {
+        //         for (JsonNode u : users) {
+        //             long uid = u.path("corporationUserId").asLong();
+        //             if (uid <= 0 || uid == drafter || people.size() >= 8) {
+        //                 continue;
+        //             }
+        //             String dept = u.path("departments").path(0).path("departmentName").asText("");
+        //             String pos = u.path("positionName").asText("");
+        //             people.add(TripPlanAgentResponse.Option.builder()
+        //                     .label(u.path("userName").asText("?")
+        //                             + (dept.isEmpty() ? "" : " · " + dept)
+        //                             + (pos.isEmpty() ? "" : " · " + pos))
+        //                     .sendText("approver:" + uid)
+        //                     .build());
+        //         }
+        //     }
+        // } catch (Exception e) {
+        //     log.info("Approver roster unavailable ({}) - submit uses the default approver.", e.getMessage());
+        // }
+        // if (!people.isEmpty()) {
+        //     groups.add(TripPlanAgentResponse.PendingChoice.builder()
+        //             .kind("APPROVER").name(t(ko, "who approves this?", "누가 결재하나요?"))
+        //             .options(people).build());
+        // }
         groups.add(TripPlanAgentResponse.PendingChoice.builder()
                 .kind("SUBMIT").name(t(ko, "submit", "제출"))
                 .options(List.of(TripPlanAgentResponse.Option.builder()
