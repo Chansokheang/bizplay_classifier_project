@@ -1569,3 +1569,8 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .st-warn    { background: var(--warn-bg); color: var(--warn-text); }
 .st-bad     { background: var(--bad-bg); color: var(--bad-text); }
 .st-neutral { background: var(--primary-soft); color: var(--soft); }
+
+/* A selection UI (chips / plan table / calendar) the conversation has moved past without using:
+   kept in the transcript for the record, but greyed and inert so a stale click can't answer a
+   question the flow already left behind. */
+.choice-stale { opacity: .45; pointer-events: none; user-select: none; }

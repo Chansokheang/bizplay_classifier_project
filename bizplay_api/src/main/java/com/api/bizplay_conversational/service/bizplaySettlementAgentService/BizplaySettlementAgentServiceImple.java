@@ -539,7 +539,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     intent = "PLAN_IMPORT";
                     importPlan(state, documents, Long.parseLong(m.group(1)), corpUserId,
                             bizplayToken, subAgents, reply, ko);
-                    chips = afterImportChips(state, ko);
+                    if (formPinsNoKinds(state)) {
+                        // Refused (no expense kinds): answer with the FRESH approved-unsettled
+                        // list — the UI renders the period calendar beside it — never a dead end.
+                        chips = openingApprovedPlans(state, corpUserId, bizplayToken, subAgents, reply, ko);
+                        if (chips == null) {
+                            intent = "AWAIT_PLAN_PERIOD";
+                        }
+                    } else {
+                        chips = afterImportChips(state, ko);
+                    }
                 } else {
                     String[] period = slotPeriod(state);
                     if (period != null) {
@@ -569,7 +578,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             intent = "PLAN_IMPORT";
                             importPlan(state, documents, picked, corpUserId,
                                     bizplayToken, subAgents, reply, ko);
-                            chips = afterImportChips(state, ko);
+                            if (formPinsNoKinds(state)) {
+                                // Same re-offer as the chip path — see above.
+                                chips = openingApprovedPlans(state, corpUserId, bizplayToken,
+                                        subAgents, reply, ko);
+                                if (chips == null) {
+                                    intent = "AWAIT_PLAN_PERIOD";
+                                }
+                            } else {
+                                chips = afterImportChips(state, ko);
+                            }
                         } else {
                             intent = "PLAN_PICK_PENDING";
                             chips = planChipsFromState(state, ko);
@@ -2010,13 +2028,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // import already said so — but this method runs BEFORE the stage machine, so without this
         // the agent went on to offer a preview for a receipt it had just refused to accept.
         if (!documents.isEmpty() && slots(state).withArray("planTranKinds").isEmpty()) {
+            // No expense kinds on the imported form: nothing can be built here, so this is NOT an
+            // expense turn — drop any half-built receipt and hand the words to the stage machine,
+            // which is already back at plan picking after the refused import. Answering with a
+            // dead-end text here swallowed "Business Trip to Gwangju" typed to pick another plan.
             state.remove("pendingExpense");
-            return simpleTurn(session, state, message, t(ko,
-                    "I still can't register evidence for this trip — its form lists no expense "
-                            + "types. Pick another trip, or ask BizPlay to add 경비 항목 to this paper.",
-                    "이 출장은 양식에 경비 항목이 없어서 증빙을 등록할 수 없어요. 다른 출장을 선택하시거나, "
-                            + "BizPlay에서 이 양식에 경비 항목을 추가해 주세요."),
-                    "EXPENSE_KIND_UNAVAILABLE", null);
+            return null;
         }
         if (message.matches("(?i)\\s*expense-confirm.*")) {
             if (!building) {
@@ -3763,7 +3780,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * caller says why instead (see {@link #formPinsNoKinds}).
      */
     private List<TripPlanAgentResponse.PendingChoice> afterImportChips(ObjectNode state, boolean ko) {
-        return slots(state).withArray("planTranKinds").isEmpty() ? null : tranKindChips(state, ko);
+        // A form with no expense kinds means the import was REFUSED — re-offer the plan list
+        // (the chat UI renders the period calendar alongside any PLAN group), so the refusal
+        // is a fork in the road, never a dead end.
+        return slots(state).withArray("planTranKinds").isEmpty()
+                ? planChipsFromState(state, ko) : tranKindChips(state, ko);
     }
 
     /** True when the imported plan's form lists no expense types — a form misconfiguration. */

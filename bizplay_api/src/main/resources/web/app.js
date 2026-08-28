@@ -3474,6 +3474,7 @@ async function asstSend(text, echoAs) {
   if (asstApprovalTextTurn(message)) {
     return;
   }
+  staleOldSelectors("asstThread");   // same rule as the settlement chat — see sendAgent
   asstBusy = true;
   asstAppend("user", echoAs || message);
   $("asstInput").value = "";
@@ -4955,6 +4956,19 @@ function guideChips(prompt, options, onPick) {
 /* Assistant bubble + an inline answer widget (text or date-range). */
 /* opts.echo === false: the caller sends the answer through sendAgent(), which draws its
  * own user bubble — echoing here too would print the same period twice. */
+/* Disable every selection UI in a thread that the user never used — chip rows, plan tables,
+ * calendars. Called when a new turn is sent: those widgets are questions the conversation has
+ * moved past, and a late click would fire an answer into the wrong point of the flow. They stay
+ * visible (the transcript keeps its meaning) but greyed and inert. Used rows/widgets already
+ * carry choice-done / guide-done and keep their normal look. */
+function staleOldSelectors(threadId) {
+  const thread = $(threadId);
+  if (!thread) return;
+  thread.querySelectorAll(
+    ".choice-row:not(.choice-done), .guide-widget:not(.guide-done), .plan-pick:not(.pp-readonly)")
+    .forEach((el) => el.classList.add("choice-stale"));
+}
+
 function guideWidget(prompt, innerHtml, wire, opts) {
   const thread = $("agentThread");
   const wrap = document.createElement("div");
@@ -5276,6 +5290,10 @@ async function sendAgent(opts) {
   const fileIds = agent.pending.map((f) => f.fileId);
   // Nothing to send: no error — like any chat app, just put the cursor back.
   if (!message && !fileIds.length) { $("agentInput").focus(); return; }
+  // The conversation is moving on: any selection UI above that was never used (chips, plan
+  // tables, calendars) is a question the flow has passed — grey it out so a stale click can't
+  // fire an answer into the wrong point of the conversation. The reply renders fresh ones.
+  staleOldSelectors("agentThread");
 
   // Mirror the user's language — but only from text they actually typed. Chip
   // clicks send composed text that may contain Korean template/staff names
