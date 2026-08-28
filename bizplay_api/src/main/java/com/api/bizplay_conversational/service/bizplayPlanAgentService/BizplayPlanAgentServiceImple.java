@@ -58,9 +58,12 @@ import java.util.UUID;
 public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
     private static final String STATE_ROLE = "agent_state";
+    /** How many past turns sub-agents may see. Two exchanges. */
+    private static final int RECENT_TURNS = 4;
 
     private final ConversationalAgentSessionRepo sessionRepo;
     private final GuardrailAgentService guardrailAgentService;
+    private final com.api.bizplay_conversational.service.slotFillerAgentService.SlotFillerAgentService slotFillerAgentService;
     private final PlaceValidationService placeValidationService;
     private final BizplayGatewayService bizplayGatewayService;
     private final PurposeSegmentAgentService purposeSegmentAgentService;
@@ -238,7 +241,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         "Great — I've started a \"" + chosen.getLabel() + "\" plan for you. ",
                         "좋아요 — \"" + chosen.getLabel() + "\" 출장 계획을 시작할게요. "));
                 // Map everything said so far (staged turns + this message) onto the fresh form.
-                clarify = fillFields(document, state, stagedPlus(state, turnText), subAgents, reply, ko);
+                clarify = fillFields(document, state, stagedPlus(state, turnText), subAgents, reply, ko,
+                        recentTurns(session));
                 // Deterministic assist: when the purpose was inferred from a bare place answer
                 // ("Busan" / "부산" to "where are you going?"), the mapper LLM sometimes misses
                 // it. A short standalone token that isn't a trip-type word IS the destination.
@@ -268,8 +272,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             } else {
                 // Form already loaded: every turn is field completion on documents[0].
                 intent = "FIELD_COMPLETION";
-                clarify = fillFields((ObjectNode) documents.get(0), state, turnText, subAgents, reply, ko);
+                clarify = fillFields((ObjectNode) documents.get(0), state, turnText, subAgents, reply, ko,
+                        recentTurns(session));
             }
+        }
+
+        // A traveller CORRECTION, before the resolver runs. mergeTravelers can only append, so
+        // "출장자를 김도하로 바꿔줘" mid-flow GREW the list (김충북, 김도하) instead of fixing it,
+        // and nothing could ever remove a wrong name. Runs after fillFields on purpose: the mapper
+        // may have appended the new name, and the replace below settles the final list.
+        if (!documents.isEmpty()) {
+            backfillTravelerChange(state, turnText, reply, ko);
         }
 
         // Resolve pending traveler names against the corporation roster (gateway tool + chips).
@@ -292,6 +305,14 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // said it twice and the draft still read origin=null. The place is sitting in the message
         // either way, so read it deterministically rather than re-asking.
         backfillOrigin(state, turnText);
+        if (backfillDestination(documents, state, turnText)) {
+            // The turn DID change something concrete. Keeping the mapper's clarify would undo
+            // that: on "목적지를 도쿄로 바꿔줘" it hallucinated an indefinite-DATE question
+            // ("다음 주 며칠로 바꿔 드릴까요?") and the destination half-applied — title changed,
+            // field didn't. The change is deterministic here; the phantom question goes.
+            clarify = null;
+        }
+        ensureMeaningfulTitle(state, documents, turnText, ko);
 
         // --- Validation + Sub-agent [D]: follow-up question ---------------------------------------
         List<String> missing = List.of();
@@ -308,6 +329,35 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             missing = retryMissingField((ObjectNode) documents.get(0), state, turnText, missing, subAgents);
             if (missing.isEmpty()) {
                 session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
+                // The form is done, so what does THIS message want? Decided by the LLM with the
+                // recent turns as context, not a phrase list: after "the last step is the approval
+                // line", a "create plan" / "done" / "그럼 올려줘" is the user saying GO — and the
+                // UI kept re-showing the approval card because nothing understood that. The agent
+                // cannot file by itself (filing is the separate /create call, on purpose), so it
+                // answers with intent SUBMIT_REQUESTED and the caller runs the create it already
+                // has — with whatever approval line the user picked.
+                // Only when this turn changed NOTHING. A turn that edited the draft is an edit,
+                // full stop - yet the model judged "출장자는 김비플이야" and "김도하는 빼줘" as
+                // file-now, which would have filed mid-correction. Anything applied or warned
+                // about earlier in the turn leaves text in the reply, so an empty reply IS the
+                // deterministic "nothing happened" signal.
+                if (reply.length() == 0 && wantsToFileNow(turnText, session, ko)) {
+                    appendTurn(session, "user", message);
+                    saveState(session, state);
+                    ConversationalAgentSession savedNow = sessionRepo.save(session);
+                    return BizplayPlanAgentResponse.builder()
+                            .sessionId(savedNow.getId().toString())
+                            .status(savedNow.getStatus() == null ? null : savedNow.getStatus().name())
+                            .intent("SUBMIT_REQUESTED")
+                            .subAgents(subAgents)
+                            .reply(t(ko, "Filing the plan now.", "출장 계획을 상신할게요."))
+                            .travelers(travelerNames(state))
+                            .travelerIds(travelerIdList(state))
+                            .destination(state.path("destination").asText(null))
+                            .origin(state.path("origin").asText(null))
+                            .draftJson(savedNow.getDraftJson())
+                            .build();
+                }
                 reply.append(t(ko,
                         "The form is all filled in — the last step is the approval line.",
                         "양식은 모두 채워졌어요 — 마지막으로 결재선만 정하면 돼요."));
@@ -819,11 +869,31 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      *  Returns a clarifying question when the user's input was INDEFINITE ("sometime next
      *  week") — the caller asks it instead of pretending the turn changed something. */
     private String fillFields(ObjectNode document, ObjectNode state, String text,
-                            List<String> subAgents, StringBuilder reply, boolean ko) {
-        JsonNode mapped = fieldMapperAgentService.mapFields(text, state.path("fields"));
+                            List<String> subAgents, StringBuilder reply, boolean ko,
+                            List<String> turns) {
+        JsonNode mapped = fieldMapperAgentService.mapFields(text, state.path("fields"), turns);
         subAgents.add("FIELD_MAPPER_AGENT");
         List<String> applied = new ArrayList<>(
                 formValueWriterService.apply(document, state.path("fields"), state, mapped));
+        // TWO of the mapper's outputs can carry a destination: the explicit DESTINATION field and
+        // the one embedded in BSTR_PERIOD - and when they disagree (the period one is often stale,
+        // echoed from staged text), whichever the writer applied LAST silently won. The result was
+        // a draft going to 도쿄 titled 부산 출장. The EXPLICIT field is the user's answer, so once
+        // everything is applied it gets the final word.
+        for (JsonNode f : state.path("fields")) {
+            String key = f.path("key").asText("");
+            if (key.endsWith("DESTINATION") && mapped.hasNonNull(key)) {
+                String explicit = mapped.get(key).isTextual()
+                        ? mapped.get(key).asText("") : mapped.get(key).path("choice").asText("");
+                if (!explicit.isBlank() && !explicit.equals(state.path("destination").asText(""))) {
+                    state.put("destination", explicit);
+                    formValueWriterService.refreshPeriod(document, state);
+                    log.info("Destination re-asserted to '{}' - the BSTR_PERIOD echo had overwritten it.",
+                            explicit);
+                }
+                break;
+            }
+        }
         applied.addAll(ensurePeriodFallback(document, state, text));
         applied.addAll(bindPendingAnswer(document, state, text, mapped));
         state.remove("staged"); // consumed
@@ -1066,6 +1136,174 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return sb.toString();
     }
 
+    /**
+     * "목적지를 도쿄로", "출장지는 부산" — the destination named with its own explicit marker. Like
+     * ORIGIN_PHRASE this is grammar normalisation, not intent guessing: the words 목적지/출장지 ARE
+     * the field label, so a place attached to them is that field's value, whatever the sentence
+     * around it says.
+     */
+    private static final java.util.regex.Pattern DEST_PHRASE = java.util.regex.Pattern.compile(
+            "(?:목적지|출장지)\\s*(?:를|을)?\\s*([\\p{L}]{2,20}?)\\s*(?:으로|로)"
+            + "|(?:목적지|출장지)\\s*(?:는|은)\\s*([\\p{L}]{2,20})\\s*$"
+            // "부산으로 바꿔줘 / 변경해줘" — the change-to construction, marker and verb together.
+            // Grammar again, not phrase-guessing: 로 marks the target of 바꾸다/변경. With two
+            // destinations in the recent history the 14B mapper kept echoing the old one into one
+            // field while writing the new one into another, and the draft went to 도쿄 titled
+            // 부산 출장 — deterministic beats retuning the model here.
+            + "|([\\p{L}]{2,20}?)\\s*(?:으로|로)\\s*(?:바꾸|바꿔|변경)");
+
+    /** Change-to targets that are TIMES, not places: "내일로 바꿔줘" moves the date, not the trip. */
+    private static final java.util.regex.Pattern DEST_NOT_A_PLACE = java.util.regex.Pattern.compile(
+            "^(내일|오늘|모레|어제|글피|다음\\s*주|다음\\s*달|이번\\s*주|이번\\s*달|담주|\\d+[일월주년])$");
+
+    /**
+     * Apply a destination stated with its explicit marker, through the SAME writer path the
+     * mapper's DESTINATION output takes — so the period selections refresh exactly as they would
+     * have. Exists because the mapper misread "목적지를 도쿄로 바꿔줘" as an indefinite date change
+     * and asked about dates while the destination silently stayed put.
+     */
+    private boolean backfillDestination(ArrayNode documents, ObjectNode state, String message) {
+        if (documents.isEmpty() || message == null || message.isBlank()) {
+            return false;
+        }
+        java.util.regex.Matcher m = DEST_PHRASE.matcher(message);
+        if (!m.find()) {
+            return false;
+        }
+        String place = m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3);
+        String oldDest = state.path("destination").asText("");
+        if (place == null || place.isBlank() || place.equals(oldDest)
+                || DEST_NOT_A_PLACE.matcher(place.trim()).matches()) {
+            return false;
+        }
+        String key = null;
+        for (JsonNode f : state.path("fields")) {
+            if (f.path("key").asText("").endsWith("DESTINATION")) {
+                key = f.path("key").asText();
+                break;
+            }
+        }
+        if (key == null) {
+            state.put("destination", place);
+        } else {
+            ObjectNode mapped = objectMapper.createObjectNode();
+            mapped.put(key, place);
+            formValueWriterService.apply((ObjectNode) documents.get(0), state.path("fields"), state, mapped);
+        }
+        // A title composed from the OLD destination is stale the moment the destination moves —
+        // that is how a plan ended up titled 오사카 출장 while going to 도쿄. Only the composed
+        // form is touched; a title the user wrote stays theirs.
+        ObjectNode doc = (ObjectNode) documents.get(0);
+        String title = doc.path("title").asText("");
+        if (!oldDest.isBlank()
+                && (title.equals(oldDest + " 출장") || title.equals(oldDest + " business trip"))) {
+            String renamed = title.replace(oldDest, place);
+            doc.put("title", renamed);
+            state.put("composedTitle", renamed);   // still ours — keep the provenance current
+        }
+        log.info("Destination '{}' applied deterministically (was '{}').", place, oldDest);
+        return true;
+    }
+
+    /**
+     * Is this message the user saying "go ahead and file it"? Decided by the slot-filler LLM with
+     * the recent turns as context — not a phrase list, which is exactly what kept failing here:
+     * every list missed the next phrasing ("create plan", "그럼 올려", "ㄱㄱ"), and each miss looked
+     * like the agent ignoring the user. Only consulted once the form is COMPLETE, so a mid-fill
+     * "만들어줘" can never file a half-built plan. Fails closed: unsure or unavailable → false,
+     * and the turn falls through to the normal ready message.
+     */
+    private boolean wantsToFileNow(String turnText, ConversationalAgentSession session, boolean ko) {
+        if (turnText == null || turnText.isBlank() || turnText.length() > 120) {
+            return false;
+        }
+        try {
+            JsonNode got = slotFillerAgentService.extract(turnText, java.util.Map.of(
+                    "fileNow", "\"yes\" ONLY if this message tells the assistant to go ahead and "
+                            + "FILE/SUBMIT/CREATE the completed trip plan now (in any wording or "
+                            + "language). Omit the field if the message adds or changes trip "
+                            + "details, asks a question, or is anything else"),
+                    ko, recentTurns(session));
+            return "yes".equalsIgnoreCase(got.path("fileNow").asText(""));
+        } catch (Exception e) {
+            log.warn("File-now intent check failed ({}); not filing on this turn.", e.getMessage());
+            return false;
+        }
+    }
+
+    /** "출장자를 김도하로 바꿔줘" — the traveller list replaced with the named person. */
+    private static final java.util.regex.Pattern TRAVELER_REPLACE = java.util.regex.Pattern.compile(
+            "(?:출장자|여행자)\\s*(?:를|을|는|은)?\\s*([\\p{L}]{2,20}?)\\s*(?:으로|로)\\s*(?:바꾸|바꿔|변경|교체)");
+    /** "김비플은 빼줘 / 제외해줘" — that person taken off the trip. */
+    private static final java.util.regex.Pattern TRAVELER_REMOVE = java.util.regex.Pattern.compile(
+            "([\\p{L}]{2,20}?)\\s*(?:를|을|는|은)?\\s*(?:빼|제외|삭제)");
+
+    /**
+     * Apply a traveller replacement or removal stated with its explicit construction. Grammar
+     * normalisation like the destination change — and validation stays where it lives: the new
+     * name goes through the SAME roster resolver as any other, so a name nobody recognises is
+     * warned about and dropped rather than trusted.
+     */
+    private void backfillTravelerChange(ObjectNode state, String message,
+                                        StringBuilder reply, boolean ko) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+        java.util.regex.Matcher m = TRAVELER_REPLACE.matcher(message);
+        if (m.find()) {
+            String name = m.group(1).trim();
+            ArrayNode fresh = state.putArray("travelers");
+            fresh.add(name);
+            // Old resolutions AND old ids go: travelerIds is append-only everywhere else, and a
+            // replace that left the previous ids in place still fanned documents out to people
+            // who were just removed from the trip.
+            state.remove("resolvedTravelers");
+            state.putArray("travelerIds");
+            reply.append(t(ko, "Changing the traveller to " + name + ". ",
+                    "출장자를 " + name + "(으)로 변경할게요. "));
+            log.info("Traveller list replaced with '{}' per the change construction.", name);
+            return;
+        }
+        m = TRAVELER_REMOVE.matcher(message);
+        if (m.find()) {
+            String name = m.group(1).trim();
+            ObjectNode resolved = state.withObject("resolvedTravelers");
+            ArrayNode held = state.withArray("travelers");
+            boolean removed = false;
+            for (int i = held.size() - 1; i >= 0; i--) {
+                String t2 = held.get(i).asText("");
+                // The named person, matched loosely both ways (the list holds ROSTER names) -
+                // and any name still UNRESOLVED: on a removal turn an unresolved name is the
+                // mapper resurrecting someone from conversation history, not a new traveller.
+                boolean named = t2.contains(name) || name.contains(t2);
+                boolean unresolved = !resolved.has(t2);
+                if (named || unresolved) {
+                    if (resolved.get(t2) != null && resolved.get(t2).canConvertToLong()) {
+                        removeTravelerId(state, resolved.get(t2).asLong());
+                    }
+                    resolved.remove(t2);
+                    held.remove(i);
+                    removed = removed || named;
+                }
+            }
+            if (removed) {
+                reply.append(t(ko, "Removed " + name + " from the trip. ",
+                        name + "을(를) 출장자에서 제외했어요. "));
+                log.info("Traveller '{}' removed per request.", name);
+            }
+        }
+    }
+
+    /** The inverse of addTravelerId - travelerIds was append-only until removal existed. */
+    private void removeTravelerId(ObjectNode state, long id) {
+        ArrayNode ids = state.withArray("travelerIds");
+        for (int i = ids.size() - 1; i >= 0; i--) {
+            if (ids.get(i).asLong() == id) {
+                ids.remove(i);
+            }
+        }
+    }
+
     /** Chip token for step one: the Travel Purpose on its own. */
     private static final java.util.regex.Pattern PURPOSE_PICK =
             // The chat pastes a form-state preamble in front of every message, so the token has to
@@ -1272,6 +1510,69 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
         ids.add(id);
+    }
+
+    /** The user naming the title themselves - then whatever they wrote is the title. */
+    private static final java.util.regex.Pattern TITLE_NAMED =
+            java.util.regex.Pattern.compile("(?i)(제목|타이틀|title)");
+
+    /** A "title" made only of dates and their connectives: 9월 10일부터 12일까지, 2026-09-10 ~ 09-12. */
+    private static final java.util.regex.Pattern DATE_ONLY_TITLE =
+            java.util.regex.Pattern.compile("^[\\d\\s월일년부터까지에서~/.,()-]+$");
+
+    /**
+     * Give the plan a title that says what the trip IS. The field mapper writes
+     * basic:BASIC_TITLE from whatever the user last typed, so answering the dates question
+     * with "9월 10일부터 12일까지" made that the trip title - every plan built step by step
+     * came out named after a date range, which is exactly what makes a plan list unreadable
+     * when several trips share a destination.
+     * <p>Only replaces a blank or date-only title, and never touches one the user named
+     * deliberately ("제목은 ..."), so a real title always wins.
+     */
+    private void ensureMeaningfulTitle(ObjectNode state, ArrayNode documents, String message,
+                                       boolean ko) {
+        if (documents.isEmpty() || !(documents.get(0) instanceof ObjectNode doc)) {
+            return;
+        }
+        if (message != null && TITLE_NAMED.matcher(message).find()) {
+            return;   // they said "제목" - whatever they wrote is the title they want
+        }
+        String title = doc.path("title").asText("").trim();
+        String dest = state.path("destination").asText("").trim();
+        String purpose = state.path("purpose").path("purposeName").asText("").trim();
+        String segment = state.path("purpose").path("segmentName").asText("").trim();
+        // A title that is just the PURPOSE ("해외출장") says nothing about this particular trip -
+        // every overseas plan would carry the same name, which is exactly what makes a plan list
+        // unreadable. Treated like a blank one: replaced once a destination is known.
+        // The combined forms count too: the chip label is "해외출장 · 장기", and a title lifted from
+        // it names the CATEGORY, not this trip - which is what showed up as "해외출장 · 일반".
+        String squashed = title.replaceAll("[\\s·/,-]+", "");
+        boolean genericTitle = title.equalsIgnoreCase(purpose) || title.equalsIgnoreCase(segment)
+                || squashed.equalsIgnoreCase((purpose + segment).replaceAll("\\s+", ""))
+                || squashed.equalsIgnoreCase((segment + purpose).replaceAll("\\s+", ""));
+        // Provenance, not pattern-guessing: a title THIS method composed earlier is ours to
+        // recompose when the destination moves — "도쿄 출장" going to 부산 is stale the moment the
+        // change lands. A title the user wrote never matches composedTitle and is never touched.
+        boolean oursFromBefore = !title.isBlank()
+                && title.equals(state.path("composedTitle").asText("\0"));
+        if (!title.isBlank() && !genericTitle && !oursFromBefore
+                && !DATE_ONLY_TITLE.matcher(title).matches()) {
+            return;   // already says something, and not something we wrote
+        }
+        String composed;
+        if (!dest.isBlank()) {
+            composed = ko ? dest + " 출장" : dest + " business trip";
+        } else if (!purpose.isBlank()) {
+            composed = purpose;
+        } else {
+            return;   // nothing to build one from yet - leave it for a later turn
+        }
+        if (!composed.equals(title)) {
+            doc.put("title", composed);
+            log.info("Plan title composed as '{}' - the mapper had left it as '{}'.",
+                    composed, title);
+        }
+        state.put("composedTitle", composed);
     }
 
     /** "인천에서 출발", "출발지는 인천", "from Incheon" - the ways an origin gets stated on its own. */
@@ -1572,6 +1873,35 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private ArrayNode documents(ConversationalAgentSession session) {
         JsonNode draft = session.getDraftJson();
         return (draft instanceof ArrayNode a) ? a : objectMapper.createArrayNode();
+    }
+
+    /**
+     * The last few real turns, oldest first, for sub-agents that can use context. Deliberately
+     * short: two exchanges is enough to resolve "the second one" or "make it the day after", and
+     * more only raises the chance the model lifts a stale value out of the history. The
+     * {@code agent_state} entry is skipped - it is bookkeeping, not conversation.
+     */
+    private java.util.List<String> recentTurns(ConversationalAgentSession session) {
+        java.util.List<String> out = new ArrayList<>();
+        JsonNode events = session.getChatEventJson();
+        if (events == null || !events.isArray()) {
+            return out;
+        }
+        java.util.List<JsonNode> chat = new ArrayList<>();
+        for (JsonNode e : events) {
+            String role = e.path("role").asText("");
+            if ("user".equals(role) || "assistant".equals(role)) {
+                chat.add(e);
+            }
+        }
+        for (JsonNode e : chat.subList(Math.max(0, chat.size() - RECENT_TURNS), chat.size())) {
+            String content = e.path("content").asText("").replaceAll("\s+", " ").trim();
+            if (!content.isEmpty()) {
+                out.add(e.path("role").asText("") + ": " + (content.length() > 300
+                        ? content.substring(0, 300) : content));
+            }
+        }
+        return out;
     }
 
     /** Agent bookkeeping rides in chat_event_json under a dedicated non-chat role. */

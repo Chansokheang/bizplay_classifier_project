@@ -72,6 +72,11 @@
           <input id="corpInput" class="corp-input" inputmode="numeric" maxlength="20"
                  placeholder="Enter corp no." />
         </div>
+        <!-- Sign in with YOUR BizPlay token: identity then comes from the token (via /whoami),
+             not from static config. Empty = the server's dev fallback token and default user. -->
+        <button id="bzTokenBtn" class="btn btn-quiet btn-sm" title="Use your own BizPlay token — who you are is read from it">
+          <svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> <span id="bzTokenWho">Default user</span>
+        </button>
       </div>
     </div>
   </header>
@@ -82,6 +87,9 @@
       <button class="tab active" data-tab="plan"><svg class="ico" aria-hidden="true"><use href="#i-file-text"/></svg> Request Plan</button>
       <button class="tab" data-tab="approve"><svg class="ico" aria-hidden="true"><use href="#i-check-circle"/></svg> Approve Plan</button>
       <button class="tab" data-tab="report"><svg class="ico" aria-hidden="true"><use href="#i-receipt"/></svg> Expense Report</button>
+      <!-- One chat for the whole trip: the root agent routes each turn to the plan, settlement or
+           booking agent. Sits beside them rather than replacing them — the other tabs still work. -->
+      <button class="tab" data-tab="assistant"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Trip Assistant</button>
       <button class="tab" data-tab="audit"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg> Audit</button>
     </div>
   </nav>
@@ -366,6 +374,9 @@
         <div class="head-actions">
           <button id="bzSettleRefresh" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Refresh</button>
           <button id="openSettleChatBtn" class="btn btn-quiet" title="Settle a finished trip in chat — pick the plan, evidence period and receipts"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Settle in Chat</button>
+          <!-- DEMO ONLY: the proposed booking agent, over dummy inventory. Remove this button,
+               openBookingChat() and the agent.booking branch in sendAgent() to drop the feature. -->
+          <button id="openBookingChatBtn" class="btn btn-quiet" title="DEMO — book rail, flights or a hotel in chat over dummy inventory"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg> Book in Chat (DEMO)</button>
           <button id="openReportCreateBtn" class="btn btn-primary">+ Create Report</button>
         </div>
       </div>
@@ -408,6 +419,27 @@
       <div class="list-foot">
         <span class="foot-info">Showing <strong id="bzSettleShown">0</strong> of <strong id="bzSettleTotal">0</strong> settlements</span>
         <span class="foot-page" id="bzSettleFootRange">BizPlay</span>
+      </div>
+    </section>
+
+    <!-- ============ TAB: TRIP ASSISTANT (root agent, one chat) ============ -->
+    <!-- Talks to /agents/root, which decides per turn whether the plan, settlement or booking
+         agent should answer. The badge on each reply names the agent that handled it, so the
+         routing is visible rather than something you have to take on trust. -->
+    <section id="tab-assistant" class="tab-pane hidden">
+      <div class="list-head">
+        <span class="list-meta">One conversation — plan a trip, settle one, or book travel. The assistant picks the right agent for each message.</span>
+        <div class="head-actions">
+          <button id="asstFinish" class="btn btn-quiet" title="File the plan, submit the settlement, or confirm the booking — whichever is in progress"><svg class="ico" aria-hidden="true"><use href="#i-check-circle"/></svg> Finish current task</button>
+          <button id="asstReset" class="btn btn-quiet"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> New conversation</button>
+        </div>
+      </div>
+      <div class="asst-shell">
+        <div id="asstThread" class="thread"></div>
+        <div class="asst-composer">
+          <textarea id="asstInput" rows="2" placeholder="e.g. 8월 27일 서울에서 부산 KTX 예약해줘 · 출장 정산하고 싶어 · 출장 계획 만들어줘"></textarea>
+          <button id="asstSend" class="btn btn-primary">Send</button>
+        </div>
       </div>
     </section>
 

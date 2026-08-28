@@ -695,6 +695,77 @@ body.ap-open #apPage { display: block; }
   padding: 36px 16px; overflow-y: auto; background: rgba(20,24,33,.45);
 }
 .overlay.hidden { display: none; }
+/* Scrolling inside a modal must stay inside it. Without overscroll-behavior the browser CHAINS
+   the scroll onward once an inner area reaches its end, so scrolling the chat kept moving the
+   settlements table sitting behind it. Applies to every scrollable surface a modal can contain. */
+.overlay,
+.sheet > .sheet-body,
+.sheet-wide .sheet-body,
+.create-body > .sheet-body,
+.thread,
+.mini-list,
+.md-list,
+.ss-detail-body { overscroll-behavior: contain; }
+/* Belt and braces: while ANY overlay is open the page behind does not scroll at all. Set from
+   app.js, which watches the overlays rather than relying on each open/close path to remember. */
+body.modal-open { overflow: hidden; }
+
+/* ---- Trip Assistant tab: the root agent, as a full-page conversation ---- */
+.asst-shell {
+  display: flex; flex-direction: column; height: calc(100vh - 300px); min-height: 380px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.asst-shell > .thread { flex: 1 1 auto; min-height: 0; }
+.asst-composer {
+  flex: 0 0 auto; display: flex; gap: 10px; align-items: flex-end;
+  padding: 12px 14px; border-top: 1px solid var(--line-soft); background: var(--band);
+}
+.asst-composer textarea {
+  flex: 1 1 auto; resize: none; font: inherit; color: var(--text);
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+}
+.asst-composer textarea:focus { outline: 2px solid var(--navy, #1f3a60); outline-offset: -1px; }
+/* Which agent answered. The point of the tab is that routing happens; showing it turns an
+   invisible decision into something the reader can check against what they asked for. */
+.asst-by {
+  display: inline-block; margin: 0 0 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
+}
+.asst-empty { padding: 26px 22px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+/* The draft as it stands. Sits in the thread rather than a side panel, so it stays next to the
+   turn that changed it — and there is only ever one, re-appended at the bottom each time. */
+.asst-card {
+  align-self: flex-start; max-width: min(520px, 90%);
+  background: var(--band); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin: 2px 0 6px;
+}
+.asst-card-h {
+  font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px;
+}
+.asst-card-r {
+  display: flex; gap: 14px; justify-content: space-between; align-items: baseline;
+  padding: 4px 0; border-top: 1px solid var(--line-soft); font-size: 13.5px;
+}
+.asst-card-r:first-of-type { border-top: none; }
+.asst-card-r > span { color: var(--muted); white-space: nowrap; }
+.asst-card-r > strong { color: var(--text); font-weight: 600; text-align: right; }
+/* Approval-line picker: person + kind + add, with the chosen line listed above it. */
+.asst-appr-pick { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.asst-appr-pick select {
+  flex: 1 1 130px; min-width: 0; font: inherit; font-size: 13px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text);
+}
+.asst-appr-pick .btn { flex: 0 0 auto; }
+.asst-appr-go { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.asst-appr-go .btn[disabled] { opacity: .5; cursor: not-allowed; }
+.asst-appr-note { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.asst-appr-x {
+  flex: 0 0 auto; border: none; background: none; cursor: pointer; padding: 0 2px;
+  color: var(--muted); font-size: 12px; line-height: 1;
+}
+.asst-appr-x:hover { color: var(--bad-text, #b23b2e); }
 /* gentle entrance for modals */
 @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }

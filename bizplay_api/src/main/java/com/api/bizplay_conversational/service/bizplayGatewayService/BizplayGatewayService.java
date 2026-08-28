@@ -119,6 +119,12 @@ public interface BizplayGatewayService {
      */
     JsonNode getTranKindList(String token);
 
+    /**
+     * Who the given bearer token belongs to (name, corporationUserId, department, corporations).
+     * NEVER cached: the answer is per-token, and a cache would hand one user another's identity.
+     */
+    JsonNode getUserProfile(String token);
+
     /** Budget departments (코스트센터) usable in a slip: the user's authorized list when one is
      *  registered, else the corp-wide list. Never throws — an empty array on failure. */
     JsonNode getBudgetDepartments(long corpUserId, String token);

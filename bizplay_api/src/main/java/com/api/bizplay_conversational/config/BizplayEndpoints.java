@@ -80,6 +80,9 @@ public class BizplayEndpoints {
 
     /** TranKind master (id → name/type): GET, no params. */
     private String trankindList = "/api/v2/trankind/list";
+
+    /** Who the bearer token belongs to — name, corporationUserId, department, corporations. */
+    private String userProfile = "/api/v2/user/profile/modal";
     private String budgetDeptUser = "/api/v2/budgetdepartment/user/list/eacc/authorized/{corpUserId}";
     private String budgetDeptCorp = "/api/v2/budgetdepartment/list";
 

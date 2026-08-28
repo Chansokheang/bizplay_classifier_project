@@ -99,6 +99,15 @@ public class BizplayFormController {
         return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getPlanDetail(approvalId, token)));
     }
 
+    @Operation(summary = "Who the caller is, per their BizPlay token: name, corporationUserId, "
+            + "department, connected corporations. With no X-Bizplay-Token header this describes "
+            + "the dev fallback token — which is exactly what the UI shows as the default user.")
+    @GetMapping("/whoami")
+    public ResponseEntity<ApiResponse<com.fasterxml.jackson.databind.JsonNode>> whoami(
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getUserProfile(token)));
+    }
+
     @Operation(summary = "⑨ Settlement (출장정산서) documents saved in BizPlay for a period — the "
             + "source of truth for the Expense Report table.")
     @GetMapping("/settlements")

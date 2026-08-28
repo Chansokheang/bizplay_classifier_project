@@ -18,6 +18,19 @@ public interface FieldMapperAgentService {
     JsonNode mapFields(String message, JsonNode fields);
 
     /**
+     * The same, with the tail of the conversation for CONTEXT ONLY — enough to resolve an
+     * elliptical turn ("make it the day after", "the other one") without re-reading older values.
+     * A field the latest message does not state must still come back absent: an earlier value is
+     * usually the very thing being corrected.
+     *
+     * @param recentTurns last few turns, oldest first, formatted "user: …" / "assistant: …";
+     *                    null or empty behaves exactly like the 2-arg form.
+     */
+    default JsonNode mapFields(String message, JsonNode fields, java.util.List<String> recentTurns) {
+        return mapFields(message, fields);
+    }
+
+    /**
      * Focused re-read for ONE field, used when the broad mapping missed something the user
      * clearly said ("...trip to Busan..." with no destination extracted). Asking about a single
      * named field is far more reliable than mapping the whole form at once.

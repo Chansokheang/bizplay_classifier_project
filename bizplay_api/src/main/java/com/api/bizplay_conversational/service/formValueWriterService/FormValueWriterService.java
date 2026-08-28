@@ -26,4 +26,11 @@ public interface FormValueWriterService {
 
     /** Labels of required fields that are still empty (drives follow-up questions + status). */
     List<String> missingRequired(JsonNode document, JsonNode fields, JsonNode state);
+
+    /**
+     * Re-sync the BSTR_PERIOD selections with the state's current destination. For callers that
+     * correct {@code state.destination} AFTER {@link #apply} has run — the selections would
+     * otherwise keep carrying the value the correction just replaced.
+     */
+    void refreshPeriod(ObjectNode document, JsonNode state);
 }

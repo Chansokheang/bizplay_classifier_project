@@ -547,6 +547,11 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         issued.set("selections", selections);
     }
 
+    @Override
+    public void refreshPeriod(ObjectNode document, JsonNode state) {
+        refreshPeriodSelections(document, state);
+    }
+
     /** Destination changed: refresh the period selections so areaInfo stays in sync. */
     private void refreshPeriodSelections(ObjectNode document, JsonNode state) {
         for (JsonNode issued : document.path("issuedItems")) {

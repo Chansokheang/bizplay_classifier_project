@@ -97,6 +97,11 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
 
     @Override
     public JsonNode mapFields(String message, JsonNode fields) {
+        return mapFields(message, fields, null);
+    }
+
+    @Override
+    public JsonNode mapFields(String message, JsonNode fields, List<String> recentTurns) {
         if (message == null || message.isBlank() || fields == null || !fields.isArray() || fields.isEmpty()) {
             return objectMapper.createObjectNode();
         }
@@ -117,9 +122,23 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
                 }
                 def.append('\n');
             }
+            // History rides in the SYSTEM message, labelled as background. As real UserMessages the
+            // model would answer them, or lift a value out of an older turn — the one thing this
+            // must not do, since the older value is usually what the user is changing.
+            String system = agentPromptService.resolve("field-mapper", SYSTEM_PROMPT)
+                    + "\n" + dateContextService.buildContext();
+            if (recentTurns != null && !recentTurns.isEmpty()) {
+                system = system + """
+
+                        Earlier turns, for CONTEXT ONLY — never take a value from them. Use them only
+                        to resolve what the latest message refers to. If the latest message does not
+                        state a field, OMIT that field entirely.
+                        """
+                        + String.join("\n", recentTurns)
+                        + "\nMap ONLY what the latest user message states.\n";
+            }
             List<Message> prompt = List.of(
-                    new SystemMessage(agentPromptService.resolve("field-mapper", SYSTEM_PROMPT)
-                            + "\n" + dateContextService.buildContext()),
+                    new SystemMessage(system),
                     new UserMessage(def + "\nUser message:\n" + message));
             String raw = client.prompt().messages(prompt).call().content();
             log.info("Field mapper raw output: {}", raw);

@@ -249,7 +249,7 @@ function initI18n() {
  *  Admin:    approve plans + review compliance audits.
  * ================================================================ */
 let ROLE = localStorage.getItem("bizplay.role") || "traveler";
-const ROLE_TABS = { traveler: ["plan", "report"], admin: ["approve", "audit"] };
+const ROLE_TABS = { traveler: ["plan", "report", "assistant"], admin: ["approve", "audit"] };
 
 function roleAllows(tab) { return (ROLE_TABS[ROLE] || ROLE_TABS.traveler).includes(tab); }
 
@@ -2635,6 +2635,18 @@ function init() {
   // $("openAgentBtn").addEventListener("click", openAgent);
   $("openChatBtn").addEventListener("click", openChatMode);
   $("openSettleChatBtn").addEventListener("click", openSettlementChat);
+  const bookBtn = $("openBookingChatBtn");
+  if (bookBtn) bookBtn.addEventListener("click", openBookingChat);   // DEMO
+  watchOverlaysForBodyLock();
+  const tokBtn = $("bzTokenBtn");
+  if (tokBtn) tokBtn.addEventListener("click", bzTokenPrompt);
+  bzApplyIdentity().catch(() => {});   // resolve who the default token belongs to
+  $("asstSend").addEventListener("click", () => asstSend());
+  $("asstInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); asstSend(); }
+  });
+  $("asstFinish").addEventListener("click", asstFinish);
+  $("asstReset").addEventListener("click", asstReset);
   const bzRef = $("bzSettleRefresh");
   if (bzRef) bzRef.addEventListener("click", loadBizplaySettlements);
   // Period filter: a picked date is a complete intent, so it re-queries BizPlay straight away —
@@ -2883,6 +2895,7 @@ const agent = {
   planId: null,   // for report mode: the trip plan being reported on
   live: false,    // true = session runs on the BizPlay form-driven agent (/bizplay/agents/plan)
   settle: false,  // true = session runs on the settlement agent (/bizplay/agents/settlement)
+  booking: false, // DEMO - true = session runs on the booking agent (/bizplay/agents/booking)
 };
 
 function resetAgent() {
@@ -2895,6 +2908,7 @@ function resetAgent() {
   agent.planId = null;
   agent.live = false;
   agent.settle = false;
+  agent.booking = false;
   $("agentInput").value = "";
   $("agentFileInput").value = "";
   renderAgentFiles();
@@ -3150,6 +3164,497 @@ function openChatMode() {
   loadStarterMessage();                           // server-customized opener, swapped in when fetched
 }
 
+/* ================================================================
+ *  TRIP ASSISTANT — the root agent, as a full-page conversation.
+ *
+ *  Deliberately its own small surface rather than the modal chat: this tab exists to SHOW the
+ *  routing, so each reply is badged with the agent that handled it. It speaks only to
+ *  /agents/root, which decides per turn whether the plan, settlement or booking agent answers —
+ *  the three keep their own tabs and endpoints, untouched.
+ * ================================================================ */
+let asstSessionId = null;
+let asstBusy = false;
+
+function asstAppend(role, text, byAgent) {
+  const thread = $("asstThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-" + role;
+  if (byAgent) {
+    const by = document.createElement("span");
+    by.className = "asst-by";
+    by.textContent = byAgent;
+    wrap.appendChild(by);
+  }
+  const body = document.createElement("div");
+  body.textContent = text;
+  wrap.appendChild(body);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  return wrap;
+}
+
+/* Chips are the same contract as everywhere else: the label is what the user reads, sendText is
+ * what the agent receives. A tap and a typed sentence travel the identical path. */
+function asstChips(groups) {
+  const thread = $("asstThread");
+  (groups || []).forEach((g) => {
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg-assistant";
+    if (g.name) {
+      const cap = document.createElement("span");
+      cap.className = "asst-by";
+      cap.textContent = g.name;
+      wrap.appendChild(cap);
+    }
+    const row = document.createElement("div");
+    row.className = "choice-row";
+    (g.options || []).forEach((o) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "choice-chip";
+      b.textContent = o.label || o.sendText;
+      b.addEventListener("click", () => {
+        if (asstBusy) return;
+        b.classList.add("choice-picked");
+        asstSend(o.sendText, o.label || o.sendText);
+      });
+      row.appendChild(b);
+    });
+    wrap.appendChild(row);
+    thread.appendChild(wrap);
+  });
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* The draft as it stands, drawn after every turn. One card, not a growing pile: it is removed and
+ * re-appended at the bottom each time, so it always sits beside the newest message — the same
+ * "preview rides down" behaviour the plan and settlement chats have. Which rows appear is decided
+ * by the shape of draftJson, because that is what tells us which agent built it. */
+function asstPreview(data) {
+  const old = document.getElementById("asstPreviewCard");
+  if (old) old.remove();
+  const doc = (Array.isArray(data.draftJson) && data.draftJson[0]) || null;
+  if (!doc) return;
+
+  const rows = [];
+  const add = (label, value) => {
+    if (value === null || value === undefined || value === "" ) return;
+    rows.push([label, String(value)]);
+  };
+  const money = (n) => "₩" + Number(n || 0).toLocaleString();
+  const day = (d) => (d ? String(d).slice(0, 10) : "");
+  let heading;
+
+  if (doc.bookingType) {                                   // booking agent
+    heading = T("Booking draft", "예약 초안");
+    add(T("Type", "구분"), { RAIL: T("Rail", "기차"), FLIGHT: T("Flight", "항공"),
+                             ACCOMMODATION: T("Stay", "숙소") }[doc.bookingType] || doc.bookingType);
+    if (doc.bookingType === "ACCOMMODATION") add(T("City", "도시"), doc.arrival);
+    else add(T("Route", "구간"), [doc.depart, doc.arrival].filter(Boolean).join(" → "));
+    add(T("Date", "일자"), doc.usedEndDate && doc.usedEndDate !== doc.usedStartDate
+      ? `${day(doc.usedStartDate)} ~ ${day(doc.usedEndDate)}` : day(doc.usedStartDate));
+    add(T("Selected", "선택"), doc.operator);
+    if (doc.amount) add(T("Amount", "금액"), money(doc.amount));
+    add(T("Reference", "예약번호"), doc.bookingReference);
+    add(T("Plan", "출장계획"), doc.bstrPlanApprovalId);
+  // Settlement is tested BEFORE plan: a settlement document is built from the plan's own
+  // form, so it carries bstrPurposeId and paperId too. Only the receipt arrays are unique
+  // to it, and whichever branch runs first decides the label.
+  } else if (doc.etcReceiptSaveRequests || doc.bstrReceipts) {   // settlement
+    // NOT issuedItems: both documents carry it (they are built from the same form), so it
+    // labelled every plan a settlement. The receipt arrays exist only on a settlement.
+    heading = T("Settlement draft", "정산서 초안");
+    add(T("Document", "문서"), doc.title);
+    const etc = doc.etcReceiptSaveRequests || [];
+    const card = doc.bstrReceipts || [];
+    add(T("Expenses", "경비"), (etc.length + card.length) + T(" line(s)", "건"));
+    if (doc.totalBstrAmount) add(T("Total", "총액"), money(doc.totalBstrAmount));
+    etc.slice(0, 6).forEach((e) =>
+      add("· " + (e.mestName || ""), `${day(e.approvalDate)} · ${money(e.approvalAmount)}`));
+  } else if (doc.bstrPurposeId || doc.paperId || doc.bstrSegmentId) {   // trip-plan draft
+    heading = T("Trip plan draft", "출장계획 초안");
+    add(T("Title", "제목"), doc.title);
+    add(T("Destination", "출장지"), data.destination);
+    add(T("From", "출발지"), data.origin);
+    if (doc.bstrStartDate) {
+      add(T("Period", "기간"), `${day(doc.bstrStartDate)} ~ ${day(doc.bstrEndDate)}`);
+    }
+    // One row per traveller, enriched from the roster (department · position) — "who is going"
+    // deserves more than a comma-joined name list, especially when "me and kim do ha" resolved
+    // to two different people the user should be able to check.
+    if (data.travelers && data.travelers.length) {
+      const ids = data.travelerIds || [];
+      const many = data.travelers.length > 1;
+      data.travelers.forEach((name, i) => {
+        const u = (bzApproval.roster || []).find((x) => x.id === ids[i])
+          || (bzApproval.roster || []).find((x) => x.name === name);
+        const label = many ? T("Traveller ", "출장자 ") + (i + 1) : T("Traveller", "출장자");
+        add(label, u ? [u.name, u.dept, u.position].filter(Boolean).join(" · ") : name);
+      });
+    }
+    if (data.missingFields && data.missingFields.length) {
+      add(T("Still needed", "미입력"), data.missingFields.join(", "));
+    }
+  } else {
+    return;   // a shape we do not recognise: show nothing rather than mislabel it
+  }
+  if (!rows.length) return;
+
+  const card = document.createElement("div");
+  card.id = "asstPreviewCard";
+  card.className = "asst-card";
+  const h = document.createElement("div");
+  h.className = "asst-card-h";
+  h.textContent = heading;
+  card.appendChild(h);
+  rows.forEach(([label, value]) => {
+    const r = document.createElement("div");
+    r.className = "asst-card-r";
+    const k = document.createElement("span");
+    k.textContent = label;
+    const v = document.createElement("strong");
+    v.textContent = value;
+    r.append(k, v);
+    card.appendChild(r);
+  });
+  const thread = $("asstThread");
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* The 결재선. A plan cannot be filed without one, and the agent says so ("the last step is the
+ * approval line") — but saying it is not enough if there is nowhere to pick one. Shown when the
+ * PLAN draft is complete: structural test, not a phrase match — plan-shaped draft, nothing left in
+ * missingFields, and no chips outstanding. The settlement agent offers its own approver chips, so
+ * this is the plan flow only. */
+let asstLines = [];
+
+function asstApprovalCard(data) {
+  const old = document.getElementById("asstApprovalCard");
+  const doc = (Array.isArray(data.draftJson) && data.draftJson[0]) || null;
+  const isPlan = !!doc && !doc.bookingType && !doc.etcReceiptSaveRequests && !doc.bstrReceipts
+    && (doc.bstrPurposeId || doc.paperId);
+  // "No missing fields" is NOT enough: FORM_LOAD reports none simply because the form has only
+  // just been retrieved, which put the approval line on screen before the plan had a date or a
+  // traveller. Require the things a filed plan cannot be without.
+  const complete = isPlan && !(data.missingFields || []).length
+    && !(data.pendingChoices || []).length
+    && !!doc.title && !!doc.bstrStartDate && (data.travelerIds || []).length > 0;
+  if (!complete) {
+    if (old) old.remove();
+    return;
+  }
+  if (old) old.remove();                 // re-append so it rides down with the conversation
+
+  const card = document.createElement("div");
+  card.id = "asstApprovalCard";
+  card.className = "asst-card";
+  card.innerHTML = `<div class="asst-card-h">${esc(T("Approval line", "결재선"))}</div>
+    <div class="asst-appr-rows"></div>
+    <div class="asst-appr-pick">
+      <select class="asst-appr-who"></select>
+      <select class="asst-appr-kind">${BZ_LINE_KINDS.map(
+        (k) => `<option value="${k[0]}">${esc(LANG === "ko" ? k[1] : k[0])}</option>`).join("")}</select>
+      <button type="button" class="btn btn-quiet asst-appr-add">${esc(T("Add", "추가"))}</button>
+    </div>
+    <div class="asst-appr-go">
+      <button type="button" class="btn btn-primary asst-appr-submit">${esc(T("Submit plan", "출장 계획 상신"))}</button>
+      <span class="asst-appr-note">${esc(T(
+        "Add at least one approver first.",
+        "결재자를 한 명 이상 추가해 주세요."))}</span>
+    </div>`;
+  $("asstThread").appendChild(card);
+  $("asstThread").scrollTop = $("asstThread").scrollHeight;
+
+  const who = card.querySelector(".asst-appr-who");
+  const renderLines = () => {
+    const box = card.querySelector(".asst-appr-rows");
+    box.innerHTML = "";
+    // Nothing to submit without an approver, so the button says so rather than failing later.
+    const ready = asstLines.length > 0;
+    card.querySelector(".asst-appr-submit").disabled = !ready;
+    card.querySelector(".asst-appr-note").textContent = ready
+      ? T("Files the plan to BizPlay.", "BizPlay에 출장 계획을 상신합니다.")
+      : T("Add at least one approver first.", "결재자를 한 명 이상 추가해 주세요.");
+    asstLines.forEach((l, i) => {
+      const r = document.createElement("div");
+      r.className = "asst-card-r";
+      const k = document.createElement("span");
+      k.textContent = `${i + 1}. ` + ((BZ_LINE_KINDS.find((x) => x[0] === l.kind) || [])[LANG === "ko" ? 1 : 0] || l.kind);
+      const v = document.createElement("strong");
+      v.textContent = l.name + (l.dept ? ` · ${l.dept}` : "");
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "asst-appr-x";
+      x.textContent = "✕";
+      x.addEventListener("click", () => { asstLines.splice(i, 1); renderLines(); });
+      r.append(k, v, x);
+      box.appendChild(r);
+    });
+  };
+  bzLoadRoster().then((roster) => {
+    who.innerHTML = roster.map((u) =>
+      `<option value="${u.id}">${esc(u.name + (u.dept ? " · " + u.dept : ""))}</option>`).join("");
+  }).catch((e) => {
+    who.innerHTML = `<option value="">${esc(T("staff list unavailable", "직원 명단을 불러오지 못했어요"))}</option>`;
+    log("approval roster: " + e.message);
+  });
+  const submitBtn = card.querySelector(".asst-appr-submit");
+  submitBtn.addEventListener("click", () => { if (asstLines.length) asstFinish(); });
+  card.__renderLines = () => renderLines();   // lets the typed path redraw the same card
+  card.querySelector(".asst-appr-add").addEventListener("click", () => {
+    const id = Number(who.value);
+    if (!id) return;
+    const picked = (bzApproval.roster || []).find((u) => u.id === id);
+    if (!picked) return;
+    asstLines.push({ id, name: picked.name, dept: picked.dept,
+                     kind: card.querySelector(".asst-appr-kind").value });
+    renderLines();
+  });
+  renderLines();
+}
+
+/* A typed sentence drives the approval line exactly like its buttons — "결재자는 김도하",
+ * "김도하로 제출해줘", a bare "김도하" as the answer, then "제출". Names are matched against the
+ * SAME roster the dropdown shows, so only real staff are accepted. Deliberately narrow about what
+ * it consumes: a roster name alone is not enough ("출장자는 김충북이야" is a traveller change, not
+ * an approver), so it also needs an approval word, a submit word, or a bare-name answer.
+ * Returns true when the message was handled here and must not reach the agent. */
+function asstApprovalTextTurn(message) {
+  const card = document.getElementById("asstApprovalCard");
+  if (!card || message.length > 60) return false;
+  // What this consumes is DATA, not phrasing: a real roster name, plus BizPlay's own line-kind
+  // words (결재/합의/수신/참조 — their ApprovalKindType enum). Whether a sentence means "file it
+  // now" is NOT decided here any more — that judgement belongs to the agent, which classifies the
+  // message with the recent turns as context and answers intent SUBMIT_REQUESTED. The phrase list
+  // that used to live here missed every wording nobody predicted ("create plan"), and each miss
+  // looked like the assistant ignoring the user.
+  const roster = bzApproval.roster || [];
+  const matched = roster.filter((u) => u.name && u.name.length >= 2 && message.includes(u.name));
+  const approvalWordy = /(결재|승인|합의|수신|참조|approv|agree|accept|reference)/i.test(message);
+  const bareName = matched.length === 1
+    && message.replace(matched[0].name, "").replace(/[\s,._~-]+/g, "").length <= 4;
+  if (!(matched.length && (approvalWordy || bareName))) return false;
+
+  asstAppend("user", message);
+  $("asstInput").value = "";
+  const kind = /합의|agree/i.test(message) ? "AGREE"
+    : /수신|accept/i.test(message) ? "ACCEPT"
+    : /참조|reference/i.test(message) ? "REFERENCE" : "APPROVAL";
+  let added = 0;
+  matched.forEach((u) => {
+    if (asstLines.some((l) => l.id === u.id)) return;
+    asstLines.push({ id: u.id, name: u.name, dept: u.dept, kind });
+    added++;
+  });
+  if (added && card.__renderLines) card.__renderLines();
+  asstAppend("assistant", added
+    ? T("Added to the approval line — tell me when to submit.",
+        "결재선에 추가했어요 — 상신할 때가 되면 말씀해 주세요.")
+    : T("They're already on the approval line.", "이미 결재선에 있는 분이에요."));
+  return true;
+}
+
+/** The agent that took the turn, for the badge — "PLAN_AGENT" reads better as "Plan". */
+function asstWho(subAgents) {
+  const hit = (subAgents || []).find((a) => /_AGENT$/.test(a) && a !== "ROOT_AGENT");
+  if (!hit) return "Assistant";
+  return { PLAN_AGENT: T("Plan agent", "출장계획 에이전트"),
+           SETTLEMENT_AGENT: T("Settlement agent", "출장정산 에이전트"),
+           BOOKING_AGENT: T("Booking agent (demo)", "예약 에이전트 (데모)") }[hit] || hit;
+}
+
+async function asstSend(text, echoAs) {
+  if (asstBusy) return;
+  const message = (text !== undefined ? text : $("asstInput").value).trim();
+  if (!message) { $("asstInput").focus(); return; }
+  // The approval line is drivable by prompt, not only by its buttons: name an approver, say
+  // submit, or both in one sentence. Consumed locally when it clearly concerns the approval
+  // line; anything else still goes to the agent.
+  if (asstApprovalTextTurn(message)) {
+    return;
+  }
+  asstBusy = true;
+  asstAppend("user", echoAs || message);
+  $("asstInput").value = "";
+  const thinking = asstAppend("assistant", T("Thinking…", "생각 중이에요…"));
+  try {
+    const body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message };
+    if (asstSessionId) body.sessionId = asstSessionId;
+    const res = await fetch(`${BZ_API_BASE()}/agents/root`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    const data = (json && (json.data || json.payload)) || {};
+    thinking.remove();
+    if (!res.ok) throw new Error(json && (json.message || json.detail) || "request failed");
+    asstSessionId = data.sessionId || asstSessionId;
+    // The agent judged this message as "go ahead and file it" (with the recent turns as context).
+    // Filing itself stays a separate /create call — the agent only ever asks for it.
+    if (data.intent === "SUBMIT_REQUESTED") {
+      if (asstLines.length) {
+        // After this handler's finally clears the busy flag — otherwise the flag asstFinish sets
+        // would be wiped mid-flight and a second send could slip in while filing.
+        setTimeout(asstFinish, 0);
+      } else {
+        asstAppend("assistant", T("Who should approve it? Give me a name — e.g. 김도하.",
+          "결재자를 먼저 알려주세요 — 예: 김도하."), asstWho(data.subAgents));
+      }
+      return;
+    }
+    if (data.reply) asstAppend("assistant", data.reply, asstWho(data.subAgents));
+    asstChips(data.pendingChoices);
+    asstPreview(data);
+    asstApprovalCard(data);
+  } catch (e) {
+    thinking.remove();
+    asstAppend("assistant", T("Sorry — that did not go through: ", "죄송해요, 처리하지 못했어요: ")
+      + friendlyError(e.message));
+  } finally {
+    asstBusy = false;
+  }
+}
+
+/* Finish whatever is in progress. The user does not say which — the root session remembers
+ * whether it is a plan to file, a settlement to submit or a booking to confirm. */
+async function asstFinish() {
+  if (!asstSessionId) { asstAppend("assistant", T("Nothing in progress yet.", "아직 진행 중인 작업이 없어요.")); return; }
+  asstBusy = true;
+  const thinking = asstAppend("assistant", T("Finishing…", "마무리하는 중이에요…"));
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/root/${encodeURIComponent(asstSessionId)}`
+      + `/create?corpNo=${encodeURIComponent(CORP_NO)}`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        // The 결재선 the user built above. Empty for settlement and booking, which either pick an
+        // approver through their own chips or need none at all.
+        body: JSON.stringify(asstLines.length
+          ? { approvalLines: asstLines.map((l) => ({ corporationUserId: l.id, approvalKindType: l.kind })) }
+          : {}) });
+    const json = await res.json();
+    const data = (json && (json.data || json.payload)) || {};
+    thinking.remove();
+    if (!res.ok) throw new Error(json && (json.message || json.detail) || "request failed");
+    asstAppend("assistant", data.reply || T("Done.", "완료했어요."), asstWho(data.subAgents));
+    asstPreview(data);
+    asstLines = [];                                   // filed - the line belongs to that document
+    const card = document.getElementById("asstApprovalCard");
+    if (card) card.remove();
+  } catch (e) {
+    thinking.remove();
+    asstAppend("assistant", T("Could not finish: ", "마무리하지 못했어요: ") + friendlyError(e.message));
+  } finally {
+    asstBusy = false;
+  }
+}
+
+function asstReset() {
+  asstSessionId = null;
+  asstLines = [];
+  $("asstThread").innerHTML = "";
+  asstHero();
+}
+
+function asstHero() {
+  // Prewarm the roster so traveller rows and the approval picker can enrich synchronously —
+  // the card renders in the same turn as the reply, with no time to await a fetch.
+  bzLoadRoster().catch(() => {});
+  const thread = $("asstThread");
+  if (thread.children.length) return;
+  const hero = document.createElement("div");
+  hero.className = "asst-empty";
+  hero.textContent = T(
+    "Ask for anything about a business trip — plan one, settle a finished one, or book transport "
+      + "and hotels. Each reply is labelled with the agent that handled it.",
+    "출장에 관한 무엇이든 말씀해 주세요 — 계획 작성, 다녀온 출장 정산, 교통편·숙소 예약. "
+      + "각 답변에는 처리한 에이전트가 표시돼요.");
+  thread.appendChild(hero);
+}
+
+/* ---- BizPlay token sign-in: identity comes FROM the token, not from static config. ----
+ * Every request to our BizPlay surface carries the user's token (X-Bizplay-Token) when one is
+ * stored; without one the server falls back to its dev token — so "default user" is whoever THAT
+ * token belongs to, resolved the same way. /whoami answers with the token owner's profile, and
+ * BZ_CORP_USER_ID follows it, so documents are drafted as the signed-in person. */
+const BZ_TOKEN_KEY = "bizplay.userToken";
+(() => {
+  const orig = window.fetch;
+  window.fetch = function(url, opts) {
+    const tok = localStorage.getItem(BZ_TOKEN_KEY);
+    if (tok && String(url).includes("/agent-conversations/bizplay")) {
+      opts = opts || {};
+      opts.headers = Object.assign({}, opts.headers, { "X-Bizplay-Token": tok });
+    }
+    return orig.call(this, url, opts);
+  };
+})();
+
+async function bzApplyIdentity() {
+  const res = await fetch(`${BZ_API_BASE()}/whoami`);
+  const json = await res.json().catch(() => ({}));
+  const p = (json && (json.data || json.payload)) || {};
+  if (!res.ok || !p.corporationUserId) {
+    const el = $("bzTokenWho");
+    if (el) el.textContent = T("Token invalid", "토큰 오류");
+    throw new Error((json && json.message) || "profile unavailable");
+  }
+  BZ_CORP_USER_ID = String(p.corporationUserId);
+  localStorage.setItem("bizplay.corpUserId", BZ_CORP_USER_ID);
+  const el = $("bzTokenWho");
+  if (el) el.textContent = (p.userName || "?")
+    + (localStorage.getItem(BZ_TOKEN_KEY) ? "" : T(" (default)", " (기본)"));
+  return p;
+}
+
+function bzTokenPrompt() {
+  const cur = localStorage.getItem(BZ_TOKEN_KEY) || "";
+  const v = window.prompt(T("Paste your BizPlay token (leave empty for the default user):",
+    "BizPlay 토큰을 붙여넣으세요 (비우면 기본 사용자):"), cur);
+  if (v === null) return;                              // cancelled — change nothing
+  if (v.trim()) localStorage.setItem(BZ_TOKEN_KEY, v.trim());
+  else localStorage.removeItem(BZ_TOKEN_KEY);
+  bzApplyIdentity()
+    .then((p) => toast(T("Signed in as ", "사용자: ") + (p.userName || "?"), "ok"))
+    .catch(() => toast(T("That token was rejected by BizPlay.", "토큰이 유효하지 않습니다."), "err"));
+}
+
+/* One modal, one scroll surface. Every overlay here is a full-screen layer, so while any of them
+ * is open the page behind must not scroll — otherwise scrolling the chat drags the settlements
+ * table along with it. Watched rather than wired into each open/close function: there are a dozen
+ * overlays and a missed one is a silent regression, so this covers plan, settlement, booking and
+ * everything added later for free. */
+function watchOverlaysForBodyLock() {
+  const overlays = [...document.querySelectorAll(".overlay")];
+  if (!overlays.length) return;
+  const sync = () => document.body.classList.toggle(
+    "modal-open", overlays.some((o) => !o.classList.contains("hidden")));
+  const mo = new MutationObserver(sync);
+  overlays.forEach((o) => mo.observe(o, { attributes: true, attributeFilter: ["class"] }));
+  sync();
+}
+
+/* "Book in Chat (DEMO)" — the proposed booking agent, over dummy inventory. It reuses this whole
+ * chat surface unchanged: the reply is a bubble, pendingChoices are chips, and tapping one sends
+ * its sendText as the next message. That is the point being demonstrated — booking needed no new
+ * UI. To remove the feature, delete this function, its button in index.html, and the agent.booking
+ * branch in sendAgent(). */
+function openBookingChat() {
+  openCreate();                                   // full reset (also clears agent state)
+  chatOnly = true;
+  wizAsked = null;
+  $("createBody").classList.add("chat-only");
+  $("chatToggleBtn").classList.add("hidden");
+  setChatPane(true);
+  $("createTitle").textContent = T("Book a Trip — Chat (DEMO)", "출장 예약 — 채팅 (데모)");
+  $("createSub").textContent = T(
+    "Rail, flights and hotels over dummy inventory — nothing is actually reserved.",
+    "기차·항공·숙소를 더미 데이터로 예약해 봅니다 — 실제로 예약되지는 않아요.");
+  $("agentThread").innerHTML = "";
+  agent.booking = true;
+  appendMsg("assistant", T(
+    "What would you like to book? For example: \"Book a flight from Incheon to Osaka on 2026-09-02\"",
+    "무엇을 예약해 드릴까요? 예: \"8월 27일 서울에서 부산 KTX로 예약해줘\""));
+}
+
 /* "Settle in Chat" — the settlement agent (fixed chip-driven flow, all server-side).
  * The UI only renders reply + chips; each chip click sends its sendText back as the
  * next message. It opens on the corp's settlement starter (greeting + clickable
@@ -3210,14 +3715,62 @@ async function restoreSettleSession(sessionId) {
     agent.sessionId = data.sessionId || sessionId;
     agent.draft = draft;
     agent.status = data.status || null;
-    appendMsg("assistant", T("Welcome back — here are the expenses you registered for this settlement.",
-                             "다시 오셨네요 — 이 정산에 등록하신 경비예요."));
+    // Say WHY the old rows are back (they're real issued receipts in BizPlay — dropping them
+    // silently would orphan the money), and offer the way OUT as well as the way forward.
+    appendMsg("assistant", T(
+      "You have an unfinished settlement — these expenses are already registered in BizPlay, "
+        + "so I brought them back instead of losing them. Continue this one, or start over.",
+      "끝내지 않은 정산이 있어요 — 아래 경비는 이미 BizPlay에 등록된 실제 지출이라, 잃어버리지 않도록 "
+        + "다시 불러왔어요. 이어서 진행하시거나 새로 시작할 수 있어요."));
+    // WHICH trip this settlement belongs to — without it the restored rows float contextless.
+    // Same preview-card component as the plan chat's "Trip Information", not a text line.
+    const doc0 = draft[0] || {};
+    const tripTitle = String(doc0.title || "").replace(/^출장정산서_/, "");
+    const period = [doc0.bstrStartDate, doc0.bstrEndDate].filter(Boolean).join(" ~ ");
+    const tripRows =
+      (tripTitle ? pcRow(T("Trip", "출장"), tripTitle) : "")
+      + (period ? pcRow(T("Period", "기간"), period) : "")
+      + (doc0.bstrPlanApprovalId ? pcRow(T("Plan #", "계획서 번호"), "#" + doc0.bstrPlanApprovalId) : "")
+      + (doc0.content ? pcRow(T("Purpose", "출장 내용"), doc0.content) : "");
+    if (tripRows) {
+      previewCard("settleTrip", T("Trip being settled", "정산 중인 출장"), "briefcase", tripRows);
+    }
     settlementReceiptsPreview();                     // the persisted rows
     manualExpenseFollowUp();                          // continue (add another) or finish
+    startOverChip();                                  // …or abandon this one and pick a new trip
   } catch {
     localStorage.removeItem("bizplay.settle.session");
     openSettlementOnPlans();                         // same: the answer, not a greeting
   }
+}
+
+/* One chip that abandons the restored settlement session and opens the plan list fresh. The
+ * registered receipts stay issued in BizPlay (they are real), only this chat forgets them —
+ * the receipt browser can still find and attach them later. */
+function startOverChip() {
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  const row = document.createElement("div");
+  row.className = "choice-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "choice-chip";
+  btn.textContent = T("Start over with another trip", "다른 출장으로 새로 시작");
+  btn.addEventListener("click", () => {
+    if (agent.busy || row.classList.contains("choice-done")) return;
+    row.classList.add("choice-done");
+    btn.classList.add("choice-picked");
+    localStorage.removeItem("bizplay.settle.session");
+    agent.sessionId = null;
+    agent.draft = null;
+    agent.status = null;
+    openSettlementOnPlans();
+  });
+  row.appendChild(btn);
+  wrap.appendChild(row);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
 }
 
 /* RETIRED (kept for reference, do not delete): the per-corp settlement starter hero -
@@ -4835,7 +5388,19 @@ async function sendAgent(opts) {
     // whole session stays there (period question -> plan pick -> evidence attach).
     if (!agent.sessionId && /정산|settle/i.test(message || "")) agent.settle = true;
     let url, body;
-    if (agent.settle) {
+    // DEMO booking agent. Confirming is the one turn that must NOT be a chat turn - it is what
+    // spends money - so it goes to its own /create endpoint, exactly like plan and settlement.
+    if (agent.booking) {
+      if (String(message || "").trim().toLowerCase().startsWith("booking-confirm")) {
+        url = `${BZ_API_BASE()}/agents/booking/${encodeURIComponent(agent.sessionId)}/create`;
+        body = {};
+      } else {
+        url = `${BZ_API_BASE()}/agents/booking`;
+        body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+        if (agent.sessionId) body.sessionId = agent.sessionId;
+        if (agent.planApprovalId) body.bstrPlanApprovalId = agent.planApprovalId;
+      }
+    } else if (agent.settle) {
       url = `${BZ_API_BASE()}/agents/settlement`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
       if (agent.sessionId) body.sessionId = agent.sessionId;
@@ -4857,7 +5422,7 @@ async function sendAgent(opts) {
     // Chat mode: prepend the local form state so the agent doesn't re-ask for
     // fields the user already filled via wizard chips (shown bubble stays clean).
     // Settlement chats skip it — the trip-form context is another flow's state.
-    if (chatOnly && body.message && !agent.settle) body.message = formContextPrefix() + body.message;
+    if (chatOnly && body.message && !agent.settle && !agent.booking) body.message = formContextPrefix() + body.message;
     // Settlement skips the trip-form context, but still has to carry the language choice —
     // the ENG/KOR switch decides the reply language, not the language the user typed in.
     else if (agent.settle && body.message) {
@@ -4938,6 +5503,12 @@ async function sendAgent(opts) {
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
         else if (data.intent === "MANUAL_EXPENSE_PROMPT_FULL") settlementManualFullForm();
         else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
+      }
+      // DEMO booking: render its chips and stop. Without this the turn fell through to the
+      // trip-form wizard, which asked "which trip form should we use?" straight after a booking
+      // was confirmed - another flow's question landing in this conversation.
+      else if (agent.booking) {
+        if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
       }
       else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
       else if (wizardIncomplete() || wizardHasPendingExtra()) nextWizardStep();
@@ -6091,11 +6662,12 @@ function showTab(name) {
   if (!roleAllows(name)) name = ROLE_TABS[ROLE][0];   // role gate: never open a hidden tab
   currentTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.getAttribute("data-tab") === name));
-  ["plan", "approve", "report", "audit"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
+  ["plan", "approve", "report", "audit", "assistant"].forEach((n) => $("tab-" + n).classList.toggle("hidden", n !== name));
   animatePane(name);
   if (name === "approve") loadApprovals();
   if (name === "report") { loadBizplaySettlements(); }
   if (name === "audit") loadAudits();
+  if (name === "assistant") asstHero();   // empty-state copy on first open
 }
 
 /* Re-fetch whichever tab is visible (used after the corp number changes). */
@@ -8127,4 +8699,7 @@ function initMasterData() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); initMcp(); buildDemoPanel(); });
+// buildDemoPanel() RETIRED (kept for reference, do not delete): the floating "Demo" step-by-step
+// panel (plan → settlement walkthrough). Removed from the page on request — re-add the call here
+// to bring it back.
+document.addEventListener("DOMContentLoaded", () => { initI18n(); init(); initAuditTab(); initMasterData(); initRole(); initDemoBanner(); initLlm(); initAp(); initCa(); initMcp(); });

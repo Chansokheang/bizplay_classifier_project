@@ -70,6 +70,12 @@ public class SlotFillerAgentServiceImple implements SlotFillerAgentService {
 
     @Override
     public JsonNode extract(String message, Map<String, String> wantedSlots, boolean korean) {
+        return extract(message, wantedSlots, korean, null);
+    }
+
+    @Override
+    public JsonNode extract(String message, Map<String, String> wantedSlots, boolean korean,
+                            List<String> recentTurns) {
         ObjectNode empty = objectMapper.createObjectNode();
         if (message == null || message.isBlank() || wantedSlots == null || wantedSlots.isEmpty()) {
             return empty;
@@ -81,10 +87,24 @@ public class SlotFillerAgentServiceImple implements SlotFillerAgentService {
         java.time.LocalDate now = java.time.LocalDate.now();
         String today = now + " (" + now.getDayOfWeek().getDisplayName(
                 java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + ")";
-        List<Message> prompt = List.of(
-                new SystemMessage(agentPromptService.resolve("settlement-slot-extract", EXTRACT_PROMPT)
-                        .formatted(fields, today)),
-                new UserMessage(message));
+        // The recent turns ride in the SYSTEM message, clearly labelled as background. Putting them
+        // in as real UserMessages would invite the model to answer them, or to pull a value out of
+        // an older turn - the one thing this must not do, since an earlier date or place is exactly
+        // what the user is usually correcting.
+        String system = agentPromptService.resolve("settlement-slot-extract", EXTRACT_PROMPT)
+                .formatted(fields, today);
+        if (recentTurns != null && !recentTurns.isEmpty()) {
+            system = system + """
+
+                    Earlier turns, for CONTEXT ONLY - never extract a value from them. Use them only
+                    to understand what the latest message refers to ("the second one", "the day after
+                    that"). If the latest message does not state a field, OMIT it - do not fill it in
+                    from an earlier turn, because an earlier value is usually the thing being changed.
+                    """
+                    + String.join("\n", recentTurns)
+                    + "\nExtract ONLY from the latest message below.\n";
+        }
+        List<Message> prompt = List.of(new SystemMessage(system), new UserMessage(message));
         ChatClient primary = chatClientRegistry.get(llmSettingsService.resolve(modelName));
         ChatClient alt = chatClientRegistry.get(modelName);
         ChatClient[] attempts = (alt != null && alt != primary)

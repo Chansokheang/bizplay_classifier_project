@@ -44,6 +44,8 @@ bizplay:
     receipt-etc-detail: /api/v2/receipt-etc/{receiptId}
     # TranKind master (id → name/type), to resolve the plan's allowed tranKinds
     trankind-list: /api/v2/trankind/list
+    # who the bearer token belongs to - name, corporationUserId, department, corporations
+    user-profile: /api/v2/user/profile/modal
     # Slip cost-center sources: the user's authorized budget departments, then the corp list.
     budget-dept-user: /api/v2/budgetdepartment/user/list/eacc/authorized/{corpUserId}
     budget-dept-corp: /api/v2/budgetdepartment/list

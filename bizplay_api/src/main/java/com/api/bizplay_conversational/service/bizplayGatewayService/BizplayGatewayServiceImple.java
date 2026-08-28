@@ -370,6 +370,13 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getUserProfile(String token) {
+        // Plain get, not getCached: identity is PER TOKEN, and the shared cache key would serve
+        // whoever asked first to everyone after them.
+        return get(buildUrl(endpoints.getUserProfile()), token);
+    }
+
+    @Override
     public JsonNode getBudgetDepartments(long corpUserId, String token) {
         try {
             JsonNode mine = get(buildUrl(endpoints.getBudgetDeptUser(), "corpUserId", corpUserId), token);

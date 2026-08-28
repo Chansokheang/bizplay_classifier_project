@@ -28,4 +28,9 @@ public class BizplayPlanAgentRequest {
      * fed through the same field-mapper / traveler-resolver pipeline as typed text.
      */
     private java.util.List<String> fileIds;
+    /**
+     * The approved 출장계획서 a booking belongs to — used by the booking agent only, and the single
+     * field that binds a booking to a plan and, through it, to the settlement. Null everywhere else.
+     */
+    private Long bstrPlanApprovalId;
 }

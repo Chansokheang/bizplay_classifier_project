@@ -40,6 +40,8 @@ import java.util.regex.Pattern;
 public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgentService {
 
     private static final String STATE_ROLE = "agent_state";
+    /** How many past turns sub-agents may see. Two exchanges. */
+    private static final int RECENT_TURNS = 4;
     private static final Pattern ISO_DATE = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})");
     private static final Pattern PLAN_PICK = Pattern.compile("(?i).*settle-plan:(\\d+).*");
     private static final Pattern PERIOD_DEFAULT = Pattern.compile("(?i).*evidence-period:default.*");
@@ -340,6 +342,37 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .draftJson(savedAp.getDraftJson())
                     .build();
         }
+        // Approver named in WORDS at the ready-to-submit step — resolved against the same roster
+        // the chips are built from (entity resolution, not phrase matching; ambiguous names keep
+        // the chips). "결재자는 김도하로 하고 제출해줘" sets the approver and falls through to submit.
+        if (!documents.isEmpty() && "DONE".equals(state.path("stage").asText(""))
+                && !slots(state).hasNonNull("approverId")) {
+            Long named = approverByName(message, bizplayToken);
+            if (named != null) {
+                slots(state).put("approverId", (long) named);
+                if (!isSubmitRequest(message)) {
+                    String who = approverName(named, bizplayToken);
+                    String reply = t(ko,
+                            (who.isEmpty() ? "Approver set." : who + " will approve this settlement.")
+                                    + " Submit it to BizPlay when you're ready.",
+                            (who.isEmpty() ? "결재자를 지정했어요." : who + " 님이 이 정산서를 결재합니다.")
+                                    + " 준비되면 BizPlay에 제출할게요.");
+                    appendTurn(session, "user", message);
+                    appendTurn(session, "assistant", reply);
+                    saveState(session, state);
+                    ConversationalAgentSession savedApw = sessionRepo.save(session);
+                    return BizplayPlanAgentResponse.builder()
+                            .sessionId(savedApw.getId().toString())
+                            .status(savedApw.getStatus() == null ? null : savedApw.getStatus().name())
+                            .intent("APPROVER_PICKED")
+                            .subAgents(List.of("SETTLEMENT_AGENT"))
+                            .reply(reply)
+                            .pendingChoices(submitChips(ko, bizplayToken))
+                            .draftJson(savedApw.getDraftJson())
+                            .build();
+                }
+            }
+        }
 
         // ⑦ Final submit — only when the USER asks to (a "submit" chip or "제출/save" in words), and
         // only once a plan has been imported (a real draft exists). POSTs the finished draft to
@@ -347,48 +380,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // endpoint; a chat submit carries just the drafter's DRAFT line.
         if (!documents.isEmpty() && isSubmitRequest(message)
                 && state.path("anchor").hasNonNull("approvalId")) {
-            if (!hasEvidence(documents)) {
-                // Refuse rather than file a ₩0 document nobody can act on.
-                String empty = t(ko,
-                        "There's no expense on this settlement yet — attach a receipt or register "
-                                + "the expense manually, then submit. ",
-                        "이 정산서에는 아직 경비가 없어요 — 증빙을 첨부하거나 경비를 직접 등록한 뒤 "
-                                + "제출해 주세요. ");
-                appendTurn(session, "user", message);
-                appendTurn(session, "assistant", empty);
-                saveState(session, state);
-                ConversationalAgentSession savedEmpty = sessionRepo.save(session);
-                return BizplayPlanAgentResponse.builder()
-                        .sessionId(savedEmpty.getId().toString())
-                        .status(savedEmpty.getStatus() == null ? null : savedEmpty.getStatus().name())
-                        .intent("EVIDENCE_PICK_PENDING")
-                        .subAgents(List.of("SETTLEMENT_AGENT"))
-                        .reply(empty)
-                        .pendingChoices(receiptChips(state, documents, ko))
-                        .draftJson(savedEmpty.getDraftJson())
-                        .build();
-            }
-            sanitizeEtcSaveRequests(documents, bizplayToken, slots(state).path("approverId").asLong(0));
-            String providerResponse = bizplayGatewayService.postSettlementDraft(documents, bizplayToken);
-            log.info("Settlement draft submitted to BizPlay (chat): {}", providerResponse);
-            session.setDraftJson(documents);
-            session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
-            state.put("stage", "DONE");
-            String submitReply = t(ko,
-                    "All done — your settlement (출장정산서) has been submitted to BizPlay.",
-                    "완료됐어요 — 출장정산서를 BizPlay에 제출했습니다.");
-            appendTurn(session, "user", message);
-            appendTurn(session, "assistant", submitReply);
-            saveState(session, state);
-            ConversationalAgentSession savedSubmit = sessionRepo.save(session);
-            return BizplayPlanAgentResponse.builder()
-                    .sessionId(savedSubmit.getId().toString())
-                    .status(savedSubmit.getStatus() == null ? null : savedSubmit.getStatus().name())
-                    .intent("CREATE_SETTLEMENT")
-                    .subAgents(List.of("BIZPLAY_GATEWAY"))
-                    .reply(submitReply)
-                    .draftJson(savedSubmit.getDraftJson())
-                    .build();
+            return chatSubmit(session, state, documents, message, bizplayToken, ko);
         }
 
         // "Done — no more expenses" (receipts-done) — works at ANY point after a plan is imported.
@@ -497,6 +489,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
         long corpUserId = Long.parseLong(request.getCorpUserId().trim());
 
+        // The flow is not a corridor: "wrap it up" / "file it" can be said at ANY step, not just
+        // where a Done chip happens to be on screen. Once a plan is imported and expenses exist,
+        // any message nothing above claimed is judged for that meaning BEFORE the stage machine
+        // narrows it to the current question. (Stage DONE has its own submit judge below.)
+        if (!machineToken && state.path("anchor").hasNonNull("approvalId")
+                && hasEvidence(documents) && !"DONE".equals(stage)) {
+            String fin = finishDecision(message, ko, recentTurns(session));
+            if ("submit".equals(fin)) {
+                return chatSubmit(session, state, documents, message, bizplayToken, ko);
+            }
+            if ("done".equals(fin)) {
+                state.put("stage", "DONE");
+                session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
+                StringBuilder done = new StringBuilder();
+                summarize(documents, done, ko);
+                appendTurn(session, "user", message);
+                appendTurn(session, "assistant", done.toString());
+                session.setDraftJson(documents);
+                saveState(session, state);
+                ConversationalAgentSession savedFin = sessionRepo.save(session);
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(savedFin.getId().toString())
+                        .status(savedFin.getStatus() == null ? null : savedFin.getStatus().name())
+                        .intent("SETTLEMENT_READY")
+                        .subAgents(List.of("SETTLEMENT_AGENT"))
+                        .reply(done.toString().trim())
+                        .pendingChoices(submitChips(ko))
+                        .draftJson(savedFin.getDraftJson())
+                        .build();
+            }
+        }
+
         switch (stage) {
             case "AWAIT_PLAN_PICK" -> {
                 Matcher m = PLAN_PICK.matcher(message);
@@ -549,18 +573,43 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
             case "AWAIT_TRANKIND" -> {
                 Matcher tk = TRANKIND_PICK.matcher(message);
-                if (tk.matches()) {
+                // Chip token or the kind's own name in words — both resolve against the plan
+                // form's catalogue, so 교통비 typed works exactly like the 교통비 chip.
+                Long tkByName = tk.matches() ? Long.valueOf(tk.group(1))
+                        : matchTranKindByName(state, message);
+                if (tkByName != null && hasTranKind(state, tkByName)) {
                     intent = "TRANKIND_PICKED";
-                    selectTranKind(state, Long.parseLong(tk.group(1)));
+                    selectTranKind(state, tkByName);
                     state.put("stage", "AWAIT_CARD_TYPES");
                     reply.append(t(ko, "Which card types should I search? ",
                             "어떤 카드의 사용 내역을 조회할까요? "));
                     chips = cardTypeChips(ko);
                 } else {
-                    intent = "TRANKIND_PENDING";
-                    reply.append(t(ko, "Please pick an expense type to add. ",
-                            "추가할 경비 항목을 선택해 주세요. "));
-                    chips = tranKindChips(state, ko);
+                    // The global judge above already said this message is neither "done" nor
+                    // "submit" — so here only the two fallbacks remain.
+                    if (hasEvidence(documents) && !machineToken) {
+                        // The words meant SOMETHING, and expenses already exist — so ASK which
+                        // way they're going instead of repeating the expense-type question as if
+                        // they'd said nothing. The clarify itself becomes context: a repeated
+                        // bare word is unambiguous on the next turn.
+                        intent = "TRANKIND_PENDING";
+                        reply.append(t(ko,
+                                "Do you want to add another expense, or wrap up and submit this "
+                                        + "settlement? ",
+                                "경비를 더 추가할까요, 아니면 이대로 마무리해서 정산서를 제출할까요? "));
+                        chips = addAnotherChips(state, ko);
+                        chips.add(TripPlanAgentResponse.PendingChoice.builder()
+                                .kind("SUBMIT").name(t(ko, "submit", "제출"))
+                                .options(List.of(TripPlanAgentResponse.Option.builder()
+                                        .label(t(ko, "Submit to BizPlay", "BizPlay에 제출"))
+                                        .sendText("submit").build()))
+                                .build());
+                    } else {
+                        intent = "TRANKIND_PENDING";
+                        reply.append(t(ko, "Please pick an expense type to add. ",
+                                "추가할 경비 항목을 선택해 주세요. "));
+                        chips = tranKindChips(state, ko);
+                    }
                 }
             }
             case "AWAIT_EVIDENCE_FILTER" -> {
@@ -609,6 +658,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     intent = "EVIDENCE_LOAD";
                     chips = loadEvidence(state, documents, corpUserId, types, bizplayToken, subAgents, reply, ko);
                 } else {
+                    // The global wrap-up judge already ran before the stage machine, so anything
+                    // reaching here really is just "not card types yet" — re-ask.
                     intent = "CARD_TYPES_PENDING";
                     reply.append(formFollowUpAgentService.composeFollowUp(
                             "출장정산서", List.of(t(ko, "card types to search (조회할 카드 종류)", "조회할 카드 종류")), ko));
@@ -640,15 +691,36 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     attachReceipts(state, documents, m.group(1), bizplayToken, reply, ko);
                     chips = receiptChips(state, documents, ko);
                 } else {
-                    intent = "EVIDENCE_PICK_PENDING";
-                    reply.append(t(ko,
-                            "Pick receipts to attach, or say \"done\" to finish. ",
-                            "첨부할 증빙을 선택하거나 \"첨부 완료\"라고 말씀해 주세요. "));
-                    chips = receiptChips(state, documents, ko);
+                    // Not a chip: the user may be choosing in WORDS ("전부 붙여줘", "the KTX one",
+                    // "첫 번째랑 세 번째"). The LLM maps the message onto the listed rows; the
+                    // attach itself still runs through the exact same deterministic path.
+                    List<String> picks = resolveReceiptPickWords(state, message, ko);
+                    if (!picks.isEmpty()) {
+                        intent = "EVIDENCE_ATTACH";
+                        for (String p : picks) {
+                            attachReceipts(state, documents, p, bizplayToken, reply, ko);
+                        }
+                        chips = receiptChips(state, documents, ko);
+                    } else {
+                        // The global wrap-up judge already ran — this really is a receipt pick
+                        // still to be made.
+                        intent = "EVIDENCE_PICK_PENDING";
+                        reply.append(t(ko,
+                                "Pick receipts to attach, or say \"done\" to finish. ",
+                                "첨부할 증빙을 선택하거나 \"첨부 완료\"라고 말씀해 주세요. "));
+                        chips = receiptChips(state, documents, ko);
+                    }
                 }
             }
             case "DONE" -> {
                 if (hasEvidence(documents)) {
+                    // Every other handler has already had its chance at this message (edits,
+                    // receipts, questions all return above) — so at the ready stage an unclaimed
+                    // sentence may simply MEAN "submit it", in whatever words. The LLM decides;
+                    // the narrow isSubmitRequest fast-path above stays as a shortcut.
+                    if (!machineToken && wantsToSubmitNow(message, ko, recentTurns(session))) {
+                        return chatSubmit(session, state, documents, message, bizplayToken, ko);
+                    }
                     intent = "SETTLEMENT_READY";
                     summarize(documents, reply, ko);
                     chips = submitChips(ko);
@@ -895,6 +967,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             String reply = t(ko, "Added manual expense: " + label + ". ", "직접 입력 경비를 추가했어요: " + label + ". ");
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
+            state.put("stage", "AWAIT_TRANKIND");   // same reset as the chat path — see addManualExpense
             saveState(session, state);
             sessionRepo.save(session);
             ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
@@ -976,6 +1049,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             String reply = t(ko, "Added manual expense.", "직접 입력 경비를 추가했어요.");
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
+            // The expense often arrives conversationally while the stage machine still waits at
+            // AWAIT_CARD_TYPES — left there, every later word ("finish", "create settlement")
+            // fell into the card-type re-ask. Registration closes that question: back to the
+            // add-another step, where the finish/submit judges listen.
+            state.put("stage", "AWAIT_TRANKIND");
+            saveState(session, state);
             sessionRepo.save(session);
             ConversationalAgentSession saved = sessionRepo.findById(session.getId()).orElse(session);
             return BizplayPlanAgentResponse.builder()
@@ -1915,24 +1994,27 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     "해당 영수증 입력을 취소했어요 — 등록된 내용은 없습니다.");
             return simpleTurn(session, state, message, reply, "EXPENSE_CANCELLED", null);
         }
+        // No expense type on the plan's form means there is no kind a receipt could be filed under,
+        // and one registered without a kind comes back NOT ISSUED and can never be attached. The
+        // import already said so — but this method runs BEFORE the stage machine, so without this
+        // the agent went on to offer a preview for a receipt it had just refused to accept.
+        if (!documents.isEmpty() && slots(state).withArray("planTranKinds").isEmpty()) {
+            state.remove("pendingExpense");
+            return simpleTurn(session, state, message, t(ko,
+                    "I still can't register evidence for this trip — its form lists no expense "
+                            + "types. Pick another trip, or ask BizPlay to add 경비 항목 to this paper.",
+                    "이 출장은 양식에 경비 항목이 없어서 증빙을 등록할 수 없어요. 다른 출장을 선택하시거나, "
+                            + "BizPlay에서 이 양식에 경비 항목을 추가해 주세요."),
+                    "EXPENSE_KIND_UNAVAILABLE", null);
+        }
         if (message.matches("(?i)\\s*expense-confirm.*")) {
             if (!building) {
                 return null;
             }
-            List<Slot> slots = expenseSlots(state);
-            if (!missingExpenseSlots(pending, slots).isEmpty()) {
+            if (!missingExpenseSlots(pending, expenseSlots(state)).isEmpty()) {
                 return null;   // not actually complete — fall through and keep asking
             }
-            ObjectNode fields = expenseFieldsFromPending(pending);
-            ObjectNode detail = expenseDetailFromPending(pending, state);
-            enrichTransportDetail(detail, pending.path("seatGrade").asText(""), bizplayToken);
-            state.remove("pendingExpense");
-            appendTurn(session, "user", message);
-            saveState(session, state);
-            sessionRepo.save(session);
-            // Same call the form's "Register receipt" makes — one etc-card POST, then the draft.
-            return addManualExpense(session.getId().toString(), corpNo, fields, detail,
-                    null, null, bizplayToken);
+            return registerPendingExpense(session, state, pending, message, corpNo, bizplayToken);
         }
         // A disambiguated stop: write the catalog's own label into the expense being built, so the
         // next pass resolves it exactly instead of ambiguously.
@@ -1985,16 +2067,19 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // recomputing it here - before this message is merged - names the question on screen.
         List<Slot> asked = building ? missingExpenseSlots(pending, slots) : List.of();
         Slot answering = asked.isEmpty() ? null : asked.get(0);
-        int filled = fillExpenseSlots(pending, message, slots, ko);
+        java.util.List<String> turns = recentTurns(session);
+        String priorApprovalDate = pending.path("approvalDate").asText("");
+        int filled = fillExpenseSlots(pending, message, slots, ko, turns);
         filled += backfillVehicleType(pending, message);
         filled += backfillIsoDates(pending, message, slots);
-        filled -= dropInventedToday(pending, message);
-        filled += fillAskedSlot(pending, message, answering, ko);
+        filled -= dropInventedToday(pending, message, priorApprovalDate);
+        filled += fillAskedSlot(pending, message, answering, ko, turns);
         filled += defaultLodgingPaymentDate(pending);
         if (!building && filled == 0) {
             state.remove("pendingExpense");
             return null;   // nothing expense-like in this message — not our turn
         }
+        log.info("Expense turn '{}': building={}, filled={}", truncate(message, 40), building, filled);
         if (!building && filled == 1 && pending.size() == 1 && pending.has("approvalDate")) {
             // A bare date is a period answer far more often than a new expense.
             state.remove("pendingExpense");
@@ -2024,8 +2109,68 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (ambiguous != null) {
             return ambiguous;
         }
+        // The preview was already up and this turn edited nothing (the deterministic gate: zero
+        // slots changed). The words are a DECISION about the shown receipt, not data — judged by
+        // the LLM, in whatever wording and language the user chose. The chips stay as shortcuts.
+        if (building && filled == 0) {
+            String decision = expenseDecision(message, ko, turns);
+            log.info("Preview decision on '{}': '{}'", truncate(message, 60),
+                    decision.isEmpty() ? "neither" : decision);
+            if ("confirm".equals(decision)) {
+                return registerPendingExpense(session, state, pending, message, corpNo, bizplayToken);
+            }
+            if ("cancel".equals(decision)) {
+                state.remove("pendingExpense");
+                return simpleTurn(session, state, message,
+                        t(ko, "Dropped that receipt — nothing was registered.",
+                                "해당 영수증 입력을 취소했어요 — 등록된 내용은 없습니다."),
+                        "EXPENSE_CANCELLED", null);
+            }
+        }
         return simpleTurn(session, state, message, expensePreview(pending, slots, ko),
                 "EXPENSE_PREVIEW", expenseConfirmChips(ko));
+    }
+
+    /**
+     * The one place a previewed receipt actually gets registered — reached from the confirm chip
+     * AND from a confirming sentence, so both paths run the identical POST.
+     */
+    private BizplayPlanAgentResponse registerPendingExpense(
+            ConversationalAgentSession session, ObjectNode state, ObjectNode pending,
+            String message, String corpNo, String bizplayToken) {
+        ObjectNode fields = expenseFieldsFromPending(pending);
+        ObjectNode detail = expenseDetailFromPending(pending, state);
+        enrichTransportDetail(detail, pending.path("seatGrade").asText(""), bizplayToken);
+        state.remove("pendingExpense");
+        appendTurn(session, "user", message);
+        saveState(session, state);
+        sessionRepo.save(session);
+        // Same call the form's "Register receipt" makes — one etc-card POST, then the draft.
+        return addManualExpense(session.getId().toString(), corpNo, fields, detail,
+                null, null, bizplayToken);
+    }
+
+    /**
+     * "Register it or drop it?" judged from the situation by the LLM — no phrase is predefined,
+     * so any wording in any language works. Empty string when the message is neither (an edit, a
+     * question, chatter), and on judge failure — then the preview simply shows again.
+     */
+    private String expenseDecision(String message, boolean ko, java.util.List<String> turns) {
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "decision", "Situation: the assistant just showed the user a receipt preview "
+                            + "and asked whether to register it. Judge THIS message as the answer "
+                            + "to that question: EXACTLY \"confirm\" if it tells the assistant to "
+                            + "go ahead — full sentences and single words of assent or command "
+                            + "alike, in any language. EXACTLY \"cancel\" if it abandons the "
+                            + "receipt. A question, a greeting, or a request to change any detail "
+                            + "is neither — omit the field then"),
+                    ko, turns).path("decision").asText("").trim().toLowerCase();
+            return "confirm".equals(verdict) || "cancel".equals(verdict) ? verdict : "";
+        } catch (Exception e) {
+            log.warn("Expense decision judge unavailable: {}", e.getMessage());
+            return "";
+        }
     }
 
     /**
@@ -2320,16 +2465,32 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * message actually contributed — 0 means "this wasn't about an expense", which is how a new
      * conversational expense is recognised without any phrase list.
      */
-    private int fillExpenseSlots(ObjectNode pending, String message, List<Slot> slots, boolean ko) {
+    private int fillExpenseSlots(ObjectNode pending, String message, List<Slot> slots, boolean ko,
+                                 java.util.List<String> turns) {
         java.util.LinkedHashMap<String, String> wanted = new java.util.LinkedHashMap<>();
         for (Slot s : slots) {
             wanted.put(s.key(), s.meaning());
         }
-        JsonNode got = slotFillerAgentService.extract(message, wanted, ko);
+        JsonNode got = slotFillerAgentService.extract(message, wanted, ko, turns);
         int filled = 0;
         for (Slot s : slots) {
             JsonNode v = got.path(s.key());
             if (v.isMissingNode() || v.isNull() || v.asText("").isBlank()) {
+                continue;
+            }
+            // A date the MESSAGE never mentions is the extractor inventing one (usually today).
+            // Under take-the-newest it clobbered a correct date on "please change amount to
+            // 110000", dropInventedToday then deleted the fake, and the flow asked for the date
+            // it already had — the correction looked like the agent losing the receipt.
+            if (DATE_SLOT_KEYS.contains(s.key()) && pending.hasNonNull(s.key())
+                    && !DATE_MENTIONED.matcher(message).find()) {
+                continue;
+            }
+            // The extractor sees the recent turns, so on a turn that says nothing new ("create")
+            // it happily re-emits the receipt it can read in the history. Identical values are
+            // echoes, not edits — counting them as fills blocked the "this turn changed nothing"
+            // gate that hands the words to the decision judge.
+            if (v.equals(pending.get(s.key()))) {
                 continue;
             }
             // A later turn corrects an earlier one — always take the newest value.
@@ -2414,9 +2575,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * The payment date legitimately falls outside the trip window (the provider's own sample pays
      * on 08-17 for a stay on 08-14~15), so this asks rather than clamping to the trip period.
      */
-    private int dropInventedToday(ObjectNode pending, String message) {
+    private int dropInventedToday(ObjectNode pending, String message, String priorDate) {
         String date = pending.path("approvalDate").asText("");
         if (date.isBlank() || !date.equals(LocalDate.now().toString())) {
+            return 0;
+        }
+        if (date.equals(priorDate)) {
+            // The date stood BEFORE this turn — the user's own value that merely coincides with
+            // today (a receipt dated the day it's being filed is perfectly normal). Only a date
+            // the extractor produced THIS turn can be an invention worth dropping.
             return 0;
         }
         if (message != null && DATE_MENTIONED.matcher(message).find()) {
@@ -2438,7 +2605,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * Only runs when the broad pass left the asked slot empty, so a message that answered properly
      * is never re-interpreted.
      */
-    private int fillAskedSlot(ObjectNode pending, String message, Slot answering, boolean ko) {
+    private int fillAskedSlot(ObjectNode pending, String message, Slot answering, boolean ko,
+                              java.util.List<String> turns) {
         if (answering == null || message == null || message.isBlank()) {
             return 0;
         }
@@ -2450,7 +2618,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         try {
             JsonNode got = slotFillerAgentService.extract(message,
-                    java.util.Map.of(answering.key(), answering.meaning()), ko);
+                    java.util.Map.of(answering.key(), answering.meaning()), ko, turns);
             JsonNode v = got.path(answering.key());
             if (!v.isMissingNode() && !v.isNull() && !v.asText("").isBlank()) {
                 pending.set(answering.key(), v.deepCopy());
@@ -3636,6 +3804,156 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         return m != null && m.matches("(?ius).*(register|add|enter|입력|등록|추가|작성|하고\\s*싶|할래|할게).*");
     }
 
+    /**
+     * At the ready-to-submit stage: does this sentence mean "file the settlement now"? Judged by
+     * the LLM from the situation — no wording is predefined. False on any doubt or judge failure,
+     * so a misread never files anything; the summary simply shows again.
+     */
+    private boolean wantsToSubmitNow(String message, boolean ko, java.util.List<String> turns) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "decision", "Situation: the expense settlement draft is complete and the "
+                            + "assistant showed its summary, asking whether to submit it to the "
+                            + "company's expense system. Judge THIS message: EXACTLY \"submit\" if "
+                            + "it tells the assistant to go ahead and file it — full sentences and "
+                            + "single words of assent or command alike, in any language. A "
+                            + "question, an edit, or "
+                            + "adding more expenses is not — omit the field then"), ko, turns)
+                    .path("decision").asText("").trim();
+            log.info("Submit decision on '{}': '{}'", truncate(message, 60),
+                    verdict.isEmpty() ? "neither" : verdict);
+            return "submit".equalsIgnoreCase(verdict);
+        } catch (Exception e) {
+            log.warn("Submit judge unavailable: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * At the add-another step a wrap-up can mean two different distances: "nothing more to add"
+     * (show the summary, let them pick an approver) or "file the settlement itself now" (skip the
+     * stop entirely). One LLM judgement distinguishes them — no phrase list. Returns "done",
+     * "submit", or "" (neither / judge failure — the flow just re-asks as before).
+     */
+    private String finishDecision(String message, boolean ko, java.util.List<String> turns) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "decision", "Situation: the assistant is collecting expense receipts for a "
+                            + "business-trip settlement and asked whether to add another one. Judge "
+                            + "THIS message: EXACTLY \"submit\" if it tells the assistant to complete "
+                            + "and file the settlement document now — full sentences and single words "
+                            + "of command alike, in any language. EXACTLY \"done\" if it only says "
+                            + "there is nothing more to add. Describing an expense, a question, or "
+                            + "anything else is neither — omit the field then"), ko, turns)
+                    .path("decision").asText("").trim().toLowerCase();
+            String decision = "submit".equals(verdict) || "done".equals(verdict) ? verdict : "";
+            log.info("Finish decision on '{}': '{}'", truncate(message, 60),
+                    decision.isEmpty() ? "neither" : decision);
+            return decision;
+        } catch (Exception e) {
+            log.warn("Finish judge unavailable: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * A person named in words, resolved against the same roster the approver chips are built
+     * from. Null when nobody (or more than one person) matches — entity resolution only, never
+     * phrase matching; the drafter can't approve their own settlement so they never match.
+     */
+    private Long approverByName(String message, String token) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        long drafter;
+        try {
+            drafter = Long.parseLong(bizplayProperties.getDefaultCorpUserId());
+        } catch (RuntimeException e) {
+            drafter = 0;
+        }
+        try {
+            Long corpId = corporationIdFromToken(token);
+            JsonNode roster = corpId == null ? null
+                    : bizplayGatewayService.getCorporationUsers(corpId, token);
+            JsonNode users = roster == null ? null : (roster.has("users") ? roster.get("users") : roster);
+            if (users == null || !users.isArray()) {
+                return null;
+            }
+            Long hit = null;
+            for (JsonNode u : users) {
+                long uid = u.path("corporationUserId").asLong();
+                String name = u.path("userName").asText("");
+                if (uid <= 0 || uid == drafter || name.length() < 2 || !message.contains(name)) {
+                    continue;
+                }
+                if (hit != null && hit != uid) {
+                    return null;   // two different people named — ambiguous, keep the chips
+                }
+                hit = uid;
+            }
+            return hit;
+        } catch (Exception e) {
+            log.info("Approver roster unavailable for name match: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The receipt rows a sentence refers to ("전부", "the KTX one", "1번이랑 3번") — the LLM maps the
+     * words onto the listed candidates; the ids that come back are always the candidates' own, so
+     * the attach path stays exactly the deterministic one the chips use. Empty when the message
+     * chooses nothing (or the judge fails) — then the normal re-ask shows.
+     */
+    private List<String> resolveReceiptPickWords(ObjectNode state, String message, boolean ko) {
+        ArrayNode candidates = (ArrayNode) state.withArray("receiptCandidates");
+        if (candidates.isEmpty() || message == null || message.isBlank()) {
+            return List.of();
+        }
+        StringBuilder rows = new StringBuilder();
+        int i = 1;
+        for (JsonNode c : candidates) {
+            rows.append(i++).append(") ").append(c.path("mestName").asText("?"))
+                    .append(" ").append(c.path("approvalDate").asText(""))
+                    .append(" ").append(c.path("approvalAmount").asText("")).append("; ");
+        }
+        String picked;
+        try {
+            picked = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "receiptRows", "Situation: the assistant listed these card receipts and asked "
+                            + "which ones to attach to the settlement: " + rows + "Judge THIS "
+                            + "message: EXACTLY \"all\" if it asks for every one of them; otherwise "
+                            + "the row numbers it refers to, comma-separated (match by merchant, "
+                            + "date or amount). Omit the field when the message does not choose "
+                            + "receipts"), ko).path("receiptRows").asText("").trim();
+        } catch (Exception e) {
+            log.warn("Receipt pick judge unavailable: {}", e.getMessage());
+            return List.of();
+        }
+        if (picked.isEmpty()) {
+            return List.of();
+        }
+        if ("all".equalsIgnoreCase(picked)) {
+            return List.of("all");
+        }
+        List<String> ids = new ArrayList<>();
+        for (String p : picked.split("[,\\s]+")) {
+            if (!p.matches("\\d+")) {
+                continue;   // anything not a listed row number is discarded, never guessed at
+            }
+            int idx = Integer.parseInt(p);
+            if (idx >= 1 && idx <= candidates.size()) {
+                ids.add(candidates.get(idx - 1).path("id").asText());
+            }
+        }
+        return ids;
+    }
+
     /** After an expense is added: the plan's TranKind chips (register another) + a Done chip. */
     private List<TripPlanAgentResponse.PendingChoice> addAnotherChips(ObjectNode state, boolean ko) {
         List<TripPlanAgentResponse.PendingChoice> chips = new ArrayList<>();
@@ -3974,6 +4292,35 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     // --- slots (the session's data in hand) --------------------------------------
+
+    /**
+     * The last few real turns, oldest first, for sub-agents that can use context. Deliberately
+     * short: two exchanges is enough to resolve "the second one" or "make it the day after", and
+     * more only raises the chance the model lifts a stale value out of the history. The
+     * {@code agent_state} entry is skipped - it is bookkeeping, not conversation.
+     */
+    private java.util.List<String> recentTurns(ConversationalAgentSession session) {
+        java.util.List<String> out = new ArrayList<>();
+        JsonNode events = session.getChatEventJson();
+        if (events == null || !events.isArray()) {
+            return out;
+        }
+        java.util.List<JsonNode> chat = new ArrayList<>();
+        for (JsonNode e : events) {
+            String role = e.path("role").asText("");
+            if ("user".equals(role) || "assistant".equals(role)) {
+                chat.add(e);
+            }
+        }
+        for (JsonNode e : chat.subList(Math.max(0, chat.size() - RECENT_TURNS), chat.size())) {
+            String content = e.path("content").asText("").replaceAll("\s+", " ").trim();
+            if (!content.isEmpty()) {
+                out.add(e.path("role").asText("") + ": " + (content.length() > 300
+                        ? content.substring(0, 300) : content));
+            }
+        }
+        return out;
+    }
 
     /** The slot bag under agent_state.slots — created on first access. */
     private ObjectNode slots(ObjectNode state) {
@@ -4512,4 +4859,57 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static String t(boolean ko, String en, String kr) {
         return ko ? kr : en;
     }
+
+    /**
+     * The chat-side submit: refuse a ₩0 draft, otherwise sanitize and POST the finished
+     * settlement to BizPlay. Reached from the submit chip, a submit phrase, and — at the
+     * ready stage — from any sentence the LLM judges to mean "file it now".
+     */
+    private BizplayPlanAgentResponse chatSubmit(ConversationalAgentSession session,
+            ObjectNode state, ArrayNode documents, String message, String bizplayToken,
+            boolean ko) {
+        if (!hasEvidence(documents)) {
+            // Refuse rather than file a ₩0 document nobody can act on.
+            String empty = t(ko,
+                    "There's no expense on this settlement yet — attach a receipt or register "
+                            + "the expense manually, then submit. ",
+                    "이 정산서에는 아직 경비가 없어요 — 증빙을 첨부하거나 경비를 직접 등록한 뒤 "
+                            + "제출해 주세요. ");
+            appendTurn(session, "user", message);
+            appendTurn(session, "assistant", empty);
+            saveState(session, state);
+            ConversationalAgentSession savedEmpty = sessionRepo.save(session);
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(savedEmpty.getId().toString())
+                    .status(savedEmpty.getStatus() == null ? null : savedEmpty.getStatus().name())
+                    .intent("EVIDENCE_PICK_PENDING")
+                    .subAgents(List.of("SETTLEMENT_AGENT"))
+                    .reply(empty)
+                    .pendingChoices(receiptChips(state, documents, ko))
+                    .draftJson(savedEmpty.getDraftJson())
+                    .build();
+        }
+        sanitizeEtcSaveRequests(documents, bizplayToken, slots(state).path("approverId").asLong(0));
+        String providerResponse = bizplayGatewayService.postSettlementDraft(documents, bizplayToken);
+        log.info("Settlement draft submitted to BizPlay (chat): {}", providerResponse);
+        session.setDraftJson(documents);
+        session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
+        state.put("stage", "DONE");
+        String submitReply = t(ko,
+                "All done — your settlement (출장정산서) has been submitted to BizPlay.",
+                "완료됐어요 — 출장정산서를 BizPlay에 제출했습니다.");
+        appendTurn(session, "user", message);
+        appendTurn(session, "assistant", submitReply);
+        saveState(session, state);
+        ConversationalAgentSession savedSubmit = sessionRepo.save(session);
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(savedSubmit.getId().toString())
+                .status(savedSubmit.getStatus() == null ? null : savedSubmit.getStatus().name())
+                .intent("CREATE_SETTLEMENT")
+                .subAgents(List.of("BIZPLAY_GATEWAY"))
+                .reply(submitReply)
+                .draftJson(savedSubmit.getDraftJson())
+                .build();
+    }
+
 }

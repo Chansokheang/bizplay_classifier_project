@@ -25,4 +25,17 @@ public interface SlotFillerAgentService {
      *         dates as ISO {@code yyyy-MM-dd}; {@code cardTypes} as an array of CORP|PERSONAL|MY_DATA.
      */
     JsonNode extract(String message, Map<String, String> wantedSlots, boolean korean);
+
+    /**
+     * The same, with the tail of the conversation for CONTEXT ONLY. Values are still taken from
+     * {@code message} alone - the history is there so an elliptical turn can be understood ("the
+     * second one", "make it the day after"), never so that an older value gets re-extracted.
+     *
+     * @param recentTurns the last few turns, oldest first, already formatted as "user: ..." /
+     *                    "assistant: ..."; null or empty behaves exactly like the 3-arg form.
+     */
+    default JsonNode extract(String message, Map<String, String> wantedSlots, boolean korean,
+                             java.util.List<String> recentTurns) {
+        return extract(message, wantedSlots, korean);
+    }
 }
