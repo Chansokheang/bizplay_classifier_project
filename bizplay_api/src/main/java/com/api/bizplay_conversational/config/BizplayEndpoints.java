@@ -104,4 +104,27 @@ public class BizplayEndpoints {
 
     /** Attach uploaded files to a receipt: PATCH {receiptId} with body [fileId, …]. */
     private String receiptImage = "/api/v2/receipt/image/{receiptId}";
+
+    // --- Plan region / route enrichment (docs/bstr-plan-save-api-guide.md) -------------------
+
+    /** Region master list: needs {regionType} (SIDO | COUNTRY) → BstrRegionDto[]. */
+    private String regionList = "/api/v2/bstr/area/region/{regionType}";
+
+    /** Cities of one country: needs {countryCode} → BstrRegionDto[]. */
+    private String regionCities = "/api/v2/bstr/area/region/city/{countryCode}";
+
+    /** 급지-registered regions only: needs {regionType} (SIDO | COUNTRY). */
+    private String regionUsedList = "/api/v2/bstr/area/region/used/{regionType}";
+
+    /** 급지-registered cities of one country: needs {countryCode}. Empty ≠ none — see the guide. */
+    private String regionUsedCities = "/api/v2/bstr/area/region/used/CITY/{countryCode}";
+
+    /** One region by id — reverse lookup city → country: needs {regionId}. */
+    private String regionById = "/api/v2/bstr/area/region/id/{regionId}";
+
+    /** Company-registered trip destinations (id + coordinates + address): GET, no params. */
+    private String destinationList = "/api/v2/bstr/destination/popUp/active/list";
+
+    /** Server-side bypass to TMap (POI search / route distance): POST the bypass envelope. */
+    private String miscBypass = "/api/v2/misc/bypass";
 }

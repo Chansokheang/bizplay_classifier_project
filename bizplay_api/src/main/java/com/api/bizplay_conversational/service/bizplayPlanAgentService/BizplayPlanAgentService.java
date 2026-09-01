@@ -32,6 +32,24 @@ public interface BizplayPlanAgentService {
      * write the request's values through the SAME writer paths the agent uses, fan out one
      * document per traveler, validate required fields, and POST to BizPlay.
      */
+    /**
+     * Record a turn the CLIENT handled locally (approval-line picks, save commands) into the
+     * session transcript — no pipeline, no side effects. Every user prompt must reach the
+     * agent's history even when the UI answered it, so later context ("그 사람은 빼줘")
+     * resolves and the API-side transcript stays complete.
+     */
+    void noteTurn(String sessionId, String corpNo, String userText, String assistantText);
+
+    /**
+     * LLM intent judge for the client-side approval-line step — NO word lists. Given the
+     * user's message and the step's context (who can be picked, whose role is pending,
+     * whether the save question was just asked), the model answers what the user MEANS:
+     * pick_person / assign_role / no_more / save_now / not_yet / remove_person / other.
+     * Values are validated against the roster and the role enum before returning.
+     */
+    com.fasterxml.jackson.databind.JsonNode approvalIntent(String corpNo,
+            com.fasterxml.jackson.databind.JsonNode body);
+
     BizplayPlanAgentResponse createManualPlan(
             com.api.bizplay_conversational.model.request.BizplayManualPlanRequest request,
             String bizplayToken);

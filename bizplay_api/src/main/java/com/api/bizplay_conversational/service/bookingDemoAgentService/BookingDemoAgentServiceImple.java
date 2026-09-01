@@ -144,6 +144,22 @@ public class BookingDemoAgentServiceImple implements BookingDemoAgentService {
             }
         }
 
+        // The offers are on the table and the user answered in WORDS ("SRT로 할게", "the cheapest
+        // one", "두 번째"). A tap and a sentence must travel the same path: resolve the words
+        // against the listed offers — the offers' own tokens first, the LLM judging the row on a
+        // miss — and continue into the exact same pickOffer the chip uses. A message carrying a
+        // concrete new value (a date, a place) is an EDIT, never a pick — same invariant as the
+        // confirm gate above.
+        String typeSoFar = draft.path("bookingType").asText("");
+        if (!typeSoFar.isBlank() && !draft.hasNonNull("offerId")
+                && missingSlots(draft, typeSoFar, ko).isEmpty()
+                && !machineToken && !carriesConcreteValue(message)) {
+            String offerPick = resolveOfferByWords(draft, typeSoFar, message, ko);
+            if (offerPick != null) {
+                return pickOffer(sessionId, draft, offerPick, ko);
+            }
+        }
+
         readInto(draft, message);
         String type = draft.path("bookingType").asText("");
         if (type.isBlank()) {
@@ -228,6 +244,68 @@ public class BookingDemoAgentServiceImple implements BookingDemoAgentService {
                             + inventory.size() + "건을 찾았어요. 선택해 주세요.");
         }
         return turn(sessionId, draft, prefix(type) + "_OFFER_SELECTION", reply, List.of(chips));
+    }
+
+    /**
+     * The offer a sentence refers to, or null. Deterministic first: an offer's own tokens (train
+     * code, brand, hotel-name words, operator) found in the message — exactly one offer mentioned
+     * wins, shared words ("KTX" with two KTX rows) fall through. Then the LLM judges the row for
+     * meaning-picks ("the cheapest", "두 번째", "the 7 o'clock one") — no wording is predefined.
+     */
+    private String resolveOfferByWords(ObjectNode draft, String type, String message, boolean ko) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        List<Offer> inventory = inventoryFor(type);
+        String norm = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        java.util.Set<Offer> mentioned = new java.util.LinkedHashSet<>();
+        for (Offer o : inventory) {
+            List<String> tokens = new ArrayList<>();
+            tokens.add(o.id());
+            tokens.add(o.operator());
+            String[] dw = o.detail().split("[\\s·,]+");
+            for (String w : dw) {
+                if (w.length() >= 2) {
+                    tokens.add(w);
+                }
+            }
+            if (dw.length >= 2) {
+                tokens.add(dw[0] + dw[1]);   // "KTX 101" typed without the space
+            }
+            for (String tk : tokens) {
+                String t2 = tk.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+                if (t2.length() >= 2 && norm.contains(t2)) {
+                    mentioned.add(o);
+                    break;
+                }
+            }
+        }
+        if (mentioned.size() == 1) {
+            return mentioned.iterator().next().id();
+        }
+        StringBuilder rows = new StringBuilder();
+        int i = 1;
+        for (Offer o : inventory) {
+            rows.append(i++).append(") ").append(offerLabel(o, type)).append("; ");
+        }
+        try {
+            String picked = slotFillerAgentService.extract(message, Map.of(
+                    "offerRow", "Situation: the assistant listed these travel offers and asked the "
+                            + "user to pick one: " + rows + "Judge THIS message: EXACTLY the single "
+                            + "row number it chooses (match by name, time, seat class or price). "
+                            + "Omit the field when it does not choose one"), ko)
+                    .path("offerRow").asText("").trim();
+            log.info("Offer pick judge on '{}': '{}'", message, picked.isEmpty() ? "none" : picked);
+            if (picked.matches("\\d+")) {
+                int idx = Integer.parseInt(picked);
+                if (idx >= 1 && idx <= inventory.size()) {
+                    return inventory.get(idx - 1).id();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Offer pick judge unavailable: {}", e.getMessage());
+        }
+        return null;
     }
 
     private BizplayPlanAgentResponse pickOffer(String sessionId, ObjectNode draft, String offerId, boolean ko) {

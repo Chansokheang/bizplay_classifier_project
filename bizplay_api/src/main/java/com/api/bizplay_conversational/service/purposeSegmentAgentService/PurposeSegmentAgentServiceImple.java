@@ -44,6 +44,12 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
               "Gwangju is domestic but this catalog has no 국내 purpose". Filing a domestic trip
               under 해외출장 is worse than asking.
             - Numbers must come from the catalog. Do not invent options.
+            - Messages may be in ANY language; translate their wording onto the Korean
+              option names before matching. English examples: "overseas/international
+              business trip" = 해외출장; "domestic trip" = 국내출장; "long-term" = 장기;
+              "general/regular/normal" = 일반; "training" = 교육. So "a general overseas
+              business trip to Osaka" clearly implies 해외출장 · 일반 — pick it as best,
+              do not ask.
             /no_think
             """;
 
@@ -171,8 +177,25 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
             String raw = client.prompt().messages(prompt).call().content();
             JsonNode parsed = objectMapper.readTree(extractJson(stripThink(raw)));
 
-            Integer best = parsed.path("best").isNumber() ? parsed.path("best").asInt() : null;
+            // Lenient verdict read: the model sometimes emits best as a STRING ("2") or
+            // names the option only in "reason" ("... matches option 2 (해외출장 · 일반)").
+            // Strict isNumber() threw the correct understanding away and asked anyway.
+            JsonNode bestNode = parsed.path("best");
+            Integer best = bestNode.isNumber() ? bestNode.asInt()
+                    : bestNode.isTextual() && bestNode.asText().trim().matches("\\d+")
+                            ? Integer.parseInt(bestNode.asText().trim()) : null;
             String reason = parsed.path("reason").asText(null);
+            if (best == null && reason != null) {
+                java.util.regex.Matcher om = java.util.regex.Pattern
+                        .compile("option\\s+(\\d+)").matcher(reason);
+                if (om.find() && !om.find(om.end())) {   // exactly ONE option mentioned
+                    om.reset();
+                    om.find();
+                    best = Integer.parseInt(om.group(1));
+                }
+            }
+            log.info("Purpose verdict: best={}, alternatives={}, reason={}", best,
+                    parsed.path("alternatives"), reason);
             if (best != null && best >= 1 && best <= options.size()) {
                 return PurposeResolutionResult.builder()
                         .resolved(options.get(best - 1)).reason(reason).build();

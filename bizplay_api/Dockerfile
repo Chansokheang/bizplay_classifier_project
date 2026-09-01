@@ -13,6 +13,18 @@ LABEL version="1.1"
 
 WORKDIR /workspace
 
+# Networks with TLS interception (the lab's Somansa proxy) re-sign every HTTPS connection, so
+# Maven's downloads from Central die with "PKIX path building failed" unless the proxy's CA is
+# trusted by THIS container's JVM. Any .pem/.crt in docker/trusted-ca/ is imported; the folder
+# ships with only a README, so builds on open networks are byte-for-byte unaffected.
+# See docker/trusted-ca/README.md for how to capture the proxy CA on the server.
+COPY docker/trusted-ca/ /tmp/trusted-ca/
+RUN for c in /tmp/trusted-ca/*.pem /tmp/trusted-ca/*.crt; do \
+      [ -f "$c" ] || continue; \
+      keytool -importcert -noprompt -trustcacerts -cacerts \
+        -storepass changeit -alias "extra-$(basename "$c")" -file "$c"; \
+    done
+
 # The POM alone first, so the dependency layer stays cached until dependencies change.
 COPY pom.xml ./
 
@@ -46,6 +58,16 @@ LABEL version="1.1"
 # Create non-root user for security
 RUN addgroup -g 1001 -S bizplay && \
     adduser -u 1001 -S bizplay -G bizplay
+
+# Same proxy-CA trust as the build stage — the RUNNING app calls cloud-dev.bizplay.biz and the
+# LLM endpoints over HTTPS through the same intercepting proxy. Runs before USER bizplay
+# because the JVM truststore belongs to root. No-op when the folder holds only the README.
+COPY docker/trusted-ca/ /tmp/trusted-ca/
+RUN for c in /tmp/trusted-ca/*.pem /tmp/trusted-ca/*.crt; do \
+      [ -f "$c" ] || continue; \
+      keytool -importcert -noprompt -trustcacerts -cacerts \
+        -storepass changeit -alias "extra-$(basename "$c")" -file "$c"; \
+    done && rm -rf /tmp/trusted-ca
 
 WORKDIR /app
 

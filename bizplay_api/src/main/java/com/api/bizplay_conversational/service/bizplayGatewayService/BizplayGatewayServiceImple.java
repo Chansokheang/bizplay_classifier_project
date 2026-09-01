@@ -578,6 +578,75 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         return body;
     }
 
+    // --- Plan region / route enrichment (docs/bstr-plan-save-api-guide.md) -------------------
+
+    @Override
+    public JsonNode getRegionList(String regionType, String token) {
+        String kind = regionType == null ? "COUNTRY" : regionType.trim().toUpperCase(java.util.Locale.ROOT);
+        return getCached("region:" + kind,
+                buildUrl(endpoints.getRegionList(), "regionType", kind), token);
+    }
+
+    @Override
+    public JsonNode getRegionCities(String countryCode, String token) {
+        String cc = countryCode == null ? "" : countryCode.trim().toUpperCase(java.util.Locale.ROOT);
+        return getCached("region:city:" + cc,
+                buildUrl(endpoints.getRegionCities(), "countryCode", cc), token);
+    }
+
+    @Override
+    public JsonNode getUsedRegionList(String regionType, String token) {
+        String kind = regionType == null ? "COUNTRY" : regionType.trim().toUpperCase(java.util.Locale.ROOT);
+        return getCached("region:used:" + kind,
+                buildUrl(endpoints.getRegionUsedList(), "regionType", kind), token);
+    }
+
+    @Override
+    public JsonNode getUsedRegionCities(String countryCode, String token) {
+        String cc = countryCode == null ? "" : countryCode.trim().toUpperCase(java.util.Locale.ROOT);
+        return getCached("region:used:city:" + cc,
+                buildUrl(endpoints.getRegionUsedCities(), "countryCode", cc), token);
+    }
+
+    @Override
+    public JsonNode getRegionById(long regionId, String token) {
+        return get(buildUrl(endpoints.getRegionById(), "regionId", regionId), token);
+    }
+
+    @Override
+    public JsonNode getPlanDestinations(String token) {
+        return getCached("plan:destinations", buildUrl(endpoints.getDestinationList()), token);
+    }
+
+    @Override
+    public JsonNode postBypass(JsonNode envelope, String token) {
+        if (envelope == null || envelope.isNull()) {
+            throw new IllegalArgumentException("Bypass envelope is required.");
+        }
+        String url = buildUrl(endpoints.getMiscBypass());
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(envelope))
+                    .retrieve()
+                    .body(String.class);
+            return objectMapper.readTree(response == null || response.isBlank() ? "null" : response);
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("TMap bypass failed: HTTP {} {}", e.getStatusCode().value(),
+                    e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay bypass call failed (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("TMap bypass failed: {}", e.getMessage());
+            throw new IllegalStateException("BizPlay bypass call failed: " + rootMessage(e));
+        }
+    }
+
     private JsonNode get(String url, String token) {
         String bearer = resolveToken(token);
         try {

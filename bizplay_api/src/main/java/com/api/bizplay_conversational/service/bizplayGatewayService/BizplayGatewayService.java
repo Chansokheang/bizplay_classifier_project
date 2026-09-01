@@ -153,4 +153,28 @@ public interface BizplayGatewayService {
      * Returns the provider's raw response text.
      */
     String patchEtcReceiptDetail(long receiptId, JsonNode detail, String token);
+
+    // --- Plan region / route enrichment (docs/bstr-plan-save-api-guide.md) -------------------
+
+    /** Region master list: regionType = SIDO | COUNTRY → BstrRegionDto[]. Cached (reference data). */
+    JsonNode getRegionList(String regionType, String token);
+
+    /** Cities of one country (full list) → BstrRegionDto[]. Cached. */
+    JsonNode getRegionCities(String countryCode, String token);
+
+    /** 급지-registered regions only: regionType = SIDO | COUNTRY. Cached. */
+    JsonNode getUsedRegionList(String regionType, String token);
+
+    /** 급지-registered cities of one country. Empty means "all cities" OR "not registered" — the
+     *  caller disambiguates via {@link #getUsedRegionList}. Cached. */
+    JsonNode getUsedRegionCities(String countryCode, String token);
+
+    /** One region by id — how a saved selectionId is turned back into city + country. */
+    JsonNode getRegionById(long regionId, String token);
+
+    /** Company-registered trip destinations (id, coordinates, address). Cached. */
+    JsonNode getPlanDestinations(String token);
+
+    /** Server-side bypass to TMap: POST the bypass envelope, returns TMap's JSON verbatim. */
+    JsonNode postBypass(JsonNode envelope, String token);
 }

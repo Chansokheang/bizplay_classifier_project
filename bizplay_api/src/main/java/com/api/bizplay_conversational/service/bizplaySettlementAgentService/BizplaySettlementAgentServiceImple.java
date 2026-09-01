@@ -41,7 +41,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
     private static final String STATE_ROLE = "agent_state";
     /** How many past turns sub-agents may see. Two exchanges. */
-    private static final int RECENT_TURNS = 4;
+    // 16 entries = 8 user/assistant exchanges. Longer context lets judges resolve
+    // references further back; the echo-not-edit guards keep stale history values
+    // from being re-applied to the draft.
+    private static final int RECENT_TURNS = 16;
     private static final Pattern ISO_DATE = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})");
     private static final Pattern PLAN_PICK = Pattern.compile("(?i).*settle-plan:(\\d+).*");
     private static final Pattern PERIOD_DEFAULT = Pattern.compile("(?i).*evidence-period:default.*");
@@ -551,9 +554,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     }
                 } else {
                     String[] period = slotPeriod(state);
-                    if (period != null) {
-                        // A new period always re-lists the matching plans; the user picks one — we
+                    if (period != null && state.path("periodThisTurn").asBoolean(false)) {
+                        // A NEW period re-lists the matching plans; the user picks one — we
                         // never auto-choose among several, even when the message named a place.
+                        // A period merely REMEMBERED from an earlier turn is not a search ask:
+                        // that turn falls through to the picker below.
                         intent = "PLAN_SEARCH";
                         chips = searchPlans(state, corpUserId, period[0], period[1],
                                 bizplayToken, subAgents, reply, ko);
@@ -1862,27 +1867,35 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         state.put("evidenceStart", start);
         state.put("evidenceEnd", end);
 
-        String head = t(ko,
-                "Imported \"" + title + "\" (" + start + " ~ " + end + "). ",
-                "\"" + title + "\" (" + start + " ~ " + end + ") 계획을 불러왔습니다. ");
         if (!slots(state).withArray("planTranKinds").isEmpty()) {
             // TranKind-driven: pick which expense type to add first (drives the receipt search).
             state.put("stage", "AWAIT_TRANKIND");
-            reply.append(head).append(t(ko,
-                    "Which expense type would you like to add? ",
-                    "어떤 경비 항목을 추가할까요? "));
+            reply.append(t(ko,
+                    "Imported \"" + title + "\" (" + start + " ~ " + end + "). "
+                            + "Which expense type would you like to add? ",
+                    "\"" + title + "\" (" + start + " ~ " + end + ") 계획을 불러왔습니다. "
+                            + "어떤 경비 항목을 추가할까요? "));
         } else {
             // The form lists no expense types, so there is no kind a receipt could be filed under —
             // and one registered without a kind is created NOT ISSUED and can never be attached.
-            // Name the paper so an admin can fix it rather than leaving a dead end.
+            // This reads as an ISSUE REPORT, not an import: it leads with what is wrong and names
+            // the paper so an admin can fix it, instead of "Imported …" followed by a refusal.
             state.put("stage", "AWAIT_PLAN_PICK");
-            reply.append(head).append(t(ko,
-                    "This trip's form lists no expense types, so I can't register or attach evidence "
-                            + "against it — the paper needs its 경비 항목 set up in BizPlay first. "
-                            + "Pick another trip if you have one. ",
-                    "이 출장의 양식에 경비 항목이 지정되어 있지 않아 증빙을 등록하거나 첨부할 수 없어요 — "
-                            + "BizPlay에서 해당 양식에 경비 항목을 먼저 설정해 주세요. "
-                            + "다른 출장이 있다면 선택해 주세요. "));
+            String planPaperName = d.path("paper").path("name").asText("");
+            long planPaperId = d.path("paper").path("id").asLong(form.getPaperId());
+            String paperRef = (planPaperName.isBlank() ? "" : "\"" + planPaperName + "\" ")
+                    + "(paper " + planPaperId + ")";
+            reply.append(t(ko,
+                    "⚠ \"" + title + "\" (" + start + " ~ " + end + ") can't be settled yet. "
+                            + "Its form " + paperRef + " has no 경비 항목 (expense types) configured "
+                            + "in BizPlay, so no receipt can be registered or attached under this trip. "
+                            + "An admin needs to add expense types to that form first. "
+                            + "In the meantime, you can settle another trip below. ",
+                    "⚠ \"" + title + "\" (" + start + " ~ " + end + ") 출장은 아직 정산할 수 없어요. "
+                            + "이 출장의 양식 " + paperRef + "에 경비 항목이 설정되어 있지 않아 "
+                            + "증빙을 등록하거나 첨부할 수 없습니다. "
+                            + "BizPlay 관리자가 해당 양식에 경비 항목을 먼저 추가해야 해요. "
+                            + "그동안 아래에서 다른 출장을 선택해 정산할 수 있어요. "));
         }
     }
 
@@ -4398,6 +4411,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      */
     private void gatherIntoSlots(ObjectNode state, String message, JsonNode extracted) {
         ObjectNode s = slots(state);
+        String beforeStart = s.path("startDate").asText("");
+        String beforeEnd = s.path("endDate").asText("");
         String[] period = extractPeriod(message);
         boolean periodThisTurn = period != null;
         if (periodThisTurn) {
@@ -4410,6 +4425,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             words.forEach(ct::add);
         }
         mergeExtracted(s, extracted, periodThisTurn);
+        // Whether THIS message brought a (new) period — the plan-pick stage re-searches only
+        // then. The slots keep the period across turns (that's their job), so without this flag
+        // a follow-up like "도쿄 출장으로 진행해줘" re-listed the search results forever instead
+        // of picking from them.
+        state.put("periodThisTurn", periodThisTurn
+                || !beforeStart.equals(s.path("startDate").asText(""))
+                || !beforeEnd.equals(s.path("endDate").asText("")));
     }
 
     /** Merge the LLM-extracted slots, filling only what the deterministic parsers left empty. */

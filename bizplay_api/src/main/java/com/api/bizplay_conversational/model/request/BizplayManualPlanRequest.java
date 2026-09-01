@@ -48,4 +48,7 @@ public class BizplayManualPlanRequest {
 
     /** "Set approval order" picks: [{corporationUserId, approvalKindType?}]. */
     private JsonNode approvalLines;
+
+    /** Optional 출장지 상세 (Trip Destination Details) — saved as the period row's selectionMemo. */
+    private String destinationDetail;
 }

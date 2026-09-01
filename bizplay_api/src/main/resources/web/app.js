@@ -1214,6 +1214,18 @@ const LOCATIONS = [
  *  the Destination field (Region / Country / Institution), like the real form.
  * ---------------------------------------------------------------- */
 const TRIP_REGIONS = ["Seoul", "Busan", "Incheon", "Daegu", "Daejeon", "Gwangju", "Gumi", "Ulsan", "Sejong", "Jeju"];
+/* Optional 출장지 상세 answered in the wizard; null = not asked yet, "" = skipped. */
+let planDestDetail = null;
+/* Country of the picked destination city — display-only companion for the preview card
+ * (the save body has no country field; the city id implies it). */
+let planDestCountry = null;
+/* Per-day destinations from the agent ([{date, place, country, detail}]) — the company
+ * form repeats Trip Period/국가 per day, so the preview mirrors that when days differ. */
+let planPeriodPlaces = null;
+/* Set when the server itself just asked for the destination — the wizard then renders
+ * only the picker, without repeating a generic question above it. */
+let planDestAskQuiet = false;
+
 const TRIP_COUNTRIES = ["Japan", "China", "Vietnam", "Cambodia", "Singapore", "USA", "Germany", "United Kingdom", "India", "Thailand", "Indonesia", "UAE"];
 /* One entry per 출장 목적, mirroring the real Bizplay templates: each has its own
  * classification cascade, destination labelling, and template-specific extra fields.
@@ -3101,7 +3113,24 @@ function ensureWizardSections() {
     const days = dayCount(t.start, t.end);
     previewCard("details", T("Trip Details", "출장 상세"), "calendar",
       pcRow(T("Period", "출장 기간"), `${t.start} → ${t.end} (${days}${T(days === 1 ? " day" : " days", "일")})`) +
-      pcRow(cfg.destLabel ? T(cfg.destLabel, cfg.destKo || cfg.destLabel) : T("Destination", "출장지"), t.destination) +
+      // The company form repeats Trip Period/국가 PER DAY — when the agent captured per-day
+      // destinations, mirror that: one row per date with its country / city / detail.
+      (planPeriodPlaces && planPeriodPlaces.length
+        ? planPeriodPlaces.map((r) => pcRow(esc(r.date),
+            `${esc(r.country || "?")} / ${esc(r.place || "?")}`
+            + (r.detail ? ` · ${esc(r.detail)}` : ""))).join("")
+      // Overseas region forms store the CITY (its id is what BizPlay saves); the country the
+      // user picked/typed rides alongside for display, so the card never labels 도쿄 a country.
+      : planDestCountry && planDestCountry.trim() && planDestCountry.trim() !== t.destination.trim()
+        ? pcRow(T("Country", "국가"), planDestCountry) + pcRow(T("City", "도시"), t.destination)
+        // Never caption the single-row fallback "Country": before the country is resolved
+        // the value may be a CITY ("Osaka"), and the stale label read as a wrong detection.
+        : pcRow(cfg.destLabel && cfg.destLabel !== "Country"
+            ? T(cfg.destLabel, cfg.destKo || cfg.destLabel) : T("Destination", "출장지"), t.destination)) +
+      // Optional 출장지 상세 (the period rows' memo) — shown once it exists, so an edit
+      // like 'add destination detail of "floor 2"' is visible on the card, not invisible.
+      (planDestDetail && planDestDetail.trim()
+        ? pcRow(T("Detail", "출장지 상세"), planDestDetail) : "") +
       pcRow(T("Title", "제목"), t.title) +
       pcRow(T("Content", "내용"), t.content));
     const extras = extraDefsFromDom().filter((d) => d.value);
@@ -3119,6 +3148,9 @@ function ensureWizardSections() {
 
 /* Final call-to-action once every section is fulfilled. */
 function appendCreateAction(quiet) {
+  // The server is still asking something (transport, region, detail …) — its reply is the
+  // active question; the approval line starts only when the backend says READY_FOR_REVIEW.
+  if (chatOnly && agent.live && agent.status && agent.status !== "READY_FOR_REVIEW") return;
   // Chat mode: the form is complete — flow straight into the approval line
   // (asked in the thread); saving happens on Done ✓ there. "quiet" skips the
   // completion bubble when the backend reply already announced this step.
@@ -4977,9 +5009,18 @@ function guideWidget(prompt, innerHtml, wire, opts) {
   const w = wrap.querySelector(".guide-widget");
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
+  // done() is ONCE-only: a re-fired change event (keyboard navigation over a select,
+  // a re-pick, extra calendar clicks after the range completed) was echoing duplicate
+  // user chips and re-sending the answer. First completion wins; the widget locks.
+  let finished = false;
   wire(w, (shownText) => {
+    if (finished) return;
+    finished = true;
     w.classList.add("guide-done");
-    if (!opts || opts.echo !== false) appendMsg("user", shownText, {});
+    w.querySelectorAll("select, input, button").forEach((el) => { el.disabled = true; });
+    // data-echo-done: a typed message already echoed this answer (the composer interceptor
+    // picked the option programmatically) — the widget completes silently.
+    if ((!opts || opts.echo !== false) && !w.dataset.echoDone) appendMsg("user", shownText, {});
   });
   return w;
 }
@@ -5188,6 +5229,9 @@ function nextWizardStep() {
   const pendingExtra = (t.purpose && t.classification) ? nextUnaskedExtra() : null;
 
   if (!t.purpose) {
+    planDestDetail = null;   // fresh plan — the detail question comes again
+    planDestCountry = null;
+    planPeriodPlaces = null;
     askOnce("purpose", () => guideChips(
       T("To get us started — which trip form should we use? Overseas and domestic are the usual ones, and the rest are your company’s special templates.",
         "먼저 어떤 출장 양식을 사용할까요? 해외출장과 국내출장이 일반적이고, 나머지는 회사 전용 템플릿이에요."),
@@ -5211,27 +5255,263 @@ function nextWizardStep() {
         clsSel.dispatchEvent(new Event("change", { bubbles: true })); // triggers the live form load too
         ensureWizardSections(); nextWizardStep();
       }));
-  } else if (!t.start || !t.end) {
+  // The server may ask for the destination FIRST (an unresolvable value like "Overseas"
+  // is flagged before other gaps) — then the destination dropdown must render now, not
+  // the period calendar that normally precedes it in the wizard order.
+  } else if ((!t.start || !t.end) && !(planDestAskQuiet && !t.destination)) {
     askOnce("period", () => {
       const el = guideDates(
         T("When will you be traveling? Pick the start and end dates below.",
           "언제 다녀오시나요? 아래에서 시작일과 종료일을 선택해 주세요."),
-        (s, e) => { $("startDate").value = s; $("endDate").value = e; ensureWizardSections(); nextWizardStep(); });
+        (s, e) => {
+          $("startDate").value = s; $("endDate").value = e; ensureWizardSections();
+          // Live agent: the pick IS the answer to the server's period question — send it,
+          // so the SERVER's reply asks the next thing. Without this the dates lived only
+          // in the local form, the server kept waiting, and after the card updated the
+          // conversation just went silent (no question, user stranded).
+          if (agent.live && agent.sessionId) {
+            sendAgent({ silentUser: true, echoAs: null, messageOverride: `${s} → ${e}` });
+            return;
+          }
+          nextWizardStep();
+        });
       askNaturally(el, [T("trip period (start and end dates)", "출장 기간(시작일과 종료일)")]);
       return el;
     });
   } else if (!t.destination) {
-    const q = /국가/.test(cfg.destKo || "") ? T("Which country are you headed to?", "어느 나라로 가시나요?")
+    const quietAsk = planDestAskQuiet;
+    planDestAskQuiet = false;
+    const q = quietAsk
+      ? T("Pick from the list below —", "아래 목록에서 선택해 주세요 —")
+      : /국가/.test(cfg.destKo || "") ? T("Which country are you headed to?", "어느 나라로 가시나요?")
       : /지역/.test(cfg.destKo || "") ? T("Which city or region will you be visiting?", "어느 도시나 지역으로 가시나요?")
       : T("Where will this trip take place?", "어디에서 진행되는 출장인가요?");
     askOnce("destination", () => {
-      const opts = (cfg.options || []).slice(0, 6).map((o) => ({ label: o, value: o }));
-      const el = opts.length
-        ? guideChips(q, opts, (o) => { $("tripDestination").value = o.value; ensureWizardSections(); nextWizardStep(); })
-        : guideAsk(q);
-      askNaturally(el, [T("destination (city or region)", "출장지(도시/지역)")]);
-      return el;
+      // Suggestion chips come from the FORM's own region rules (급지/시도 lists via the
+      // provider's APIs), not a hardcoded country list — a policy paper that only allows
+      // 스위스/일본 must never offer China or the USA. The static list is only the fallback
+      // for "anything goes" papers and for when the lookup fails.
+      const render = (opts) => {
+        let el;
+        if (!opts.length) {
+          el = guideAsk(q);
+        } else {
+          // A dropdown, not chips: the allowed-region list can be dozens of entries (48
+          // registered Japanese cities), and a select scales where a chip row cannot.
+          el = guideWidget(q, `<select class="dest-select"><option value="">`
+              + esc(T("Choose a destination…", "목적지를 선택하세요…")) + `</option>`
+              + opts.map((o) => `<option value="${esc(o.value)}" data-en="${esc(o.en || "")}">${esc(o.label)}</option>`).join("")
+              + `</select>`,
+            (w, done) => {
+              const sel = w.querySelector("select");
+              sel.addEventListener("change", () => {
+                if (!sel.value) return;
+                $("tripDestination").value = sel.value;
+                const lbl = sel.options[sel.selectedIndex].text;
+                if (lbl.includes(" · ")) planDestCountry = lbl.split(" · ")[0].trim();
+                done(lbl);
+                ensureWizardSections();
+                // Live agent: the pick IS the answer to the server's destination question —
+                // send it, or the server waits forever while only the local card updates.
+                if (agent.live && agent.sessionId) {
+                  sendAgent({ __skipDestPick: true, silentUser: true, echoAs: null,
+                              messageOverride: sel.value });
+                  return;
+                }
+                nextWizardStep();
+              });
+            });
+        }
+        // Quiet mode: the server already asked with full context — do not let the
+        // LLM re-phrase the short connector into a second full question.
+        if (!quietAsk) askNaturally(el, [T("destination (city or region)", "출장지(도시/지역)")]);
+        return el;
+      };
+      // Connected placeholder while the lookup runs — askOnce tracks it, and the real chips
+      // replace it when the allowed-region list arrives.
+      const pending = document.createElement("div");
+      pending.className = "msg msg-assistant";
+      pending.innerHTML = `<div class="bubble">${esc(q)}</div>`;
+      $("agentThread").appendChild(pending);
+      const swap = (opts) => {
+        pending.remove();
+        const el = render(opts);
+        if (wizAsked && wizAsked.step === "destination") wizAsked.el = el;
+      };
+      // No silent fallback: a failed lookup is SHOWN, with the status and body, so a broken
+      // region API is debuggable instead of quietly serving a made-up country list.
+      const fail = (msg) => {
+        const err = document.createElement("div");
+        err.className = "msg msg-assistant";
+        err.innerHTML = `<div class="bubble" style="border:1px solid #dc2626;color:#b91c1c">`
+          + esc(msg) + `</div>`;
+        $("agentThread").appendChild(err);
+        swap([]);   // plain typed ask — the flow continues, the failure stays visible
+      };
+      const purpose = t.purpose || "";
+      const segment = (t.classification || "").split(" ·")[0].trim();
+      // Typed conversations never fill the local wizard's purpose field — the agent draft
+      // carries the exact ids instead.
+      const draft0 = (Array.isArray(agent.draft) && agent.draft[0]) || agent.draft || {};
+      const pid = draft0.bstrPurposeId || "";
+      const sid = draft0.bstrSegmentId || "";
+      fetch(`${BZ_API_BASE()}/agents/plan/destination-options?corpNo=${encodeURIComponent(CORP_NO)}`
+          + `&purpose=${encodeURIComponent(purpose)}&segment=${encodeURIComponent(segment)}`
+          + `&purposeId=${encodeURIComponent(pid)}&segmentId=${encodeURIComponent(sid)}`)
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = await r.text().catch(() => "");
+            fail(`destination-options API failed: HTTP ${r.status} — ${body.slice(0, 200)}`);
+            return;
+          }
+          const json = await r.json();
+          const d = (json && (json.data || json.payload)) || {};
+          const fromApi = (d.regions || []).map((n) => {
+            const city = String(n).includes(" · ") ? String(n).split(" · ")[1] : String(n);
+            return { label: n, value: city };
+          });
+          if (d.source === "countries" && (d.countries || []).length) {
+            // Non-policy overseas form: country dropdown first, then that country's cities.
+            pending.remove();
+            const cEl = guideWidget(q, `<select class="dest-select"><option value="">`
+                + esc(T("Choose a country…", "국가를 선택하세요…")) + `</option>`
+                + d.countries.map((c) => `<option value="${esc(c.countryCode)}" data-en="${esc(c.nameEn || "")}">${esc(c.name)}</option>`).join("")
+                + `</select>`,
+              (w, done) => {
+                const csel = w.querySelector("select");
+                csel.addEventListener("change", async () => {
+                  if (!csel.value) return;
+                  const countryName = csel.options[csel.selectedIndex].text;
+                  planDestCountry = countryName;
+                  done(countryName);
+                  try {
+                    const cr = await fetch(`${BZ_API_BASE()}/agents/plan/destination-options`
+                      + `?corpNo=${encodeURIComponent(CORP_NO)}&citiesOf=${encodeURIComponent(csel.value)}`);
+                    if (!cr.ok) {
+                      fail(`destination-options citiesOf failed: HTTP ${cr.status} — `
+                        + (await cr.text().catch(() => "")).slice(0, 200));
+                      return;
+                    }
+                    const cj = await cr.json();
+                    const cd = (cj && (cj.data || cj.payload)) || {};
+                    const cities = (cd.regions || []).map((n, i) => ({ label: n, value: n, en: (cd.regionsEn || [])[i] || "" }));
+                    if (!cities.length) {
+                      // A country with no city master: the country itself is the destination.
+                      $("tripDestination").value = countryName;
+                      ensureWizardSections();
+                      if (agent.live && agent.sessionId) {
+                        sendAgent({ __skipDestPick: true, silentUser: true, echoAs: null,
+                                    messageOverride: countryName });
+                        return;
+                      }
+                      nextWizardStep();
+                      return;
+                    }
+                    const el2 = render(cities);
+                    const citySel = el2.querySelector && el2.querySelector(".dest-select");
+                    if (citySel) citySel.dataset.context =
+                      `The user already chose the country ${countryName}; these are its cities.`;
+                    if (wizAsked && wizAsked.step === "destination") wizAsked.el = el2;
+                  } catch (e) {
+                    fail("destination-options citiesOf unreachable: " + e);
+                  }
+                });
+              });
+            if (wizAsked && wizAsked.step === "destination") wizAsked.el = cEl;
+          } else if (fromApi.length) {
+            // The policy list arrives FLAT ("일본 · 고베", country-only rows like "스위스")
+            // — but the conversation asks in TWO steps, same as the non-policy path:
+            // country dropdown first, then that country's own city list. Grouped from the
+            // same rows; no extra API call needed.
+            const groups = new Map();
+            (d.regions || []).forEach((n, i) => {
+              const s = String(n);
+              const cut = s.indexOf(" · ");
+              const country = (cut >= 0 ? s.slice(0, cut) : s).trim();
+              const city = cut >= 0 ? s.slice(cut + 3).trim() : "";
+              if (!groups.has(country)) groups.set(country, []);
+              if (city) groups.get(country).push({ label: city, value: city, en: (d.regionsEn || [])[i] || "" });
+            });
+            if (groups.size <= 1) {
+              // A single allowed country: the flat list IS its city list — one step.
+              const only = [...groups.entries()][0];
+              if (only && only[1].length) { planDestCountry = only[0]; swap(only[1]); }
+              else swap(fromApi);
+            } else {
+              pending.remove();
+              const cEl = guideWidget(q, `<select class="dest-select"><option value="">`
+                  + esc(T("Choose a country…", "국가를 선택하세요…")) + `</option>`
+                  + [...groups.keys()].map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")
+                  + `</select>`,
+                (w, done) => {
+                  const csel = w.querySelector("select");
+                  csel.addEventListener("change", () => {
+                    if (!csel.value) return;
+                    const countryName = csel.value;
+                    planDestCountry = countryName;
+                    done(countryName);
+                    const cities = groups.get(countryName) || [];
+                    if (!cities.length) {
+                      // Country-only policy row: the country itself is the destination.
+                      $("tripDestination").value = countryName;
+                      ensureWizardSections();
+                      if (agent.live && agent.sessionId) {
+                        sendAgent({ __skipDestPick: true, silentUser: true, echoAs: null,
+                                    messageOverride: countryName });
+                        return;
+                      }
+                      nextWizardStep();
+                      return;
+                    }
+                    const el2 = render(cities);
+                    const citySel = el2.querySelector && el2.querySelector(".dest-select");
+                    if (citySel) citySel.dataset.context =
+                      `The user already chose the country ${countryName}; these are its cities.`;
+                    if (wizAsked && wizAsked.step === "destination") wizAsked.el = el2;
+                  });
+                });
+              if (wizAsked && wizAsked.step === "destination") wizAsked.el = cEl;
+            }
+          } else if (d.source === "unknown-form") {
+            fail(`destination-options: form not found (purpose="${purpose}" id="${pid}" `
+              + `segment="${segment}" id="${sid}") — check the parameters.`);
+          } else {
+            swap([]);   // source=any: this form allows any region — plain typed ask
+          }
+        })
+        .catch((e) => fail("destination-options API unreachable: " + e));
+      return pending;
     });
+  // RETIRED 2026-08-31: the optional 출장지 상세 is now asked SERVER-side (readiness ask
+  // kind "detail") so pure API consumers get the same question — the local widget both
+  // duplicated it and could bury a pending server ask by finishing the wizard early.
+  // RETIRED:   } else if (t.destination && planDestDetail === null) {
+  // RETIRED:     // The company form's optional "Trip Destination Details" (period-row selectionMemo).
+  // RETIRED:     askOnce("destDetail", () => {
+  // RETIRED:       const el = guideWidget(
+  // RETIRED:         T("Any destination details? (optional — building or site, up to 10 chars)",
+  // RETIRED:           "출장지 상세 내용이 있나요? (선택 — 건물·장소 등, 최대 10자)"),
+  // RETIRED:         `<div class="dd-wrap"><input type="text" class="dest-detail-input" maxlength="10"`
+  // RETIRED:           + ` placeholder="${esc(T("optional", "선택 입력"))}">`
+  // RETIRED:           + `<button type="button" class="choice-chip dd-ok">${esc(T("Save", "저장"))}</button>`
+  // RETIRED:           + `<button type="button" class="choice-chip dd-skip">${esc(T("Skip", "건너뛰기"))}</button></div>`,
+  // RETIRED:         (w, done) => {
+  // RETIRED:           w.querySelector(".dd-ok").addEventListener("click", () => {
+  // RETIRED:             planDestDetail = w.querySelector("input").value.trim();
+  // RETIRED:             done(planDestDetail || T("(no detail)", "(상세 없음)"));
+  // RETIRED:             ensureWizardSections();
+  // RETIRED:             nextWizardStep();
+  // RETIRED:           });
+  // RETIRED:           w.querySelector(".dd-skip").addEventListener("click", () => {
+  // RETIRED:             planDestDetail = "";
+  // RETIRED:             done(T("Skip", "건너뛰기"));
+  // RETIRED:             ensureWizardSections();
+  // RETIRED:             nextWizardStep();
+  // RETIRED:           });
+  // RETIRED:         });
+  // RETIRED:       askNaturally(el, [T("destination details (optional)", "출장지 상세(선택)")]);
+  // RETIRED:       return el;
+  // RETIRED:     });
   } else if (!t.title) {
     askOnce("title", () => {
       const el = guideAsk(T("What would you like to call this plan?", "이 계획의 이름을 뭐라고 할까요?"));
@@ -5286,7 +5566,7 @@ function renderAgentFiles() {
 /* ---- Chat turn ---- */
 async function sendAgent(opts) {
   if (agent.busy) return;
-  const message = $("agentInput").value.trim();
+  const message = (opts && opts.messageOverride) || $("agentInput").value.trim();
   const fileIds = agent.pending.map((f) => f.fileId);
   // Nothing to send: no error — like any chat app, just put the cursor back.
   if (!message && !fileIds.length) { $("agentInput").focus(); return; }
@@ -5304,6 +5584,72 @@ async function sendAgent(opts) {
   //  chatLang = hangul > 0 && hangul * 3 > latin ? "ko" : "en";)
   chatLang = LANG === "ko" ? "ko" : "en";
   if (chatOnly) dismissChatHero();   // conversation starts: clear the empty-state hero
+
+  // A destination dropdown is on screen and the user TYPED instead — honor the words by
+  // matching them against the dropdown's own options (Korean or English names). A match picks
+  // the option and continues the country→city cascade locally; the field mapper never sees the
+  // message, so it cannot parrot "Japan" into title/content. No match → normal agent turn.
+  if (chatOnly && message && !(opts && opts.__skipDestPick)) {
+    const destSel = document.querySelector("#agentThread .guide-widget:not(.guide-done) .dest-select");
+    // A per-DAY assignment ("첫날은 랑바레네, 둘째 날은 티메리") is not a dropdown pick —
+    // intercepting it as one loses everything but the first place. The agent captures
+    // day-place pairs itself, so those sentences always go straight through.
+    const dayAssign = /첫\s?날|둘\s?째|셋\s?째|넷\s?째|마지막\s?날|\d+\s?일\s?차|day\s?\d/i.test(message);
+    if (destSel && !dayAssign) {
+      const pickOption = (o) => {
+        // The typed message was already echoed as the user's chip — the widget's own
+        // done() echo would show it twice ("스위스" ×2). One input, one chip.
+        const wEl = destSel.closest(".guide-widget");
+        if (wEl) wEl.dataset.echoDone = "1";
+        destSel.value = o.value;
+        destSel.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      const m = message.trim().toLowerCase();
+      const hit = [...destSel.options].find((o) => {
+        if (!o.value) return false;
+        const t2 = o.text.trim().toLowerCase();
+        const en = (o.dataset.en || "").trim().toLowerCase();
+        return t2 === m || (t2.length >= 2 && m.includes(t2))
+          || (en && (en === m || (en.length >= 3 && m.includes(en))));
+      });
+      if (hit) {
+        appendMsg("user", message);
+        $("agentInput").value = "";
+        pickOption(hit);
+        return;
+      }
+      // No literal match: ask the LLM which listed entry the words MEAN ("capital of Japan",
+      // a typo, another language). A judged row picks it; "none" hands the message to the
+      // agent unchanged — the user may be talking about dates or anything else entirely.
+      appendMsg("user", message);
+      $("agentInput").value = "";
+      const opl = [...destSel.options].filter((o) => o.value)
+        .map((o) => o.text + (o.dataset.en ? " (" + o.dataset.en + ")" : ""));
+      const thinking = appendTyping();
+      fetch(`${BZ_API_BASE()}/agents/plan/destination-pick?corpNo=${encodeURIComponent(CORP_NO)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, options: opl, context: destSel.dataset.context || "" }) })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          thinking.remove();
+          const d = (json && (json.data || json.payload)) || {};
+          const withValue = [...destSel.options].filter((o) => o.value);
+          if (typeof d.index === "number" && withValue[d.index]) {
+            pickOption(withValue[d.index]);
+          } else {
+            // Not a destination answer — the agent handles the message as usual.
+            $("agentInput").value = message;
+            sendAgent({ ...(opts || {}), __skipDestPick: true, silentUser: true, echoAs: null });
+          }
+        })
+        .catch(() => {
+          thinking.remove();
+          $("agentInput").value = message;
+          sendAgent({ ...(opts || {}), __skipDestPick: true, silentUser: true, echoAs: null });
+        });
+      return;
+    }
+  }
 
   // Settlement: a "show my receipts" ask opens the personal-card browser (calendar + issued/
   // not-issued toggle + paged table). "not issued" in the ask flips the default Issued filter.
@@ -5334,45 +5680,131 @@ async function sendAgent(opts) {
 
   // "Save it" / "저장해 줘" in chat runs the real save flow instead of a chat turn —
   // saving is only ever user-initiated (there is no save button in chat mode).
-  const saveIntent = chatOnly && !agent.settle && message && message.length <= 40 && /\bsave\b|\bsubmit\b|저장/i.test(message);
-  if (saveIntent
-      && !wizardIncomplete() && (!agent.live || agent.status === "READY_FOR_REVIEW")) {
+  // PoC (non-live) mode keeps its simple typed-save shortcut; the LIVE agent path below is
+  // fully LLM-judged — no word lists decide intent anywhere.
+  if (chatOnly && !agent.settle && !agent.live && message && message.length <= 40
+      && /save|submit|저장/i.test(message) && !wizardIncomplete()) {
     appendMsg("user", message);
     $("agentInput").value = "";
-    if (agent.live) {
-      if (chatOnly) bzChatApprovalFlow();   // in-thread approval line, no popup
-      else bzOpenApprovalFlow();
-    } else completeCreate();
+    completeCreate();
     return;
   }
-  // Mid-approval line edits ("remove 합의", "remove 김철수") are a UI-only concern — the
-  // approval line lives in the browser until save, so sending them to the form agent
-  // yields a nonsense reply and a stale card. Handle them here.
-  const apprActive = chatOnly && agent.live && bzApproval.lines.length
-    && document.querySelector("#agentThread .chat-appr-card");
-  if (apprActive && message && message.length <= 40
-      && /\b(remove|delete|drop)\b|빼|삭제|제거|취소/i.test(message)) {
-    // Name match first; else match a role word ("합의") — with "결재선"/"approval line"
-    // stripped so the phrase itself can't masquerade as the 결재 role.
-    let idx = bzApproval.lines.findIndex((l) => message.toLowerCase().includes(l.name.toLowerCase()));
-    if (idx < 0) {
-      const rest = message.replace(/결재선|approval\s*line/gi, "");
-      const kindWords = { APPROVAL: /결재|approval/i, AGREE: /합의|agree/i,
-                          ACCEPT: /수신|receive|accept/i, REFERENCE: /참조|reference/i };
-      const kind = Object.keys(kindWords).find((k) => kindWords[k].test(rest));
-      if (kind) idx = bzApproval.lines.findIndex((l) => l.kind === kind);
-    }
-    if (idx >= 0) {
-      const gone = bzApproval.lines.splice(idx, 1)[0];
+  // Approval-line stage (live agent): the line is assembled client-side, so typed input here
+  // is judged by the SERVER's LLM intent judge (approval-intent) and the UI executes the
+  // verdict — pick a person, assign a role, finish, save, decline, remove, or hand anything
+  // else to the main agent. The only deterministic shortcut is an exact/unique roster-name
+  // match, which is matching against DATA, not phrasing.
+  const apprStage = chatOnly && agent.live && !(opts && opts.__skipApprIntent)
+    && (document.querySelector("#agentThread .choice-row.appr-row:not(.choice-done)")
+        || bzApproval.awaitSaveConfirm
+        || (bzApproval.lines.length && document.querySelector("#agentThread .chat-appr-card")));
+  if (apprStage && message && !agent.pending.length) {
+    const m = message.trim().toLowerCase();
+    const picked = new Set(bzApproval.lines.map((l) => l.id));
+    const hits = bzApproval.roster.filter((u) => !picked.has(u.id) && u.name
+      && (u.name.toLowerCase() === m
+          || (m.length >= 2 && u.name.toLowerCase().includes(m))
+          || (u.name.length >= 2 && m.includes(u.name.toLowerCase()))));
+    const markRowsDone = () => document.querySelectorAll(
+        "#agentThread .choice-row.appr-row:not(.choice-done)")
+      .forEach((r) => r.classList.add("choice-done"));
+    const askKindFor = (u) => {
+      markRowsDone();
+      bzNoteTurn(message, "[UI] 결재선 후보로 " + u.name + " 선택 — 역할 질문 표시");
+      bzChatAskKind(u);
+    };
+    if (!bzApproval.pendingKindFor && !bzApproval.awaitSaveConfirm && hits.length === 1
+        && message.trim().length <= hits[0].name.length + 4) {
       appendMsg("user", message);
       $("agentInput").value = "";
-      const kindKo = (BZ_LINE_KINDS.find((k) => k[0] === gone.kind) || [])[1] || gone.kind;
-      appendMsg("assistant", T(`Removed ${gone.name} (${kindKo}) from the approval line.`,
-        `결재선에서 ${gone.name} 님(${kindKo})을 뺐어요.`));
-      bzChatApprovalCard();     // re-render + ride down with the newest message
-      bzChatAskApprover();
+      askKindFor(hits[0]);
       return;
     }
+    appendMsg("user", message);
+    $("agentInput").value = "";
+    const typing = appendTyping();
+    try {
+      const res = await fetch(`${BZ_API_BASE()}/agents/plan/approval-intent?corpNo=${encodeURIComponent(CORP_NO)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          pendingRolePerson: bzApproval.pendingKindFor ? bzApproval.pendingKindFor.name : "",
+          awaitingSaveConfirm: !!bzApproval.awaitSaveConfirm,
+          lines: bzApproval.lines.map((l) => l.kind + " " + l.name).join(", "),
+          people: bzApproval.roster.filter((u) => !picked.has(u.id)).map((u) => u.name),
+        }),
+      });
+      const j2 = await res.json().catch(() => ({}));
+      typing.remove();
+      const v = (j2 && (j2.data || j2.payload)) || {};
+      const action = v.action || "other";
+      if (action === "assign_role" && bzApproval.pendingKindFor && v.role) {
+        const u = bzApproval.pendingKindFor;
+        bzApproval.pendingKindFor = null;
+        markRowsDone();
+        bzApproval.lines.push({ id: u.id, name: u.name, dept: u.dept, empNo: u.empNo,
+                                position: u.position, kind: v.role });
+        bzNoteTurn(message, "[UI] 결재선: " + u.name + " → " + v.role + " 지정");
+        // Confirm-by-seeing: the FULL preview (trip info, travellers, approval line)
+        // re-appears after every role assignment, before anything can be filed.
+        showAllPreviews(true);
+        bzChatApprovalCard();
+        bzChatAskApprover();
+        return;
+      }
+      if (action === "pick_person" && v.person) {
+        const u = bzApproval.roster.find((x) => x.name === v.person && !picked.has(x.id));
+        if (u) {
+          bzApproval.pendingKindFor = null;
+          askKindFor(u);
+          return;
+        }
+      }
+      if (action === "remove_person" && v.person) {
+        const idx = bzApproval.lines.findIndex((l) => l.name === v.person);
+        if (idx >= 0) {
+          const gone = bzApproval.lines.splice(idx, 1)[0];
+          bzNoteTurn(message, "[UI] 결재선에서 " + gone.name + " (" + gone.kind + ") 제거");
+          appendMsg("assistant", T(`Removed ${gone.name} from the approval line.`,
+            `결재선에서 ${gone.name} 님을 뺐어요.`));
+          bzChatApprovalCard();
+          bzChatAskApprover();
+          return;
+        }
+      }
+      if (action === "no_more") {
+        markRowsDone();
+        showAllPreviews(true);
+        bzChatApprovalCard();
+        appendMsg("assistant", T("That's everything above — do you want to save it to BizPlay now?",
+          "위 내용이 전부예요 — 이대로 BizPlay에 저장할까요?"));
+        bzApproval.awaitSaveConfirm = true;
+        bzNoteTurn(message, "[UI] 결재선 선택 종료 — 전체 미리보기 + 저장 확인 질문");
+        return;
+      }
+      if (action === "save_now") {
+        bzApproval.awaitSaveConfirm = false;
+        appendMsg("assistant", T("Saving to BizPlay…", "BizPlay에 저장하는 중…"));
+        bzNoteTurn(message, "[UI] 저장 실행 — 선택된 결재선으로 BizPlay에 제출");
+        bzSubmitManualCreate();
+        return;
+      }
+      if (action === "not_yet") {
+        bzApproval.awaitSaveConfirm = false;
+        appendMsg("assistant", T("Okay — tell me what you'd like to change.",
+          "알겠어요 — 수정할 내용을 말씀해 주세요."));
+        bzNoteTurn(message, "[UI] 저장 보류 — 수정 대기");
+        return;
+      }
+    } catch (e) {
+      typing.remove();
+    }
+    // other / unresolved: the main agent takes it (transcript already has the user bubble)
+    bzApproval.awaitSaveConfirm = false;
+    sendAgent({ ...(opts || {}), __skipApprIntent: true, silentUser: true, echoAs: null,
+                messageOverride: message });
+    return;
   }
   // Optimistic user bubble (text + any file chips). A chip sends a machine token
   // (trankind:11719, receipt:all, receipts-done…) that the agent's state machine needs
@@ -5415,6 +5847,9 @@ async function sendAgent(opts) {
       } else {
         url = `${BZ_API_BASE()}/agents/booking`;
         body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+        // The wizard already asked the optional 출장지 상세 — tell the server, including ""
+        // for "asked and skipped", so the agent never repeats the question in chat.
+        if (planDestDetail !== null) body.destinationDetail = planDestDetail;
         if (agent.sessionId) body.sessionId = agent.sessionId;
         if (agent.planApprovalId) body.bstrPlanApprovalId = agent.planApprovalId;
       }
@@ -5461,6 +5896,26 @@ async function sendAgent(opts) {
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;   // full last turn (missingFields etc.) for panels/tests
+    // Track the server's country attribution 1:1 — including CLEARING it when the
+    // destination changed to something unresolved (a stale 일본 next to "shibuya" lied).
+    if (data.destinationCountry) planDestCountry = data.destinationCountry;
+    else if (data.destination) planDestCountry = null;
+    // The destination is settled (by typing, binding, or a pick) — any dropdown still
+    // open for it must retire, or it keeps intercepting unrelated later messages
+    // (a leftover city list swallowed "change the city to Sapporo").
+    if (agent.live && data.destination && data.intent !== "DESTINATION_ASK") {
+      document.querySelectorAll("#agentThread .guide-widget:not(.guide-done) .dest-select")
+        .forEach((sel) => {
+          const w = sel.closest(".guide-widget");
+          if (w) { w.classList.add("guide-done"); w.classList.add("choice-stale"); }
+        });
+    }
+    if (data.periodPlaces && data.periodPlaces.length) planPeriodPlaces = data.periodPlaces;
+    // The server owns the 출장지 상세 slot (asked there, editable there — "add destination
+    // detail of 'floor 2'"); mirror it so the card shows it and the save posts it.
+    if (typeof data.destinationDetail === "string" && data.destinationDetail.trim()) {
+      planDestDetail = data.destinationDetail.trim();
+    }
     if (agent.settle && agent.sessionId) localStorage.setItem("bizplay.settle.session", agent.sessionId);
     // Form first, reply second: the turn reads as USER -> updated previews ->
     // the agent's message -> any follow-up chips. (A form-apply failure must not
@@ -5529,6 +5984,27 @@ async function sendAgent(opts) {
         if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
       }
       else if (hasChoices) appendMsg("assistant", "", { choiceGroups: data.pendingChoices });   // …follow-up below
+      // The saved destination did not resolve to a real country/city (the backend marked
+      // the turn DESTINATION_ASK — no wording match involved): drop the junk value and
+      // re-run the wizard's destination step so the API-driven dropdown asks properly.
+      // The agent judged the message as "file it" (SUBMIT_REQUESTED): run the save with
+      // whatever approval line was picked, or open the approval step if none yet.
+      else if (agent.live && data.intent === "SUBMIT_REQUESTED") {
+        if (document.querySelector("#agentThread .chat-appr-card") && bzApproval.lines.length) {
+          appendMsg("assistant", T("Saving to BizPlay…", "BizPlay에 저장하는 중…"));
+          bzSubmitManualCreate();
+        } else {
+          bzChatApprovalFlow();
+        }
+      }
+      else if (agent.live && data.intent === "DESTINATION_ASK") {
+        $("tripDestination").value = "";
+        if (wizAsked && wizAsked.step === "destination") wizAsked = null;
+        // The server's reply above IS the question (with the allowed-list context) —
+        // the wizard only supplies the dropdown, not a second generic ask.
+        planDestAskQuiet = true;
+        nextWizardStep();
+      }
       else if (wizardIncomplete() || wizardHasPendingExtra()) nextWizardStep();
       // Mid-approval correction: the section previews just updated — continue the
       // approval conversation at the bottom instead of going quiet. But when the agent
@@ -5536,6 +6012,10 @@ async function sendAgent(opts) {
       // answer first — stacking the approval ask on top buries the question.
       else if (agent.live && document.querySelector("#agentThread .chat-appr-card, #agentThread .appr-row")
                && !/\?\s*$/.test((data.reply || "").trim())) bzChatAskApprover();
+      // The backend is still COLLECTING — its reply above IS the active question
+      // (region, transport, …). Starting the approval line here buried that question
+      // under "who should approve?" even though the form was not actually done.
+      else if (agent.live && data.status && data.status !== "READY_FOR_REVIEW") { /* wait for the answer */ }
       // Everything arrived in one turn: the backend reply already announced the
       // approval-line step — start it without a duplicate completion bubble.
       else appendCreateAction(agent.live && !!data.reply);
@@ -5547,7 +6027,8 @@ async function sendAgent(opts) {
       // The user just asked to save and this very turn made the draft ready
       // (locally-picked values sync on the way in) — honor the ask right now
       // instead of replying "save whenever you're ready".
-      if (chatOnly && saveIntent && data.status === "READY_FOR_REVIEW" && !hasChoices) bzChatApprovalFlow();
+      // (The old client-side saveIntent shortcut is gone — the server's SUBMIT_REQUESTED
+      // judgment drives saving now, handled in the intent branch above.)
     } else if (chatOnly && !hasChoices && !wizardIncomplete()) {
       appendCreateAction();
     }
@@ -6191,9 +6672,23 @@ async function bzOpenApprovalFlow(manual) {
  * "save it" -> the assistant asks who approves; roster chips build the 결재선 in
  * order (shown as a card); Done ✓ saves through the same bzSubmitManualCreate
  * path the modal uses. */
+/* Every user prompt reaches the agent: turns the UI answers locally (approval picks,
+ * save commands, removals) are RECORDED into the session transcript — no pipeline runs,
+ * but the agent's history and its 8-turn context stay complete. Fire-and-forget. */
+function bzNoteTurn(userText, assistantText) {
+  if (!(agent.live && agent.sessionId)) return;
+  fetch(`${BZ_API_BASE()}/agents/plan/${agent.sessionId}/note?corpNo=${encodeURIComponent(CORP_NO)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: userText, assistant: assistantText }),
+  }).catch(() => {});
+}
+
 async function bzChatApprovalFlow() {
   bzManualSave = !(agent.live && agent.sessionId);
   bzApproval.lines = [];
+  bzApproval.pendingKindFor = null;
+  bzApproval.awaitSaveConfirm = false;
   if (!bzApproval.roster.length) {
     try {
       await bzLoadRoster();
@@ -6249,11 +6744,13 @@ function bzChatAskApprover() {
     opts, (opt) => {
       if (opt.done) {
         appendMsg("assistant", T("Saving to BizPlay…", "BizPlay에 저장하는 중…"));
+        bzNoteTurn("(Done ✓)", "[UI] 저장 실행 — 선택된 결재선으로 BizPlay에 제출");
         bzSubmitManualCreate();
         return;
       }
       const u = bzApproval.roster.find((x) => String(x.id) === opt.value);
-      if (u) bzChatAskKind(u); else bzChatAskApprover();
+      if (u) { bzNoteTurn(opt.label, "[UI] 결재선 후보로 " + u.name + " 선택 — 역할 질문 표시"); bzChatAskKind(u); }
+      else bzChatAskApprover();
     });
   row.classList.add("appr-row");
   return row;
@@ -6262,6 +6759,7 @@ function bzChatAskApprover() {
 /* Each person gets a role, exactly like the real UI's per-line dropdown:
  * 결재 / 합의 / 수신 / 참조 (ApprovalKindType — the server rejects anything else). */
 function bzChatAskKind(u) {
+  bzApproval.pendingKindFor = u;   // typed role words bind to THIS person
   const row = guideChips(
     T(`What role should ${u.name} have in the approval line?`, `${u.name} 님은 어떤 유형인가요?`),
     BZ_LINE_KINDS.map(([value, ko]) => ({
@@ -6269,7 +6767,10 @@ function bzChatAskKind(u) {
       value,
     })),
     (opt) => {
+      bzApproval.pendingKindFor = null;
       bzApproval.lines.push({ id: u.id, name: u.name, dept: u.dept, empNo: u.empNo, position: u.position, kind: opt.value });
+      bzNoteTurn(opt.label, "[UI] 결재선: " + u.name + " → " + opt.value + " 지정");
+      showAllPreviews(true);
       bzChatApprovalCard();
       bzChatAskApprover();
     });
@@ -6467,6 +6968,7 @@ async function bzSubmitManualCreate() {
     travelerCorpUserIds: travelers.map((t) => t.bzId).filter(Boolean),
     itemValues,
     approvalLines: bzApproval.lines.map((l) => ({ corporationUserId: l.id, approvalKindType: l.kind })),
+    destinationDetail: planDestDetail || "",
   };
   $("bzPreviewOverlay").classList.add("hidden");
   const btns = [$("createCompleteBtn"), $("createCompleteBtn2")];
@@ -6481,6 +6983,12 @@ async function bzSubmitManualCreate() {
     if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
     toast(data.reply || "Plan saved to BizPlay ✓", "ok");
+    // Chat mode: the toast disappears in 4 seconds — the confirmation must live in the
+    // thread too, or "Saving to BizPlay…" is the last thing the user ever sees.
+    if (chatOnly) {
+      appendMsg("assistant", data.reply
+        || T("Done — your plan has been filed to BizPlay. ✓", "완료 — 계획서가 BizPlay에 상신됐어요. ✓"));
+    }
     await bzMirrorLocalPlan();   // show it in the demo list right away
     closeCreate();               // done — the toast + list entry are the confirmation
   } catch (e) {

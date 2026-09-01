@@ -33,7 +33,10 @@ public class FormFollowUpAgentServiceImple implements FormFollowUpAgentService {
 
     private static final String QA_PROMPT = """
             You answer a user's question about their in-progress business-trip form using ONLY
-            the draft data provided (JSON — keys and values may be Korean).
+            the draft data provided (JSON — keys and values may be Korean) and the RECENT
+            CONVERSATION section when present. Lines marked [UI] there record actions the
+            user performed in the app (approval-line picks, saves) — they are facts and MAY
+            be used to answer questions about the approval line or what happened so far.
             - Asked for everything ("show all the details", "전체 보여줘"): give a clean summary,
               one short line per FILLED field, using the field labels. Skip empty/null values.
             - Asked about specific fields: answer just those.

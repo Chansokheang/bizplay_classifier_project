@@ -36,6 +36,15 @@ public class DateContextServiceImple implements DateContextService {
                 .append(", yesterday/어제=").append(today.minusDays(1))
                 .append(", next week/다음주=").append(today.plusWeeks(1))
                 .append(". A single day mentioned alone is BOTH the start and the end date. ");
+        // NEXT week's weekdays spelled out one by one: combining "다음 주" with a weekday from
+        // the rolling calendar is exactly the two-step lookup the model kept fumbling (다음 주
+        // 수요일 came back as THIS week's Wednesday). A direct anchor removes the step.
+        LocalDate nextMon = today.with(DayOfWeek.MONDAY).plusWeeks(1);
+        sb.append("Next week (다음 주) weekday by weekday: ");
+        for (int i = 0; i < 7; i++) {
+            LocalDate d = nextMon.plusDays(i);
+            sb.append(weekday(d)).append('=').append(d).append(i < 6 ? ", " : ". ");
+        }
         sb.append("Rules: bare/\"this\" weekday = soonest occurrence; \"next <weekday>\" = that ")
                 .append("weekday in NEXT week; \"in N days/weeks\" counts from today. Resolve every ")
                 .append("relative date to YYYY-MM-DD from this calendar — never guess, never output relative words.");
@@ -44,6 +53,12 @@ public class DateContextServiceImple implements DateContextService {
 
     private String weekday(LocalDate d) {
         DayOfWeek dow = d.getDayOfWeek();
-        return dow.getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
+        // Both scripts on every entry: the 14B model mismapped Korean weekday names against an
+        // English-only calendar (다음 주 수요일 was answered with next week's TUESDAY).
+        String ko = switch (dow) {
+            case MONDAY -> "월"; case TUESDAY -> "화"; case WEDNESDAY -> "수";
+            case THURSDAY -> "목"; case FRIDAY -> "금"; case SATURDAY -> "토"; case SUNDAY -> "일";
+        };
+        return dow.getDisplayName(TextStyle.SHORT, Locale.ENGLISH) + "/" + ko + "요일";
     }
 }

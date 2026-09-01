@@ -53,6 +53,8 @@ public class BizplayFormController {
     private final PurposeSegmentAgentService purposeSegmentAgentService;
     private final FormSkeletonService formSkeletonService;
     private final BizplayPlanAgentService bizplayPlanAgentService;
+    private final com.api.bizplay_conversational.service.planEnrichmentService.PlanEnrichmentService planEnrichmentService;
+    private final com.api.bizplay_conversational.service.destinationResolverAgentService.DestinationResolverAgentService destinationResolverAgentService;
     private final com.api.bizplay_conversational.service.bizplaySettlementAgentService.BizplaySettlementAgentService bizplaySettlementAgentService;
     private final AgentPromptService agentPromptService;
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
@@ -108,6 +110,63 @@ public class BizplayFormController {
         return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getUserProfile(token)));
     }
 
+    @Operation(summary = "Destination suggestion chips for one trip form — the regions the "
+            + "paper's OWN flags allow (급지 policy list / 시도 list), from the provider's region "
+            + "APIs. Empty regions with source=any means anything goes and the UI may show its "
+            + "generic suggestions.")
+    @GetMapping("/agents/plan/destination-options")
+    public ResponseEntity<ApiResponse<com.fasterxml.jackson.databind.JsonNode>> destinationOptions(
+            @RequestParam("corpNo") String corpNo,
+            @RequestParam(value = "purpose", required = false) String purpose,
+            @RequestParam(value = "segment", required = false) String segment,
+            @RequestParam(value = "purposeId", required = false) Long purposeId,
+            @RequestParam(value = "segmentId", required = false) Long segmentId,
+            @RequestParam(value = "citiesOf", required = false) String citiesOf,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            if (citiesOf != null && !citiesOf.isBlank()) {
+                // Second step of the country→city cascade on non-policy overseas forms.
+                return ResponseEntity.ok(ApiResponse.ok(
+                        destinationResolverAgentService.citiesOfCountry(citiesOf, token)));
+            }
+            return ResponseEntity.ok(ApiResponse.ok(destinationResolverAgentService.destinationOptions(
+                    purpose, segment, purposeId, segmentId, token)));
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    @Operation(summary = "Semantic destination pick: which listed option does the typed message "
+            + "MEAN? Body {message, options:[labels…]} → {index: 0-based or null}. LLM-judged — "
+            + "handles other languages, typos and descriptions ('capital of Japan').")
+    @PostMapping("/agents/plan/destination-pick")
+    public ResponseEntity<ApiResponse<com.fasterxml.jackson.databind.JsonNode>> destinationPick(
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode body) {
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            java.util.List<String> options = new java.util.ArrayList<>();
+            for (JsonNode o : body.path("options")) {
+                options.add(o.asText(""));
+            }
+            String message = body.path("message").asText("");
+            boolean ko = message.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+            Integer idx = destinationResolverAgentService.pickDestination(options, message,
+                    body.path("context").asText(""), ko);
+            com.fasterxml.jackson.databind.node.ObjectNode out =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            if (idx == null) {
+                out.putNull("index");
+            } else {
+                out.put("index", idx);
+            }
+            return ResponseEntity.ok(ApiResponse.ok(out));
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
     @Operation(summary = "⑨ Settlement (출장정산서) documents saved in BizPlay for a period — the "
             + "source of truth for the Expense Report table.")
     @GetMapping("/settlements")
@@ -133,6 +192,33 @@ public class BizplayFormController {
         log.info("POST /bizplay/agents/settlement - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
         return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.chat(request, token)));
+    }
+
+    @Operation(summary = "LLM intent judge for the approval-line step: what does the user's "
+            + "message MEAN — pick a person, assign a role, done picking, save now, not yet, "
+            + "remove someone, or something else. No word lists.")
+    @PostMapping("/agents/plan/approval-intent")
+    public ResponseEntity<ApiResponse<JsonNode>> approvalIntent(
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode body) {
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(bizplayPlanAgentService.approvalIntent(corpNo, body)));
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
+    @Operation(summary = "Record a client-handled turn into the plan session transcript — "
+            + "no pipeline runs; keeps the conversation history complete for context.")
+    @PostMapping("/agents/plan/{sessionId}/note")
+    public ResponseEntity<ApiResponse<String>> notePlanTurn(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode body) {
+        bizplayPlanAgentService.noteTurn(sessionId, corpNo,
+                body.path("user").asText(null), body.path("assistant").asText(null));
+        return ResponseEntity.ok(ApiResponse.ok("noted"));
     }
 
     @Operation(summary = "Create this plan: POST the session's draft_json to BizPlay (DRAFT_ONLY save). "

@@ -33,4 +33,7 @@ public class BizplayPlanAgentRequest {
      * field that binds a booking to a plan and, through it, to the settlement. Null everywhere else.
      */
     private Long bstrPlanApprovalId;
+
+    /** Optional 출장지 상세 (Trip Destination Details) — saved as the period row's selectionMemo. */
+    private String destinationDetail;
 }
