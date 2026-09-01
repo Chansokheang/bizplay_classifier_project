@@ -3985,7 +3985,7 @@ async function fetchTerminals(vehicleType) {
 const TP_ROUTE = [["One-way", "편도", "ONEWAY"], ["Round-trip", "왕복", "ROUNDTRIP"]];
 const TP_AIR_SEATS = [["Economy", "일반석", "economyClass"], ["Premium economy", "프리미엄 일반석", "premiumEconomyClass"],
   ["Business", "비즈니스석", "businessClass"], ["First", "일등석", "firstClass"]];
-const TP_TRAIN_SEATS = [["Standard", "일반실", "standardRoom"], ["First class", "특실", "firstClassRoom"]];
+const TP_TRAIN_SEATS = [["Standard", "일반실", "standardRoom"], ["Deluxe", "특실", "deluxeRoom"]];
 const TP_TRAIN_TYPES = [["KTX", "KTX", "KTX"], ["SRT", "SRT", "SRT"], ["ITX", "ITX", "ITX"],
   ["Saemaeul", "새마을호", "SAEMAEUL"], ["Mugunghwa", "무궁화호", "MUGUNGHWA"]];
 const TP_VEH_DOMESTIC = [["Air", "항공", "AIR"], ["Train", "열차", "__TRAIN__"], ["Express bus", "고속버스", "BUS"],
@@ -4014,8 +4014,11 @@ async function renderTpSub(container, vehicleValue, oversea) {
   container.innerHTML = "";
   if (!vehicleValue) return;
   const isAir = vehicleValue === "AIR";
-  const isTrainGroup = vehicleValue === "__TRAIN__";
-  const isTrain = isTrainGroup || ["TRAIN", "KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA"].includes(vehicleValue);
+  // A train with no specific kind chosen yet — domestic groups them under __TRAIN__, overseas
+  // sends the plain TRAIN. Both still need the KTX / SRT / ITX / 새마을호 / 무궁화호 question,
+  // because that answer IS the vehicle the receipt carries.
+  const isTrainGroup = vehicleValue === "__TRAIN__" || vehicleValue === "TRAIN";
+  const isTrain = isTrainGroup || ["KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA"].includes(vehicleValue);
   const useTerminals = !oversea && (isAir || isTrainGroup);   // domestic AIR/train → id dropdowns
   // These four are driven wherever the traveller needs to go: no route, no seat, no terminal.
   // The provider's RENTAL, CORP_CAR, AIRPORT_LIMOUSINE and OTHER samples all keep routeType,
@@ -4025,7 +4028,16 @@ async function renderTpSub(container, vehicleValue, oversea) {
   const parts = [];
   if (isTrainGroup) parts.push(f(T("Train type", "열차종류"), `<select data-tp="trainType">${optsL(TP_TRAIN_TYPES, T("Select", "선택"))}</select>`));
   if (!noRoute) parts.push(f(T("Route", "노선종류"), `<select data-tp="routeType">${optsL(TP_ROUTE)}</select>`));
-  parts.push(f(T("Used date", "이용일"), `<input type="date" data-tp="usedStartDate">`));
+  // A return trip travels on two days (the provider's ROUNDTRIP sample: 08-25 out, 08-26 back),
+  // so the second date appears only once Round-trip is picked. One-way keeps a single date and
+  // sends it as both usedStartDate and usedEndDate, exactly as their ONEWAY sample does. A
+  // vehicle with no route (hired/company car, limousine) keeps the plain single date it had.
+  parts.push(f(noRoute ? T("Used date", "이용일") : T("Outbound date", "가는 날"),
+    `<input type="date" data-tp="usedStartDate">`));
+  if (!noRoute) {
+    parts.push(`<label class="mx-f mx-return" hidden><span>${esc(T("Return date", "오는 날"))}</span>`
+      + `<input type="date" data-tp="usedEndDate"></label>`);
+  }
   if (useTerminals) {
     parts.push(f(T("From", "출발지"), `<select data-tp="departSel"><option value="">${esc(T("Loading…", "불러오는 중…"))}</option></select>`));
     parts.push(f(T("To", "도착지"), `<select data-tp="arrivalSel"><option value="">${esc(T("Loading…", "불러오는 중…"))}</option></select>`));
@@ -4035,6 +4047,20 @@ async function renderTpSub(container, vehicleValue, oversea) {
   }
   if (isAir || isTrain) parts.push(f(T("Seat class", "좌석등급"), `<select data-tp="seatClass">${optsL(isTrain ? TP_TRAIN_SEATS : TP_AIR_SEATS, T("Select", "선택"))}</select>`));
   container.innerHTML = parts.join("");
+  const routeSel = container.querySelector('[data-tp="routeType"]');
+  const returnRow = container.querySelector(".mx-return");
+  if (routeSel && returnRow) {
+    const syncReturn = () => {
+      const round = routeSel.value === "ROUNDTRIP";
+      // display, not just [hidden]: .mx-f sets display:flex, and a class rule beats the
+      // browser's [hidden]{display:none}, so the attribute alone left the row on screen.
+      returnRow.hidden = !round;
+      returnRow.style.display = round ? "" : "none";
+      if (!round) returnRow.querySelector("input").value = "";
+    };
+    routeSel.addEventListener("change", syncReturn);
+    syncReturn();
+  }
   if (useTerminals) {
     const terms = await fetchTerminals(isAir ? "AIR" : "KTX");
     const o = `<option value="">${esc(T("Select", "선택"))}</option>`
@@ -4048,10 +4074,16 @@ async function renderTpSub(container, vehicleValue, oversea) {
 function readTransportDetail(w) {
   const g = (k) => { const e = w.querySelector(`[data-tp="${k}"]`); return e ? e.value : ""; };
   let vehicleType = (w.querySelector('[data-tv="vehicle"]') || {}).value || "";
+  // The train kind picked in the sub-form IS the vehicle the receipt carries. Domestic groups
+  // them under __TRAIN__ (KTX is its default); overseas keeps plain TRAIN when none is picked.
   if (vehicleType === "__TRAIN__") vehicleType = g("trainType") || "KTX";
+  else if (vehicleType === "TRAIN") vehicleType = g("trainType") || "TRAIN";
   const used = g("usedStartDate") || null;
+  // Round-trip carries its own return day; one-way sends the single date as both, per the
+  // provider's ONEWAY sample (usedStartDate == usedEndDate == the travel day).
+  const back = (g("routeType") === "ROUNDTRIP" && g("usedEndDate")) || used;
   const detail = {
-    etcReceiptType: "RECEIPT", usedStartDate: used, usedEndDate: used,
+    etcReceiptType: "RECEIPT", usedStartDate: used, usedEndDate: back,
     vehicleType: vehicleType || null, routeType: g("routeType") || null, seatClass: g("seatClass") || null,
     departTerminalId: null, arrivalTerminalId: null, departNodeId: null, arrivalNodeId: null,
     depart: null, arrival: null,

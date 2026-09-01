@@ -2131,7 +2131,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             if (!building) {
                 return null;
             }
-            if (!missingExpenseSlots(pending, expenseSlots(state)).isEmpty()) {
+            if (!missingExpenseSlots(pending, expenseSlots(state, pending)).isEmpty()) {
                 return null;   // not actually complete — fall through and keep asking
             }
             return registerPendingExpense(session, state, pending, message, corpNo, bizplayToken);
@@ -2146,7 +2146,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             if (!label.isBlank()) {
                 pending.put(field, label);
             }
-            List<Slot> after = expenseSlots(state);
+            List<Slot> after = expenseSlots(state, pending);
             List<Slot> stillMissing = missingExpenseSlots(pending, after);
             if (!stillMissing.isEmpty()) {
                 Slot next = stillMissing.get(0);
@@ -2192,13 +2192,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             switchExpenseKindIfNamed(state, pending, message, bizplayToken, ko);
         }
 
-        List<Slot> slots = expenseSlots(state);
+        List<Slot> slots = expenseSlots(state, pending);
         // What the previous turn asked for: the ask is always the FIRST still-missing slot, so
         // recomputing it here - before this message is merged - names the question on screen.
         List<Slot> asked = building ? missingExpenseSlots(pending, slots) : List.of();
         Slot answering = asked.isEmpty() ? null : asked.get(0);
         java.util.List<String> turns = recentTurns(session);
         String priorApprovalDate = pending.path("approvalDate").asText("");
+        String priorRoute = pending.path("routeType").asText("");
+        java.util.Map<String, String> priorDates = new java.util.LinkedHashMap<>();
+        for (String k : DATE_SLOT_KEYS) {
+            priorDates.put(k, pending.path(k).asText(""));
+        }
         int filled = fillExpenseSlots(pending, message, slots, ko, turns);
         filled += backfillVehicleType(pending, message);
         filled += backfillIsoDates(pending, message, slots);
@@ -2207,6 +2212,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         filled -= dropInventedToday(pending, message, priorApprovalDate);
         filled += fillAskedSlot(pending, message, answering, ko, turns);
         filled += defaultLodgingPaymentDate(pending);
+        int routeDropped = dropUnstatedRoute(pending, message, priorRoute, turns, ko);
+        filled -= routeDropped;
+        filled -= dropEchoedDate(pending, priorDates, answering);
         if (!building && filled == 0) {
             state.remove("pendingExpense");
             return null;   // nothing expense-like in this message — not our turn
@@ -2223,32 +2231,62 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 && !pending.path("vehicleType").asText("").isBlank()) {
             pending.put("mestName", pending.path("vehicleType").asText());
         }
+        // The vehicle — and, for a flight, its route — can arrive in THIS message, and both
+        // change which fields the receipt needs. Recompute before deciding what is still
+        // missing, or a flight named this turn would be previewed without its route ever asked.
+        normalizeRouteType(pending);
+        promoteTrainType(pending);
+        slots = expenseSlots(state, pending);
         List<Slot> missing = missingExpenseSlots(pending, slots);
         // LLM-first recovery: before asking the USER for anything, ask the MODEL again — a
         // focused pass over only the still-missing slots. The broad pass offers every slot at
         // once and the small model sometimes drops values that are written right in the message;
         // narrowing its attention to what's missing recovers them without a single re-ask.
+        String answeredDate = answering != null && DATE_SLOT_KEYS.contains(answering.key())
+                ? pending.path(answering.key()).asText("") : "";
+        String routeBeforeFocused = pending.path("routeType").asText("");
         if (!missing.isEmpty() && message.length() >= 10) {
             java.util.LinkedHashMap<String, String> wanted = new java.util.LinkedHashMap<>();
             for (Slot s : missing) {
+                // The route was just judged "not stated in this message" — re-offering it here
+                // would only re-invent the same assumption the guard removed.
+                if (routeDropped > 0 && "routeType".equals(s.key())) {
+                    continue;
+                }
                 wanted.put(s.key(), s.meaning());
             }
-            JsonNode got2 = slotFillerAgentService.extract(message, wanted, ko, turns);
+            JsonNode got2 = wanted.isEmpty() ? objectMapper.createObjectNode()
+                    : slotFillerAgentService.extract(message, wanted, ko, turns);
             for (Slot s : missing) {
+                if (!wanted.containsKey(s.key())) {
+                    continue;
+                }
                 JsonNode v = got2.path(s.key());
                 if (v.isMissingNode() || v.isNull() || v.asText("").isBlank()) {
                     continue;
                 }
-                // Same invention guard as the broad pass: a date the message never mentions
-                // is the extractor stamping today, not the user's receipt.
-                if (DATE_SLOT_KEYS.contains(s.key())
-                        && v.asText("").equals(LocalDate.now().toString())
-                        && !DATE_MENTIONED.matcher(message).find()) {
+                // Same invention guard as the broad pass: a date the message never mentions is
+                // one the model supplied — today, or a date lifted from the conversation around
+                // it — not the user's receipt.
+                if (DATE_SLOT_KEYS.contains(s.key()) && !DATE_MENTIONED.matcher(message).find()) {
+                    continue;
+                }
+                // The one date this message gave answers the one date that was asked. Copying it
+                // into the OTHER travel day would answer a question nobody has asked yet.
+                if (DATE_SLOT_KEYS.contains(s.key()) && !answeredDate.isBlank()
+                        && v.asText("").equals(answeredDate)) {
                     continue;
                 }
                 pending.set(s.key(), v.deepCopy());
                 log.info("Focused re-extract recovered {} = '{}'", s.key(), truncate(v.asText(), 30));
             }
+            normalizeRouteType(pending);
+            promoteTrainType(pending);
+            // The focused pass is where the route usually surfaces — and where an assumption
+            // would too. Same verification as the broad pass: keep it only if the user's own
+            // words say it, so an unstated route becomes a question, not a silent ONEWAY.
+            dropUnstatedRoute(pending, message, routeBeforeFocused, turns, ko);
+            slots = expenseSlots(state, pending);   // a route answered here adds the trip dates
             missing = missingExpenseSlots(pending, slots);
         }
         if (!missing.isEmpty()) {
@@ -2259,7 +2297,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // Always offer the exit. A question the user cannot answer - the wrong expense kind, or
             // a receipt they have changed their mind about - otherwise repeats forever, and typing
             // "done" or "skip" at it does nothing because neither is a slot value.
-            return simpleTurn(session, state, message, ask, "EXPENSE_SLOT_PENDING", expenseAbandonChips(ko));
+            return simpleTurn(session, state, message, ask, "EXPENSE_SLOT_PENDING",
+                    expenseSlotChips(next, pending, ko));
         }
         // A stop that matches several places in the catalog is not something to guess at: the
         // traveller knows which one they used, and a wrong node is a wrong receipt.
@@ -2504,7 +2543,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     && k.path("id").asLong() != slots(state).path("evidenceTranKindId").asLong()) {
                 selectTranKind(state, k.path("id").asLong());
                 for (String stale : new String[]{"vehicleType", "depart", "arrival", "seatGrade",
-                        "usedStartDate", "usedEndDate"}) {
+                        "routeType", "usedStartDate", "usedEndDate"}) {
                     pending.remove(stale);
                 }
                 log.info("Expense kind switched mid-build to {} — kind-specific answers cleared.",
@@ -2523,6 +2562,80 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         .label(t(ko, "Cancel this receipt", "이 영수증 취소"))
                         .sendText("expense-cancel").build()))
                 .build());
+    }
+
+    /**
+     * The questions whose answers come from a FIXED list get that list as chips — the same
+     * options the provider's own form shows. Typing still works: the chip sends the label as an
+     * ordinary message, which the slot machinery reads exactly as if it had been typed.
+     */
+    private List<TripPlanAgentResponse.PendingChoice> expenseSlotChips(Slot asking, ObjectNode pending,
+                                                                       boolean ko) {
+        List<TripPlanAgentResponse.PendingChoice> chips = new ArrayList<>();
+        java.util.LinkedHashMap<String, String> options = new java.util.LinkedHashMap<>();
+        String vehicle = pending == null ? "" : pending.path("vehicleType").asText("");
+        if ("seatGrade".equals(asking.key())) {
+            if (isBus(vehicle)) {
+                options.put(t(ko, "Standard", "일반"), t(ko, "Standard", "일반"));
+                options.put(t(ko, "Superior", "우등"), t(ko, "Superior", "우등"));
+                options.put(t(ko, "Premium", "프리미엄"), t(ko, "Premium", "프리미엄"));
+            } else if (TRAIN_VEHICLES.contains(vehicle)) {
+                options.put(t(ko, "Standard", "일반실"), t(ko, "Standard", "일반실"));
+                options.put(t(ko, "Deluxe", "특실"), t(ko, "Deluxe", "특실"));
+            } else {
+                options.put(t(ko, "Economy", "일반석"), t(ko, "Economy", "일반석"));
+                options.put(t(ko, "Premium economy", "프리미엄 일반석"),
+                        t(ko, "Premium economy", "프리미엄 일반석"));
+                options.put(t(ko, "Business", "비즈니스석"), t(ko, "Business", "비즈니스석"));
+                options.put(t(ko, "First", "일등석"), t(ko, "First", "일등석"));
+            }
+        } else if ("trainType".equals(asking.key())) {
+            options.put("KTX", "KTX");
+            options.put("SRT", "SRT");
+            options.put("ITX", "ITX");
+            options.put(t(ko, "Saemaeul", "새마을호"), "새마을호");
+            options.put(t(ko, "Mugunghwa", "무궁화호"), "무궁화호");
+        } else if ("routeType".equals(asking.key())) {
+            options.put(t(ko, "One-way", "편도"), t(ko, "One-way", "편도"));
+            options.put(t(ko, "Round-trip", "왕복"), t(ko, "Round-trip", "왕복"));
+        }
+        if (!options.isEmpty()) {
+            List<TripPlanAgentResponse.Option> opts = new ArrayList<>();
+            options.forEach((label, send) -> opts.add(
+                    TripPlanAgentResponse.Option.builder().label(label).sendText(send).build()));
+            chips.add(TripPlanAgentResponse.PendingChoice.builder()
+                    .kind("EXPENSE_SLOT").name(t(ko, asking.en(), asking.ko())).options(opts).build());
+        }
+        chips.addAll(expenseAbandonChips(ko));
+        return chips;
+    }
+
+    /**
+     * The answer to "which train?" IS the vehicle the receipt carries, so it replaces the generic
+     * TRAIN — the seat catalogue, the station lookup and the saved body all key off the specific
+     * one. Normalising the model's answer to the provider's enum, like the vehicle word map.
+     */
+    private void promoteTrainType(ObjectNode pending) {
+        String raw = pending.path("trainType").asText("").trim();
+        if (raw.isEmpty()) {
+            return;
+        }
+        String up = raw.toUpperCase(java.util.Locale.ROOT).replaceAll("[\\s_-]", "");
+        String resolved = up.contains("KTX") ? "KTX"
+                : up.contains("SRT") ? "SRT"
+                : up.contains("ITX") ? "ITX"
+                : (up.contains("SAEMAEUL") || raw.contains("새마을")) ? "SAEMAEUL"
+                : (up.contains("MUGUNGHWA") || raw.contains("무궁화")) ? "MUGUNGHWA"
+                : null;
+        pending.remove("trainType");
+        if (resolved == null) {
+            return;   // not one of the five — the question simply asks again
+        }
+        if ("TRAIN".equalsIgnoreCase(pending.path("mestName").asText(""))) {
+            pending.put("mestName", resolved);   // the carrier doubles as the merchant
+        }
+        pending.put("vehicleType", resolved);
+        log.info("[SETTLE] train type answered — vehicle is {}.", resolved);
     }
 
     /** Persist the turn and answer with reply + chips — the shape every branch above returns. */
@@ -2550,7 +2663,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     /** ⑧ etc-card receipt — the base body every manual expense needs. */
     private static final List<Slot> EXPENSE_SLOTS = List.of(
             new Slot("mestName", "merchant", "가맹점",
-                    "merchant / store / carrier name the money was paid to (e.g. \"KTX\", \"서울역 카페\")", true),
+                    "merchant / store / carrier name the money was paid to (e.g. \"KTX\","
+                            + " \"서울역 카페\", \"호텔 신라\"). A ROUTE is not a merchant: from"
+                            + " \"서울역에서 강남역까지 택시\" the merchant is 택시, never"
+                            + " \"서울역에서 강남역까지\". Omit the field if no name was given", true),
             new Slot("approvalDate", "receipt date", "일자",
                     "date of the expense, ISO yyyy-MM-dd", true),
             new Slot("approvalAmount", "amount", "금액",
@@ -2565,8 +2681,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     /** Transport (교통비) receipts carry a detail block on top of the base. */
     private static final List<Slot> EXPENSE_TRANSPORT_SLOTS = List.of(
             new Slot("vehicleType", "transport", "교통수단",
-                    "one of AIR, KTX, SRT, TRAIN, BUS, CBUS, TAXI, RENTAL, CORP_CAR, AIRPORT_LIMOUSINE, OTHER"
-                            + " — KTX/SRT stay as themselves, 기차/열차 -> TRAIN, 고속버스 -> BUS,"
+                    "one of AIR, KTX, SRT, ITX, SAEMAEUL, MUGUNGHWA, TRAIN, BUS, CBUS, TAXI, RENTAL,"
+                            + " CORP_CAR, AIRPORT_LIMOUSINE, OTHER"
+                            + " — KTX/SRT/ITX stay as themselves, 새마을호 -> SAEMAEUL,"
+                            + " 무궁화호 -> MUGUNGHWA, an unnamed 기차/열차 -> TRAIN, 고속버스 -> BUS,"
                             + " 시외버스 -> CBUS, 택시 -> TAXI, 렌터카 -> RENTAL, 항공/비행기 -> AIR,"
                             + " 법인차량/회사차량 -> CORP_CAR, 공항리무진 -> AIRPORT_LIMOUSINE,"
                             + " 기타 교통수단 -> OTHER."
@@ -2581,14 +2699,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             + " — never omit it because the name looks unfamiliar", true),
             new Slot("arrival", "arrival place", "도착지",
                     "where the trip legs ended, copied verbatim from the user. A bare place name"
-                            + " with no 역/공항 suffix is a perfectly valid answer", true),
-            // Optional, and normalised to OUR tokens rather than the provider's — their wire values
-            // differ per vehicle (economyClass / ECONOMY_KTX / standard) and only the 일반 grade is
-            // confirmed, so the mapping to a real value happens in code, not here.
-            new Slot("seatGrade", "seat grade", "좌석등급",
-                    "the seat grade IF the user named one — STANDARD for 일반/general/economy,"
-                            + " SUPERIOR for 우등, PREMIUM for 프리미엄. Omit the field entirely"
-                            + " when no grade is mentioned", false));
+                            + " with no 역/공항 suffix is a perfectly valid answer", true));
+    // The seat class is NOT here: which grades exist depends on the vehicle (a flight has four,
+    // a train two, a bus three, a taxi none), so it is built per vehicle — see seatSlotFor.
+
+    /**
+     * Every TIMETABLED vehicle carries a route type — the provider's own flight, KTX, express-bus
+     * and intercity-bus captures all send it. (A hired car, company car, limousine or "other"
+     * carries it null; see LOCATOR_FREE_VEHICLES.) Their ONEWAY captures travel on a single day;
+     * the ROUNDTRIP flight capture carries the outbound day and the return day separately.
+     */
+    private static final List<Slot> EXPENSE_ROUTE_SLOTS = List.of(
+            new Slot("routeType", "route", "노선종류",
+                    "whether the trip is one way or a return trip — answer EXACTLY ONEWAY"
+                            + " (편도, one way) or ROUNDTRIP (왕복, return/round trip)", true));
+
+    /**
+     * "기차/train" names no train the provider knows — its form asks WHICH one, and the receipt
+     * carries that as the vehicle (KTX, SRT, ITX, 새마을호, 무궁화호). Asked only when the user
+     * spoke generically; naming the train outright skips it.
+     */
+    private static final List<Slot> EXPENSE_TRAIN_SLOTS = List.of(
+            new Slot("trainType", "which train (KTX, SRT, ITX, 새마을호, 무궁화호)",
+                    "열차 종류 (KTX, SRT, ITX, 새마을호, 무궁화호)",
+                    "which train the traveller took — answer EXACTLY one of KTX, SRT, ITX,"
+                            + " SAEMAEUL (새마을호) or MUGUNGHWA (무궁화호)", true));
+
+    /** A return trip travels on two days, so both are collected (a one-way needs neither). */
+    private static final List<Slot> EXPENSE_ROUNDTRIP_SLOTS = List.of(
+            new Slot("usedStartDate", "outbound travel date", "가는 날",
+                    "date of the OUTBOUND leg, ISO yyyy-MM-dd", true),
+            new Slot("usedEndDate", "return travel date", "오는 날",
+                    "date of the RETURN leg, ISO yyyy-MM-dd", true));
 
     /** Lodging (숙박비) receipts carry the stay dates — distinct from the payment date. */
     private static final List<Slot> EXPENSE_ROOM_SLOTS = List.of(
@@ -2598,15 +2740,166 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     "check-out date of the stay, ISO yyyy-MM-dd", true));
 
     /** The slots for the expense being built — transport adds its own. */
-    private List<Slot> expenseSlots(ObjectNode state) {
+    private List<Slot> expenseSlots(ObjectNode state, ObjectNode pending) {
         List<Slot> all = new ArrayList<>(EXPENSE_SLOTS);
         List<String> detail = detailFieldsForType(slots(state).path("evidenceTranKindType").asText(null));
         if (detail.contains("vehicleType")) {
             all.addAll(EXPENSE_TRANSPORT_SLOTS);
+            // A timetabled vehicle (flight, train, express/intercity bus) asks one more thing:
+            // one way or return. Only when it IS a return trip do the two travel dates join the
+            // list — a one-way travels on the receipt's own date, so asking for it twice would
+            // be asking for something already answered. A hired/company car has no route at all.
+            String vehicle = pending == null ? "" : pending.path("vehicleType").asText("");
+            // "기차 타고 갔어" says train but not WHICH train, and the receipt carries the
+            // specific one. Asked FIRST, exactly as the provider's own form does — the answer
+            // decides the seat catalogue and the station master everything below reads from.
+            if ("TRAIN".equals(vehicle)) {
+                all.addAll(EXPENSE_TRAIN_SLOTS);
+            }
+            if (!vehicle.isBlank() && !LOCATOR_FREE_VEHICLES.contains(vehicle)) {
+                all.addAll(EXPENSE_ROUTE_SLOTS);
+                if ("ROUNDTRIP".equals(pending.path("routeType").asText(""))) {
+                    all.addAll(EXPENSE_ROUNDTRIP_SLOTS);
+                }
+            }
+            // The seat class, with the grades THIS vehicle actually offers. A taxi or a hired car
+            // has none, so it is never asked for them.
+            if (SEAT_CLASS_BY_VEHICLE.containsKey(vehicle)) {
+                all.add(seatSlotFor(vehicle));
+            }
         } else if (detail.contains("roomType")) {
             all.addAll(EXPENSE_ROOM_SLOTS);
         }
         return all;
+    }
+
+    /**
+     * The route is ASKED, never assumed. One-way is the common case, so the extractor happily
+     * answers ONEWAY for a sentence that says nothing about the route at all — and a receipt
+     * would then be filed with a route the traveller was never shown. Whether the message really
+     * states it is judged by the MODEL reading the user's own words (no word list); anything it
+     * cannot confirm is dropped, so the flow asks. Returns 1 when a value was dropped.
+     */
+    private int dropUnstatedRoute(ObjectNode pending, String message, String priorRoute,
+                                  java.util.List<String> turns, boolean ko) {
+        String now = pending.path("routeType").asText("");
+        if (now.isBlank() || now.equals(priorRoute)) {
+            return 0;   // nothing new arrived this turn
+        }
+        // Only the TRAVELLER's own words count. The assistant's question ("편도인가요 왕복인가요?")
+        // names both, so feeding it back would make every route look stated.
+        java.util.List<String> saidByUser = new ArrayList<>();
+        for (String line : turns == null ? java.util.List.<String>of() : turns) {
+            if (line.startsWith("user:")) {
+                saidByUser.add(line);
+            }
+        }
+        // Even the answer to the route question is verified: asked "편도인가요 왕복인가요?" the
+        // user may reply with something else entirely ("KTX"), and the asked-slot pass would
+        // otherwise force that into the route as a silent ONEWAY.
+        try {
+            String stated = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "statesRoute", "Answer \"yes\" ONLY if the TRAVELLER has said whether the "
+                            + "journey is ONE WAY or a RETURN/ROUND trip (편도 / 왕복 / one-way / "
+                            + "return / both directions) — in this message or in one of their own "
+                            + "earlier messages shown above. Messages that merely name a route, a "
+                            + "date or an amount do NOT state it — omit the field then"),
+                    ko, saidByUser)
+                    .path("statesRoute").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+            if (stated.startsWith("y") || "true".equals(stated)) {
+                return 0;
+            }
+        } catch (Exception e) {
+            log.info("[SETTLE] route-stated check failed ({}) — asking rather than assuming.",
+                    e.getMessage());
+        }
+        pending.remove("routeType");
+        log.info("[SETTLE] routeType {} was not stated in '{}' — dropped so the flow asks.",
+                now, truncate(message, 40));
+        return 1;
+    }
+
+    /**
+     * A one-date answer fills ONE date. Asked "가는 날은 언제였나요?", the extractor is offered
+     * every date slot at once and cheerfully writes the single date the user gave into the return
+     * day as well — a round trip then previews as leaving and returning on the same day without
+     * anyone being asked. Any OTHER date slot that this turn set to the SAME value as the asked
+     * one is that echo, so it is put back. Returns how many were reverted.
+     */
+    private int dropEchoedDate(ObjectNode pending, java.util.Map<String, String> priorDates,
+                               Slot answering) {
+        if (answering == null || !DATE_SLOT_KEYS.contains(answering.key())) {
+            return 0;
+        }
+        String answeredValue = pending.path(answering.key()).asText("");
+        if (answeredValue.isBlank()) {
+            return 0;
+        }
+        int reverted = 0;
+        for (String key : DATE_SLOT_KEYS) {
+            if (key.equals(answering.key())) {
+                continue;
+            }
+            String before = priorDates.getOrDefault(key, "");
+            String after = pending.path(key).asText("");
+            if (!after.equals(before) && after.equals(answeredValue)) {
+                if (before.isBlank()) {
+                    pending.remove(key);
+                } else {
+                    pending.put(key, before);
+                }
+                log.info("[SETTLE] {} echoed the answer to {} — reverted so it is asked properly.",
+                        key, answering.key());
+                reverted++;
+            }
+        }
+        return reverted;
+    }
+
+    /**
+     * The seat-class question, built for the vehicle in hand: a flight offers four grades, a
+     * train two, a bus three. Naming only the grades that exist keeps the model from answering
+     * with one the vehicle does not sell, and gives the user a question they can actually answer.
+     */
+    private Slot seatSlotFor(String vehicle) {
+        String options = isBus(vehicle)
+                ? "STANDARD (일반), SUPERIOR (우등) or PREMIUM (프리미엄)"
+                : TRAIN_VEHICLES.contains(vehicle)
+                        ? "STANDARD (일반실) or DELUXE (특실)"
+                        : "STANDARD (일반석, economy), PREMIUM_ECONOMY (프리미엄 일반석), "
+                                + "BUSINESS (비즈니스석) or FIRST (일등석)";
+        return new Slot("seatGrade", "seat class", "좌석등급",
+                "which seat class the traveller travelled in — answer EXACTLY one of: " + options,
+                true);
+    }
+
+    /** The seat grades a vehicle sells: what the model answers -> what the JSON carries. */
+    private java.util.Map<String, String> seatGradesFor(String vehicle) {
+        if (isBus(vehicle)) {
+            return BUS_SEAT_GRADES;
+        }
+        return TRAIN_VEHICLES.contains(vehicle) ? TRAIN_SEAT_GRADES
+                : "AIR".equals(vehicle) ? AIR_SEAT_GRADES : java.util.Map.of();
+    }
+
+    /**
+     * Normalise the MODEL's own answer for routeType to the provider's two enum values — the same
+     * job the vehicle and seat-grade maps do. Anything that is neither is dropped rather than
+     * sent as junk, so the flow asks again instead of filing a receipt with an unknown route.
+     */
+    private void normalizeRouteType(ObjectNode pending) {
+        String raw = pending.path("routeType").asText("").trim();
+        if (raw.isEmpty()) {
+            return;
+        }
+        String up = raw.toUpperCase(java.util.Locale.ROOT).replaceAll("[\\s_-]", "");
+        if (up.contains("ROUND") || up.contains("RETURN") || raw.contains("왕복")) {
+            pending.put("routeType", "ROUNDTRIP");
+        } else if (up.contains("ONE") || raw.contains("편도")) {
+            pending.put("routeType", "ONEWAY");
+        } else {
+            pending.remove("routeType");
+        }
     }
 
     private ObjectNode pendingExpense(ObjectNode state) {
@@ -2680,6 +2973,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             new String[]{"고속버스", "BUS"},
             new String[]{"ktx", "KTX"},
             new String[]{"srt", "SRT"},
+            // The named trains, before the generic 기차/열차 below — naming one IS the answer to
+            // "which train?", so that question never has to be asked.
+            new String[]{"무궁화호", "MUGUNGHWA"},
+            new String[]{"무궁화", "MUGUNGHWA"},
+            new String[]{"mugunghwa", "MUGUNGHWA"},
+            new String[]{"새마을호", "SAEMAEUL"},
+            new String[]{"새마을", "SAEMAEUL"},
+            new String[]{"saemaeul", "SAEMAEUL"},
+            new String[]{"itx", "ITX"},
             new String[]{"렌터카", "RENTAL"},
             new String[]{"rental", "RENTAL"},
             new String[]{"택시", "TAXI"},
@@ -2736,21 +3038,24 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      */
     private int dropInventedToday(ObjectNode pending, String message, String priorDate) {
         String date = pending.path("approvalDate").asText("");
-        if (date.isBlank() || !date.equals(LocalDate.now().toString())) {
+        if (date.isBlank()) {
             return 0;
         }
         if (date.equals(priorDate)) {
-            // The date stood BEFORE this turn — the user's own value that merely coincides with
-            // today (a receipt dated the day it's being filed is perfectly normal). Only a date
-            // the extractor produced THIS turn can be an invention worth dropping.
+            // The date stood BEFORE this turn — the user's own value. Only a date the extractor
+            // produced THIS turn can be an invention worth dropping.
             return 0;
         }
         if (message != null && DATE_MENTIONED.matcher(message).find()) {
-            return 0;   // they said something date-like - today may well be what they meant
+            return 0;   // they said something date-like — that is the date they meant
         }
+        // The message named NO date, so whatever came back was supplied by the model: today, or
+        // a date read out of the surrounding conversation (the trip's own start date is the
+        // favourite). Either way the traveller never said it, and a receipt dated by inference
+        // is a wrong receipt — drop it so the flow asks.
         pending.remove("approvalDate");
-        log.info("Dropped an invented approvalDate of today - the message named no date, so the "
-                + "flow will ask instead of stamping the receipt with the wrong day.");
+        log.info("Dropped an unstated approvalDate of {} — the message named no date, so the "
+                + "flow will ask instead of stamping the receipt with a guessed day.", date);
         return 1;
     }
 
@@ -2965,6 +3270,28 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             if (v.isBlank()) {
                 continue;
             }
+            // The preview is what the user checks before anything is filed, so it shows the
+            // words the form uses — not the enum tokens the JSON carries.
+            if ("routeType".equals(s.key())) {
+                v = "ROUNDTRIP".equals(v) ? t(ko, "Round-trip", "왕복") : t(ko, "One-way", "편도");
+            } else if ("seatGrade".equals(s.key())) {
+                String veh = pending.path("vehicleType").asText("");
+                boolean train = TRAIN_VEHICLES.contains(veh);
+                boolean bus = isBus(veh);
+                v = switch (v.toUpperCase(java.util.Locale.ROOT)) {
+                    case "STANDARD", "ECONOMY" -> train ? t(ko, "Standard", "일반실")
+                            : bus ? t(ko, "Standard", "일반") : t(ko, "Economy", "일반석");
+                    case "DELUXE" -> t(ko, "Deluxe", "특실");
+                    case "FIRST" -> train ? t(ko, "Deluxe", "특실") : t(ko, "First", "일등석");
+                    case "SUPERIOR", "EXCELLENT" -> t(ko, "Superior", "우등");
+                    case "PREMIUM_ECONOMY", "PREMIUMECONOMY" ->
+                            t(ko, "Premium economy", "프리미엄 일반석");
+                    case "PREMIUM" -> bus ? t(ko, "Premium", "프리미엄")
+                            : t(ko, "Premium economy", "프리미엄 일반석");
+                    case "BUSINESS" -> t(ko, "Business", "비즈니스석");
+                    default -> v;
+                };
+            }
             if ("approvalAmount".equals(s.key())) {
                 // Show the currency the user actually named. Stamping ₩ on a USD amount made a
                 // 45-dollar taxi read as 45 won in the very card meant for checking it.
@@ -3020,14 +3347,22 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         ObjectNode d = objectMapper.createObjectNode();
         d.put("etcReceiptType", "RECEIPT");
-        // Stay dates for lodging; for transport the travel day doubles as the usage date.
-        String usedStart = pending.path(lodging ? "usedStartDate" : "approvalDate").asText("");
-        String usedEnd = pending.path(lodging ? "usedEndDate" : "approvalDate").asText("");
+        // Stay dates for lodging; a RETURN flight carries its own outbound/return days (the
+        // provider's ROUNDTRIP sample pays on 09-01 for travel on 08-25~26). Everything else
+        // travels on one day, where the receipt's own date doubles as the usage date.
+        boolean twoDayTrip = transport
+                && "ROUNDTRIP".equals(pending.path("routeType").asText(""))
+                && !pending.path("usedStartDate").asText("").isBlank();
+        String usedStart = pending.path(lodging || twoDayTrip ? "usedStartDate" : "approvalDate").asText("");
+        String usedEnd = pending.path(lodging || twoDayTrip ? "usedEndDate" : "approvalDate").asText("");
+        if (usedEnd.isBlank()) {
+            usedEnd = usedStart;   // a one-day trip ends where it starts
+        }
         putOrNull(d, "usedStartDate", usedStart);
         putOrNull(d, "usedEndDate", usedEnd);
         // Transport block
         putOrNull(d, "vehicleType", transport ? pending.path("vehicleType").asText("") : "");
-        d.putNull("routeType");
+        putOrNull(d, "routeType", transport ? pending.path("routeType").asText("") : "");
         d.putNull("seatClass");
         d.putNull("departTerminalId");
         d.putNull("arrivalTerminalId");
@@ -3481,15 +3816,44 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * {@code economyClass}, a KTX {@code ECONOMY_KTX}. Vehicles with no sample stay null rather
      * than carry a guessed enum the server might reject.
      */
-    private static final java.util.Map<String, String> SEAT_CLASS_BY_VEHICLE = java.util.Map.of(
-            "AIR", "economyClass",
-            "KTX", "ECONOMY_KTX",
-            "SRT", "ECONOMY_KTX",
+    private static final java.util.Map<String, String> SEAT_CLASS_BY_VEHICLE = java.util.Map.ofEntries(
+            java.util.Map.entry("AIR", "economyClass"),
+            // Every train kind offers 일반실 / 특실; 일반실 is the default when none is named.
+            java.util.Map.entry("KTX", "standardRoom"),
+            java.util.Map.entry("SRT", "standardRoom"),
+            java.util.Map.entry("ITX", "standardRoom"),
+            java.util.Map.entry("SAEMAEUL", "standardRoom"),
+            java.util.Map.entry("MUGUNGHWA", "standardRoom"),
+            java.util.Map.entry("TRAIN", "standardRoom"),
             // Both bus kinds offer \uc77c\ubc18 / \uc6b0\ub4f1 / \ud504\ub9ac\ubbf8\uc5c4, and \uc77c\ubc18 is "standard" in the provider's
             // own CBUS and BUS samples. \uc6b0\ub4f1 / \ud504\ub9ac\ubbf8\uc5c4 have no confirmed wire value, so they stay
             // null rather than guessed \u2014 the field is optional on the form.
-            "CBUS", "standard",
-            "BUS", "standard");
+            java.util.Map.entry("CBUS", "standard"),
+            java.util.Map.entry("BUS", "standard"));
+
+    /** Every train kind — where 일반실/특실 applies and a specific type is required. */
+    private static final java.util.Set<String> TRAIN_VEHICLES =
+            java.util.Set.of("TRAIN", "KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA");
+
+    /**
+     * Train seat grades: what the UI shows -> what the JSON carries. 일반실 and 특실 are the two
+     * the provider's train form offers. Keys are the slot-filler's normalised tokens.
+     */
+    private static final java.util.Map<String, String> TRAIN_SEAT_GRADES = java.util.Map.of(
+            "STANDARD", "standardRoom",   // 일반실
+            "ECONOMY", "standardRoom",
+            "DELUXE", "deluxeRoom",       // 특실
+            "FIRST", "deluxeRoom");       // the extractor's other token for 특실
+
+    /** Flight cabins: the four the provider's own form offers. */
+    private static final java.util.Map<String, String> AIR_SEAT_GRADES = java.util.Map.of(
+            "STANDARD", "economyClass",              // 일반석
+            "ECONOMY", "economyClass",
+            "PREMIUM_ECONOMY", "premiumEconomyClass",   // 프리미엄 일반석
+            "PREMIUMECONOMY", "premiumEconomyClass",
+            "PREMIUM", "premiumEconomyClass",
+            "BUSINESS", "businessClass",             // 비즈니스석
+            "FIRST", "firstClass");                  // 일등석
 
     /**
      * Bus seat grades: what the UI shows -> what the JSON carries. Buses are the only vehicles with
@@ -3554,17 +3918,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // empty rather than be guessed, or the receipt carries a code nothing recognises.
         if (!detail.hasNonNull("seatClass")) {
             String grade = seatGrade == null ? "" : seatGrade.trim().toUpperCase(java.util.Locale.ROOT);
-            String graded = BUS_SEAT_GRADES.get(grade);
-            if (graded != null && BUS_SEAT_GRADES.containsKey("STANDARD")
-                    && SEAT_CLASS_BY_VEHICLE.containsKey(vehicle) && isBus(vehicle)) {
+            // Each vehicle sells its own grades — flights four cabins, trains 일반실/특실, buses
+            // 일반/우등/프리미엄 — and the answer is mapped through that vehicle's own catalogue.
+            String graded = seatGradesFor(vehicle).get(grade);
+            if (graded != null) {
                 detail.put("seatClass", graded);
             } else {
                 String seat = SEAT_CLASS_BY_VEHICLE.get(vehicle);
                 if (seat != null) {
                     detail.put("seatClass", seat);   // the vehicle's only/default grade
                 }
-                if (!grade.isEmpty() && graded == null) {
-                    log.info("Seat grade {} is not one of the three bus grades — using {} for {}.",
+                if (!grade.isEmpty()) {
+                    log.info("Seat grade {} is not one this vehicle offers — using {} for {}.",
                             grade, seat, vehicle);
                 }
             }
