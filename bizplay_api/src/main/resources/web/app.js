@@ -5651,17 +5651,20 @@ async function sendAgent(opts) {
     }
   }
 
-  // Settlement: a "show my receipts" ask opens the personal-card browser (calendar + issued/
-  // not-issued toggle + paged table). "not issued" in the ask flips the default Issued filter.
-  if (agent.settle && message) {
-    const brStatus = receiptBrowseIntent(message);
-    if (brStatus) {
-      appendMsg("user", message);
-      $("agentInput").value = "";
-      settlementReceiptBrowser(brStatus);
-      return;
-    }
-  }
+  // RETIRED: client-side phrase-matching for "show my receipts" — a bare "영수증" in ANY
+  // sentence ("그 영수증은 취소해줘") hijacked the turn into the browser and the agent never
+  // saw the message. The SERVER's LLM now judges the ask (browseReceipts slot) and replies
+  // with intent RECEIPT_BROWSE / RECEIPT_BROWSE_NOT_ISSUED; the reply handler opens the
+  // browser widget from that intent instead.
+  // if (agent.settle && message) {
+  //   const brStatus = receiptBrowseIntent(message);
+  //   if (brStatus) {
+  //     appendMsg("user", message);
+  //     $("agentInput").value = "";
+  //     settlementReceiptBrowser(brStatus);
+  //     return;
+  //   }
+  // }
 
   // RETIRED: predefined "show all" phrase-matching - we don't guess what users might ask.
   // Draft questions go to the backend's dynamic draft-QA (intent DRAFT_QUERY), which answers
@@ -5739,6 +5742,28 @@ async function sendAgent(opts) {
       typing.remove();
       const v = (j2 && (j2.data || j2.payload)) || {};
       const action = v.action || "other";
+      if (action === "assign_line" && Array.isArray(v.assignments) && v.assignments.length) {
+        // Compound pick: names + roles in one sentence ("kim do ha as approver and …").
+        const added = [];
+        v.assignments.forEach((a) => {
+          const u = bzApproval.roster.find((x) => x.name === a.person
+            && !bzApproval.lines.some((l) => l.id === x.id));
+          if (u && a.role) {
+            bzApproval.lines.push({ id: u.id, name: u.name, dept: u.dept, empNo: u.empNo,
+                                    position: u.position, kind: a.role });
+            added.push(u.name + " → " + a.role);
+          }
+        });
+        if (added.length) {
+          bzApproval.pendingKindFor = null;
+          markRowsDone();
+          bzNoteTurn(message, "[UI] 결재선 일괄 지정: " + added.join(", "));
+          showAllPreviews(true);
+          bzChatApprovalCard();
+          bzChatAskApprover();
+          return;
+        }
+      }
       if (action === "assign_role" && bzApproval.pendingKindFor && v.role) {
         const u = bzApproval.pendingKindFor;
         bzApproval.pendingKindFor = null;
@@ -5976,6 +6001,10 @@ async function sendAgent(opts) {
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
         else if (data.intent === "MANUAL_EXPENSE_PROMPT_FULL") settlementManualFullForm();
         else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
+        // "Show my receipts" — the SERVER's LLM judged the ask (no client word lists);
+        // the UI just opens its browser widget with the judged filter.
+        else if (data.intent === "RECEIPT_BROWSE") settlementReceiptBrowser("NOT_DRAFTED");
+        else if (data.intent === "RECEIPT_BROWSE_NOT_ISSUED") settlementReceiptBrowser("NOT_ISSUED");
       }
       // DEMO booking: render its chips and stop. Without this the turn fell through to the
       // trip-form wizard, which asked "which trip form should we use?" straight after a booking

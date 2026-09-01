@@ -1559,6 +1559,38 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 }
             }
         }
+        // Reversed bare-day range: "9월 22일부터 20일까지" names ONE month, but the mapper
+        // invented a NEXT-month end (9/22 → 10/20) rather than reading the days as reversed.
+        // Grammar normalization: both days belong to the named month, ordered low → high.
+        java.util.regex.Matcher rev = java.util.regex.Pattern.compile(
+                "(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일\\s*부터\\s*(?!\\d{1,2}\\s*월)(\\d{1,2})\\s*일\\s*까지")
+                .matcher(text);
+        if (rev.find()) {
+            int mo = Integer.parseInt(rev.group(1));
+            int d1 = Integer.parseInt(rev.group(2));
+            int d2 = Integer.parseInt(rev.group(3));
+            if (mo >= 1 && mo <= 12 && d2 < d1 && d1 <= 31 && d2 >= 1) {
+                java.time.LocalDate today0 = java.time.LocalDate.now();
+                int yr = mo < today0.getMonthValue() - 6 ? today0.getYear() + 1 : today0.getYear();
+                try {
+                    java.time.LocalDate lo = java.time.LocalDate.of(yr, mo, d2);
+                    java.time.LocalDate hi = java.time.LocalDate.of(yr, mo, d1);
+                    document.put("bstrStartDate", lo.toString());
+                    document.put("bstrEndDate", hi.toString());
+                    for (JsonNode issued : document.withArray("issuedItems")) {
+                        if ("BSTR_PERIOD".equals(issued.path("item").path("itemType").asText(""))
+                                && issued.path("selections").size() == 1) {
+                            ObjectNode row = (ObjectNode) issued.path("selections").get(0);
+                            row.put("selectionName", lo.toString());
+                            row.put("selectionErpCode", hi.toString());
+                        }
+                    }
+                    log.info("Reversed day-range normalized: '{}' -> {} ~ {}", rev.group(), lo, hi);
+                } catch (java.time.DateTimeException ignored) {
+                    // impossible day for that month — leave whatever the mapper wrote
+                }
+            }
+        }
         if (!applied.isEmpty() && document.equals(beforeApply)) {
             // The mapper sees the recent turns, so on a turn that says nothing new ("이대로
             // 제출해줘") it re-emits values it can read in the history — and the writer dutifully
@@ -2375,6 +2407,23 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             abs = today.plusDays(1);
         } else if (text.contains("오늘") || text.matches("(?si).*\\btoday\\b.*")) {
             abs = today;
+        } else {
+            // Explicit "M월 D일" target: pure calendar arithmetic — "출발일을 9월 25일로
+            // 바꿔줘" was falling through to the mapper, which ignored it entirely.
+            java.util.regex.Matcher md = java.util.regex.Pattern.compile(
+                    "(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일").matcher(text);
+            if (md.find()) {
+                int mo = Integer.parseInt(md.group(1));
+                int da = Integer.parseInt(md.group(2));
+                if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
+                    int yr = mo < today.getMonthValue() - 6 ? today.getYear() + 1 : today.getYear();
+                    try {
+                        abs = java.time.LocalDate.of(yr, mo, da);
+                    } catch (java.time.DateTimeException ignored) {
+                        // day out of range for the month — the mapper takes it
+                    }
+                }
+            }
         }
         java.time.LocalDate ns = start;
         java.time.LocalDate ne = end;
@@ -2578,12 +2627,17 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (!people.isEmpty()) {
             situation.append("Selectable people: ")
                     .append(String.join(", ", people.subList(0, Math.min(people.size(), 15))))
-                    .append(". ");
+                    .append(". The user may write a name in English romanization "
+                            + "('kim do ha' means 김도하) — always answer with the EXACT name "
+                            + "as it appears in the selectable list. ");
         }
         JsonNode got = slotFillerAgentService.extract(message, java.util.Map.of(
                 "action", situation + "Judge what the user's message MEANS and answer EXACTLY one "
-                        + "of: pick_person (names someone to add), assign_role (answers the role "
-                        + "question), no_more (no one else to add / finished picking), save_now "
+                        + "of: assign_line (names one or MORE people TOGETHER WITH their roles, "
+                        + "e.g. 'A as approver and B as agree' or '김도하는 결재, 김철수는 합의'), "
+                        + "pick_person (names someone to add, no role stated), assign_role "
+                        + "(answers the role question), no_more (no one else to add / finished "
+                        + "picking), save_now "
                         + "(confirms saving, submitting, creating or filing the plan — a plan "
                         + "draft is on screen, so a bare command like 'create', 'save', '등록', "
                         + "'생성' refers to filing THIS plan), not_yet (declines "
@@ -2591,15 +2645,68 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         + "(an edit or anything else)",
                 "person", "ONLY for pick_person/remove_person: the person's NAME copied exactly "
                         + "from the selectable people list",
-                "role", "ONLY for assign_role: APPROVAL, AGREE, ACCEPT or REFERENCE"),
+                "role", "ONLY for assign_role: APPROVAL, AGREE, ACCEPT or REFERENCE",
+                "assignments", "ONLY for assign_line: every person=role pair, ';'-separated, "
+                        + "e.g. '김도하=APPROVAL; 김철수=AGREE' — names EXACTLY from the "
+                        + "selectable list, roles from APPROVAL/AGREE/ACCEPT/REFERENCE "
+                        + "(approver/결재→APPROVAL, agree/합의→AGREE, 수신→ACCEPT, "
+                        + "reference/참조→REFERENCE)"),
                 ko, java.util.List.<String>of());
+        log.info("[APPR] raw verdict: {}", got);
         String action = got.path("action").asText("").trim().toLowerCase(java.util.Locale.ROOT);
         ObjectNode out = objectMapper.createObjectNode();
-        if (!java.util.Set.of("pick_person", "assign_role", "no_more", "save_now",
+        if (!java.util.Set.of("assign_line", "pick_person", "assign_role", "no_more", "save_now",
                 "not_yet", "remove_person").contains(action)) {
             out.put("action", "other");
             log.info("[APPR] intent judged: other ('{}')", truncateForLog(message));
             return out;
+        }
+        if ("assign_line".equals(action)) {
+            // Compound picks ("A as approver and B as agree"): validate every pair against the
+            // roster and the role enum; anything that doesn't validate is dropped, and an empty
+            // result falls back to a plain pick so the UI can at least ask the role.
+            com.fasterxml.jackson.databind.node.ArrayNode pairs = objectMapper.createArrayNode();
+            for (String pair : got.path("assignments").asText("").split(";")) {
+                String[] kv = pair.split("=", 2);
+                if (kv.length != 2) {
+                    continue;
+                }
+                String name = kv[0].trim();
+                String r = kv[1].trim().toUpperCase(java.util.Locale.ROOT);
+                if (!java.util.Set.of("APPROVAL", "AGREE", "ACCEPT", "REFERENCE").contains(r)) {
+                    continue;
+                }
+                for (String cand : people) {
+                    if (cand.equalsIgnoreCase(name) || cand.contains(name) || name.contains(cand)) {
+                        ObjectNode p = pairs.addObject();
+                        p.put("person", cand);
+                        p.put("role", r);
+                        break;
+                    }
+                }
+            }
+            if (pairs.isEmpty()) {
+                action = "pick_person";
+                for (String pair : got.path("assignments").asText("").split("[;=]")) {
+                    String name = pair.trim();
+                    for (String cand : people) {
+                        if (!name.isBlank() && (cand.equalsIgnoreCase(name)
+                                || cand.contains(name) || name.contains(cand))) {
+                            out.put("person", cand);
+                            break;
+                        }
+                    }
+                    if (out.has("person")) {
+                        break;
+                    }
+                }
+            } else {
+                out.put("action", "assign_line");
+                out.set("assignments", pairs);
+                log.info("[APPR] intent judged: assign_line {} ('{}')", pairs,
+                        truncateForLog(message));
+                return out;
+            }
         }
         out.put("action", action);
         String person = got.path("person").asText("").trim();

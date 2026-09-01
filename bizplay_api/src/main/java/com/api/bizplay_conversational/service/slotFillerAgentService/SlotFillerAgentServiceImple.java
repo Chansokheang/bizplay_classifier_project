@@ -42,8 +42,9 @@ public class SlotFillerAgentServiceImple implements SlotFillerAgentService {
               "last Tuesday" / "지난주 화요일" = the Tuesday of the week before this one (weeks run
               Monday-Sunday); "this Tuesday" = the Tuesday of the current week. Double-check the
               day you emit really is that weekday before answering.
-            - cardTypes: a JSON array drawn from [CORP, PERSONAL, MY_DATA]. corporate/법인 -> CORP,
-              personal/개인 -> PERSONAL, mydata/마이데이터 -> MY_DATA, all/전체 -> all three.
+            - cardTypes: a JSON array drawn from [CORP, PERSONAL, MY_DATA, ETC]. corporate/법인 ->
+              CORP, personal/개인 -> PERSONAL, mydata/마이데이터 -> MY_DATA, other receipts/기타증빙/
+              기타 -> ETC, all/전체 -> all of them.
             - Free-text hints (e.g. planHint): copy the user's own words, trimmed.
             Output: raw JSON only — no markdown, no code fence, no commentary, no preamble.
             /no_think
