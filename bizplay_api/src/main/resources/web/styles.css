@@ -1586,3 +1586,34 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .dd-wrap { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .dest-detail-input { padding: 9px 12px; font: inherit; border: 1px solid var(--border, #cbd5e1);
   border-radius: 10px; min-width: 220px; background: var(--surface, #fff); color: inherit; }
+
+/* 이동경로(출장) preview — the provider's own section/distance/route/transport table. */
+.rt-table { width: 100%; font-size: 12px; }
+.rt-table th, .rt-table td { padding: 6px 8px; white-space: nowrap; }
+.rt-table .rt-cat { color: var(--muted, #667); }
+.rt-table .rt-leg { white-space: normal; }
+.rt-def { color: var(--muted, #667); font-size: 11px; }
+.rt-total { margin-top: 6px; text-align: right; font-size: 12px; color: var(--muted, #667); }
+.rt-block + .rt-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, #e6e8ee); }
+
+/* Route Setup picker — the provider's dialog, one block per traveller. */
+.rp-setup .rp-hint { font-size: 12px; color: var(--muted, #667); margin: -4px 0 10px; }
+.rp-trav { padding: 10px 0; }
+.rp-trav + .rp-trav { border-top: 1px solid var(--line, #e6e8ee); }
+.rp-who { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+.rp-num { display: inline-flex; align-items: center; justify-content: center; width: 20px;
+  height: 20px; border-radius: 50%; background: var(--brand, #1f3864); color: #fff; font-size: 11px; }
+.rp-stoprow { display: flex; align-items: center; gap: 6px; }
+.rp-trav .mx-f { margin-bottom: 8px; }
+.rp-stops { display: flex; flex-direction: column; gap: 6px; }
+.rp-trav .rp-add { margin-top: 6px; align-self: flex-start; }
+.rp-stoprow select { flex: 1; min-width: 0; }
+.rp-add { border: 1px solid var(--line, #d8dce6); background: #fff; border-radius: 6px;
+  width: 28px; height: 28px; cursor: pointer; font-size: 15px; line-height: 1; }
+.rp-add:hover { background: var(--hover, #f2f5fa); }
+/* A superseded preview stays in the transcript as the record of what the plan looked
+   like then - readable, but visibly not the current one. */
+.prev-card.pc-past { opacity: .62; }
+.prev-card.pc-past .pc-head { color: var(--muted, #667); }
+.rt-none { font-size: 12px; color: var(--muted, #667); padding: 4px 0 2px; }
+.rt-block .rp-who { margin: 2px 0 8px; }

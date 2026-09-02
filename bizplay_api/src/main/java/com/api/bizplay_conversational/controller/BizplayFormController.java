@@ -209,6 +209,21 @@ public class BizplayFormController {
         }
     }
 
+    @Operation(summary = "The corporation's registered travel destinations (출장지) — what a "
+            + "route leg's departure/arrival ids, addresses and coordinates come from. Offer them "
+            + "as a picker; typing the route in words works too.")
+    @GetMapping("/agents/plan/route-options")
+    public ResponseEntity<ApiResponse<JsonNode>> planRouteOptions(
+            @RequestParam("corpNo") String corpNo,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String bizplayToken) {
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(planEnrichmentService.routeOptions(bizplayToken)));
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
+    }
+
     @Operation(summary = "Record a client-handled turn into the plan session transcript — "
             + "no pipeline runs; keeps the conversation history complete for context.")
     @PostMapping("/agents/plan/{sessionId}/note")

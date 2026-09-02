@@ -44,4 +44,27 @@ public interface PlanEnrichmentService {
     com.fasterxml.jackson.databind.JsonNode readinessAsk(ArrayNode documents, ObjectNode state,
             String token, boolean ko);
 
+    /**
+     * The corporation's registered travel destinations (출장지) — the same master the provider's
+     * own Route Setup dialog offers, normalised to {id, name, address, sido}. This is what a
+     * route leg's departureId / arrivalId and their addresses and coordinates come from.
+     */
+    com.fasterxml.jackson.databind.JsonNode routeOptions(String token);
+
+    /**
+     * Write each traveller's {@code bstrRoutes} into the draft NOW, so the preview shows the real
+     * legs — distances, stops and total — while the user can still change them. The save-time
+     * enrichment rebuilds them anyway; this only brings the same result forward.
+     */
+    void previewRoutes(ArrayNode documents, ObjectNode state, String token);
+
+    /**
+     * Read a travel route out of the user's own words against that master: departure, any number
+     * of destinations in order, and the return point. Returns {points:[names…]} — names copied
+     * exactly from the master — plus {@code traveller} when the sentence attributes the route to
+     * ONE of the named travellers ("김도하는 …"), or null when the message names no route.
+     */
+    com.fasterxml.jackson.databind.JsonNode resolveRoutePoints(String message,
+            java.util.List<String> travellerNames, String token, boolean korean);
+
 }

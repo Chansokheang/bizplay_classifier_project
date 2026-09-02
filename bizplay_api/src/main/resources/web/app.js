@@ -1996,7 +1996,7 @@ function formatPeriod(p) {
  * ---------------------------------------------------------------- */
 function openCreate() {
   // reset
-  prevCards = { info: null, details: null, extra: null, trav: null };
+  prevCards = { info: null, details: null, extra: null, trav: null, route: null };
   wizAsked = null;
   wizExtrasAsked = new Set();
   wizTravDone = false;
@@ -2991,7 +2991,7 @@ let chatOnly = false;
  * so the chat shows exactly the same section UI as the Create Plan form —
  * including whatever the live BizPlay form loader renders into them. The nodes
  * (with their listeners intact) move back to the modal on the next open. */
-let prevCards = { info: null, details: null, extra: null, trav: null };   // in-thread preview cards
+let prevCards = { info: null, details: null, extra: null, trav: null, route: null };   // in-thread preview cards
 let wizAsked = null;   // last locally-asked question: { step, el } — prevents repeats
 let wizTravDone = false;   // travellers confirmed (Done) — gates the section preview
 /* Mirror the user's language: Korean input → Korean questions, English → English. */
@@ -3018,15 +3018,18 @@ function previewCard(key, title, icon, rowsHtml) {
     thread.scrollTop = thread.scrollHeight;
     card._prevHtml = null;
   }
-  // A CHANGED section rides down with the newest message (an update far above the
-  // current conversation point would otherwise go unnoticed).
+  // A CHANGED section is shown AGAIN at the bottom, next to the message that changed it -
+  // and the earlier card STAYS where it was. It used to be the same node moved down, so the
+  // previous preview vanished from the transcript and there was nothing to compare against;
+  // the thread now keeps every version, the newest one last.
   if (card._prevHtml !== rowsHtml) {
-    card.querySelector(".pc-body").innerHTML = rowsHtml;
     if (card._prevHtml != null) {
-      const thread = $("agentThread");
-      thread.appendChild(card.closest(".msg"));
-      thread.scrollTop = thread.scrollHeight;
+      card.classList.add("pc-past");            // superseded: kept, quietly
+      prevCards[key] = null;
+      previewCard(key, title, icon, rowsHtml);  // the new version, appended below
+      return;
     }
+    card.querySelector(".pc-body").innerHTML = rowsHtml;
     card._prevHtml = rowsHtml;
   }
 }
@@ -3091,7 +3094,7 @@ function showAllPreviews(quiet) {
   const thread = $("agentThread");
   if (!quiet) appendMsg("assistant", T("Here's the whole plan so far:", "지금까지의 계획 전체예요:"));
   ensureWizardSections();   // refresh values first
-  ["info", "details", "extra", "trav"].forEach((k) => {
+  ["info", "details", "extra", "trav", "route"].forEach((k) => {
     const card = prevCards[k];
     if (card && card.isConnected) thread.appendChild(card.closest(".msg"));
   });
@@ -3139,12 +3142,176 @@ function ensureWizardSections() {
         extras.map((d) => pcRow(d.label, d.value)).join(""));
     }
   }
-  // Travellers preview once confirmed (Done) — or when the agent resolved them.
+  // Travellers preview once confirmed (Done) — or when the agent resolved them. The card is
+  // the provider's own traveller block: who they are, their cost centre, and their route with
+  // distances — everything the user needs to decide whether this is right to file.
   if (travelers.some((x) => x.name) && (wizTravDone || !(wizAsked && wizAsked.step === "travelers"))) {
-    previewCard("trav", T("Travellers", "출장자"), "users",
-      travelers.filter((x) => x.name).map(pcPerson).join(""));
+    previewCard("trav", T("Travellers", "출장자"), "users", travellerBlocks());
   }
 }
+
+/* The identity line the provider prints: 김도하 · 팀장 · L1 · 20260421 · 상무 · 인사1팀. */
+function travellerIdentity(t) {
+  const u = (bzApproval.roster || []).find((r) => r.name === t.name
+    || (t.bzId != null && String(r.id) === String(t.bzId)));
+  return [t.name, u && u.responsibility, u && u.jobClass, u && u.empNo,
+          u && u.position, (u && u.dept) || t.department]
+    .filter(Boolean).join(" · ");
+}
+
+/* The cost centre written on a traveller's document (COST_CENTER item), when the form has one. */
+function docCostCentre(doc) {
+  const it = ((doc && doc.issuedItems) || [])
+    .find((x) => x.item && x.item.itemType === "COST_CENTER");
+  if (!it) return "";
+  return (it.selections && it.selections[0] && it.selections[0].selectionName) || it.value || "";
+}
+
+/* One block per traveller, as the provider's screen lays it out: numbered heading, the
+ * traveller's identity and cost centre, the 이동경로(출장) summary, the section table and the
+ * total mileage. Routes come from that traveller's own document, so what is previewed is what
+ * will be filed. Sections stay out until the route is known. */
+function travellerBlocks() {
+  const docs = (agent.draft && agent.draft.length) ? agent.draft : [];
+  // The server says whether the vehicle on the legs is the paper's default (nobody named one)
+  // or the user's own answer - the table shows which, instead of presenting a default as a choice.
+  const transportDefaulted = !!(agent.lastData && agent.lastData.transportDefaulted);
+  const TRANSPORT = { PUBLIC_AIRLINE: T("Flight", "항공"), PUBLIC_TRAIN: T("Train", "열차"),
+    PUBLIC_BUS: T("Bus", "버스"), PUBLIC: T("Flight/Train/Bus", "대중교통"),
+    TAXI: T("Taxi", "택시"), RENTAL_CAR: T("Rental car", "렌터카"),
+    CORP_CAR: T("Company car", "법인차량"), PRIVATE: T("Private vehicle", "자차"),
+    CARPOOL: T("Carpool", "카풀") };
+  const place = (addr) => String(addr || "").split(" ").slice(0, 3).join(" ") || "—";
+  const row = (k, v) => v ? `<div class="pc-row"><span class="pc-k">${esc(k)}</span>`
+    + `<span class="pc-v">${esc(v)}</span></div>` : "";
+  return travelers.filter((x) => x.name).map((t, i) => {
+    const doc = docs[i] || {};
+    const legs = doc.bstrRoutes || [];
+    const summary = legs.map((l) => `${place(l.departureAddress)} → ${place(l.arrivalAddress)}`)
+      .join(", ");
+    const total = legs.reduce((sum, l) => sum + Number(l.distance || 0), 0);
+    const table = legs.length ? `<div class="pp-scroll"><table class="pp-table rt-table"><thead><tr>`
+      + `<th>${esc(T("Category", "구분"))}</th><th class="rb-num">${esc(T("Distance", "거리"))}</th>`
+      + `<th>${esc(T("Travel route", "이동경로"))}</th><th>${esc(T("Transport", "교통수단"))}</th>`
+      + `</tr></thead><tbody>`
+      + legs.map((l, n) => `<tr>
+          <td class="rt-cat">${esc(T("Section ", "구간 ") + (n + 1))}</td>
+          <td class="rt-dist rb-num">${esc(Number(l.distance || 0).toFixed(1))}km</td>
+          <td class="rt-leg">${esc(place(l.departureAddress))} → ${esc(place(l.arrivalAddress))}</td>
+          <td class="rt-tp">${esc(TRANSPORT[l.transportType] || l.transportType || "—")}${
+            transportDefaulted ? `<span class="rt-def">${esc(T(" (default)", " (기본값)"))}</span>` : ""}</td>
+        </tr>`).join("")
+      + `</tbody></table></div>`
+      + `<div class="rt-total">${esc(T("Total mileage", "총 이동거리"))} `
+      + `<b>${esc(total.toFixed(1))} km</b></div>`
+      : `<div class="rt-none">${esc(T("No travel route set yet.", "이동경로가 아직 없어요."))}</div>`;
+    return `<div class="rt-block">
+        <div class="rp-who"><span class="rp-num">${i + 1}</span>${esc(T("Traveller ", "출장자 ") + (i + 1))}</div>
+        ${row(T("Traveller", "출장자"), travellerIdentity(t))}
+        ${row(T("Cost centre", "코스트센터"), docCostCentre(doc))}
+        ${row(T("Travel route", "이동경로(출장)"), summary)}
+        ${table}
+      </div>`;
+  }).join("");
+}
+
+/* The corporation's registered travel destinations (출장지) — the same master the provider's
+ * own Route Setup dialog offers, served by the agent API so the browser never talks to
+ * BizPlay directly. Fetched once per page and cached: the list does not change mid-chat. */
+let planRouteMaster = null;
+async function planRouteOptions() {
+  if (planRouteMaster) return planRouteMaster;
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/plan/route-options?corpNo=${encodeURIComponent(CORP_NO)}`);
+    const j = await res.json();
+    planRouteMaster = (j && j.data) || [];
+  } catch (e) {
+    planRouteMaster = [];   // no master → the typed answer still works; only the dropdowns are lost
+  }
+  return planRouteMaster;
+}
+
+/* 이동경로(출장): the provider's Route Setup, one block per traveller — departure, any number of
+ * stops (＋ adds another), and the return point, all chosen from the registered-destination
+ * master. This is the POINTING path to the question the SERVER asked (intent ROUTE_ASK); the
+ * typed path is the same question answered in words, and both land on the same agent turn:
+ * the picker sends one ordinary chat message per traveller, it does not write the draft. */
+let planRouteSending = false;
+async function planRoutePicker() {
+  if (planRouteSending) return;                                        // mid-send: its own reply re-asks
+  if (document.querySelector("#agentThread .rp-setup:not(.guide-done)")) return;   // one live picker
+  const who = travelers.filter((x) => x.name);
+  if (!who.length) return;
+  const sites = await planRouteOptions();
+  if (!sites.length) return;                                           // let the user answer in words
+
+  const opts = (sel) => sites.map((s) => `<option value="${esc(s.name)}"${s.name === sel ? " selected" : ""}>`
+    + `${esc(s.name)}${s.sido ? " · " + esc(s.sido) : ""}</option>`).join("");
+  const stopRow = (sel) => `<div class="rp-stoprow"><select data-k="stop">${opts(sel)}</select></div>`;
+  const field = (label, inner) => `<label class="mx-f mx-wide"><span>${esc(label)}</span>${inner}</label>`;
+  const first = sites[0] && sites[0].name;
+  const block = (t, i) => `<div class="rp-trav" data-who="${esc(t.name)}">
+      <div class="rp-who"><span class="rp-num">${i + 1}</span>${esc(t.name)}</div>
+      ${field(T("Departure", "출발지"), `<select data-k="from">${opts(first)}</select>`)}
+      ${field(T("Destination", "목적지"), `<div class="rp-stops">${stopRow(null)}</div>
+        <button type="button" class="rp-add" title="${esc(T("Add a stop", "경유지 추가"))}">＋</button>`)}
+      ${field(T("Return to", "복귀지"), `<select data-k="back">${opts(first)}</select>`)}
+    </div>`;
+
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget rp-setup">
+      <div class="rp-hint">${esc(T("Pick each traveller's route — or just tell me in a message.",
+                                   "출장자별로 이동경로를 골라 주세요 — 말씀으로 알려 주셔도 돼요."))}</div>
+      ${who.map(block).join("")}
+      <div class="mx-actions"><span class="mx-note"></span>
+        <button type="button" class="btn btn-primary rp-done">${esc(T("Use these routes", "이동경로 적용"))}</button></div>
+    </div>`;
+  const w = wrap.querySelector(".rp-setup");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+
+  w.querySelectorAll(".rp-add").forEach((btn) => btn.addEventListener("click", () => {
+    btn.closest(".rp-trav").querySelector(".rp-stops").insertAdjacentHTML("beforeend", stopRow(null));
+  }));
+
+  w.querySelector(".rp-done").addEventListener("click", async () => {
+    // One message per traveller, in the user's own vocabulary: the agent reads the route out
+    // of the sentence exactly as it does when the route is typed — no UI-only side channel.
+    const legs = [...w.querySelectorAll(".rp-trav")].map((el) => ({
+      name: el.dataset.who,
+      from: el.querySelector('[data-k="from"]').value,
+      stops: [...el.querySelectorAll('[data-k="stop"]')].map((s) => s.value).filter(Boolean),
+      back: el.querySelector('[data-k="back"]').value,
+    })).filter((r) => r.from && r.stops.length && r.back);
+    if (!legs.length) {
+      const note = w.querySelector(".mx-note");
+      note.textContent = T("Pick a departure and a destination first.", "출발지와 목적지를 골라 주세요.");
+      note.classList.add("mx-warn");
+      return;
+    }
+    w.classList.add("guide-done");
+    planRouteSending = true;
+    try {
+      for (const r of legs) {
+        const msg = chatLang === "ko"
+          ? `${r.name}의 이동경로는 ${r.from}에서 출발해서 ${r.stops.join(", ")}을 거치고 ${r.back}으로 복귀합니다.`
+          : `${r.name}'s travel route: depart from ${r.from}, go to ${r.stops.join(", ")}, and return to ${r.back}.`;
+        await sendAgent({ messageOverride: msg, keepLang: true,
+                          echoAs: `${r.name} · ${[r.from, ...r.stops, r.back].join(" → ")}` });
+      }
+    } finally {
+      planRouteSending = false;
+    }
+  });
+  return w;
+}
+
+/* RETIRED: the standalone route card. Its content now lives inside the traveller card
+ * (travellerBlocks), which shows identity, cost centre and the route together —
+ * the provider's own per-traveller block. Kept out of the thread, not deleted from
+ * history: see git if it is ever needed again. */
 
 /* Final call-to-action once every section is fulfilled. */
 function appendCreateAction(quiet) {
@@ -5891,9 +6058,13 @@ async function sendAgent(opts) {
     if (agent.mode === "plan") {
       agent.live = true;
     }
-    // A NEW chat that asks for settlement (정산) rides the settlement agent — and the
-    // whole session stays there (period question -> plan pick -> evidence attach).
-    if (!agent.sessionId && /정산|settle/i.test(message || "")) agent.settle = true;
+    // RETIRED: a word match on "정산|settle" in the first message silently moved the whole
+    // session to the settlement agent — so an English plan prompt containing the word "settle"
+    // answered "pick the trip to settle" inside Create Plan. Which agent a chat runs on is
+    // decided by WHICH CHAT WAS OPENED (Settle in Chat sets agent.settle), never guessed from
+    // the words. If a plan conversation should be able to hand over to settlement, that is the
+    // plan agent's judgement to make server-side, not a regex here.
+    // if (!agent.sessionId && /정산|settle/i.test(message || "")) agent.settle = true;
     let url, body;
     // DEMO booking agent. Confirming is the one turn that must NOT be a chat turn - it is what
     // spends money - so it goes to its own /create endpoint, exactly like plan and settlement.
@@ -6011,6 +6182,21 @@ async function sendAgent(opts) {
           && /show|preview|display|all|보여|전체|요약|정리|summar/i.test(message || "")) {
         showAllPreviews(true);
       }
+      // The server says what it changed this turn (uiRefresh) — redraw those cards. Without
+      // this the preview kept showing a traveller who had just been taken off the plan: the
+      // list was updated in memory, but nothing re-rendered the card.
+      if (data.uiRefresh && data.uiRefresh.length) {
+        ensureWizardSections();
+        // A traveller coming off the plan changes what is filed, so the whole plan is
+        // re-presented for a look before the user decides to save.
+        if (data.uiRefresh.includes("travellers")) showAllPreviews(true);
+      }
+      // A picker still on screen when the agent has moved on is a question that no longer
+      // stands — the user answered it in words. Retire it instead of inviting a second answer.
+      if (data.intent !== "ROUTE_ASK") {
+        document.querySelectorAll(".rp-setup:not(.guide-done)")
+          .forEach((el) => el.classList.add("guide-done"));
+      }
       // Settlement chats drive their own question flow — never the trip-form wizard.
       // Period questions get the same click-range calendar as the plan wizard (past
       // days allowed — settled trips already happened); the flow closes with a
@@ -6057,6 +6243,11 @@ async function sendAgent(opts) {
         } else {
           bzChatApprovalFlow();
         }
+      }
+      // 이동경로(출장): offer the provider's own Route Setup dropdowns, one block per
+      // traveller. The server's reply is the question; this is the pointing path to it.
+      else if (agent.live && data.intent === "ROUTE_ASK") {
+        planRoutePicker();
       }
       else if (agent.live && data.intent === "DESTINATION_ASK") {
         $("tripDestination").value = "";
@@ -6604,6 +6795,13 @@ async function applyBizplayTurnToForm(data) {
   // the display name still differs from the roster's userName).
   const names = data.travelers || [];
   const tids = data.travelerIds || [];
+  // The agent OWNS the traveller list: when it sends one, that is the list — including after
+  // someone is taken off. Rebuilding only when it is non-empty left a removed traveller on
+  // screen; an empty list is equally an answer.
+  if (data.travelers && !names.length && travelers.length) {
+    travelers = [];
+    renderTravelers();
+  }
   if (names.length) {
     try { await bzLoadRoster(); } catch (e) { /* selects fall back to name-only */ }
     travelers = names.map((n, i) => {
@@ -6695,6 +6893,8 @@ async function bzLoadRoster() {
       dept: u.departmentName || main.departmentName || "",
       empNo: u.employeeNumber || "",
       position: u.positionName || u.position || "",
+      responsibility: u.responsibilityName || "",   // 팀장
+      jobClass: u.jobClassName || "",               // L1
     };
   }).filter((u) => u.id != null && u.name);
   bzResolveCurrentUser();

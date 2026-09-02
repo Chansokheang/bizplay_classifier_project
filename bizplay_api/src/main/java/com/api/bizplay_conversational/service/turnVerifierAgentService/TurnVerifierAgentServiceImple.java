@@ -51,6 +51,9 @@ public class TurnVerifierAgentServiceImple implements TurnVerifierAgentService {
     private final ObjectMapper objectMapper;
     private final com.api.bizplay_conversational.service.agentPromptService.AgentPromptService agentPromptService;
 
+    @Value("${app.conversational.turn-verifier.force-misaligned:false}")
+    private boolean forceMisaligned;
+
     @Value("${app.conversational.turn-verifier-agent.model:qwen3-14b}")
     private String modelName;
 
@@ -67,10 +70,33 @@ public class TurnVerifierAgentServiceImple implements TurnVerifierAgentService {
     @Override
     public void verifyShadow(String userMessage, String before, String after, String reply,
                              boolean korean) {
+        verdict(userMessage, before, after, reply, korean, true);
+    }
+
+    @Override
+    public Verdict verify(String userMessage, String before, String after, String reply,
+                          boolean korean) {
+        // Test hook: forces ONE misaligned verdict so the gate's rewind-and-retry can be
+        // exercised end to end without waiting for a real miss. Off unless explicitly set.
+        if (forceMisaligned) {
+            log.warn("[VERIFY] gate: FORCED misalignment (app.conversational.turn-verifier"
+                    + ".force-misaligned=true) — test hook, not a real verdict.");
+            return new Verdict(false, "forced by the test hook: pretend the trip title was "
+                    + "not applied");
+        }
+        return verdict(userMessage, before, after, reply, korean, false);
+    }
+
+    /**
+     * One judgement, used by both paths. {@code shadow} only decides how it is logged — the
+     * verdict itself is the same question asked the same way.
+     */
+    private Verdict verdict(String userMessage, String before, String after, String reply,
+                            boolean korean, boolean shadow) {
         try {
             ChatClient client = chatClientRegistry.get(llmSettingsService.resolve(modelName));
             if (client == null || userMessage == null || userMessage.isBlank()) {
-                return;
+                return new Verdict(true, "");
             }
             List<Message> prompt = List.of(
                     new SystemMessage(agentPromptService.resolve("turn-verifier", SYSTEM_PROMPT)),
@@ -88,15 +114,19 @@ public class TurnVerifierAgentServiceImple implements TurnVerifierAgentService {
             boolean aligned = !"no".equalsIgnoreCase(parsed.path("aligned").asText("yes"));
             String issue = parsed.path("issue").asText("");
             if (aligned) {
-                log.info("[VERIFY] aligned=yes turn='{}'", trim(userMessage, 80));
+                log.info("[VERIFY]{} aligned=yes turn='{}'", shadow ? " shadow" : " gate",
+                        trim(userMessage, 80));
             } else {
                 // WARN so a day of testing can be measured with one grep.
-                log.warn("[VERIFY] aligned=NO issue='{}' turn='{}' reply='{}'",
+                log.warn("[VERIFY]{} aligned=NO issue='{}' turn='{}' reply='{}'",
+                        shadow ? " shadow" : " gate",
                         trim(issue, 160), trim(userMessage, 80), trim(reply, 120));
             }
+            return new Verdict(aligned, issue);
         } catch (Exception e) {
-            // Shadow mode must never surface: swallow and note.
+            // A verifier that cannot answer must never hold up a reply.
             log.info("[VERIFY] verifier unavailable: {}", e.getMessage());
+            return new Verdict(true, "");
         }
     }
 

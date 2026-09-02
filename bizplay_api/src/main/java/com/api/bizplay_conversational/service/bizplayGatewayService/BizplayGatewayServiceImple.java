@@ -142,6 +142,9 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
             throw new IllegalArgumentException("The draft has no documents to save.");
         }
         String url = buildUrl(endpoints.getPlanDraft(), "productCode", productCode());
+        // The exact outgoing body, same as the settlement path — their rejections name no field,
+        // so the only way to see what was sent (routes, period rows, region ids) is this line.
+        log.info("Plan draft body -> {}: {}", url, documents.toString());
         String bearer = resolveToken(token);
         try {
             String response = restClient.post()

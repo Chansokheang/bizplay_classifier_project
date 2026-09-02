@@ -100,7 +100,12 @@ Body (optional): the approval line, appended after the drafter's automatic DRAFT
 On success the provider's confirmation ("작성되었습니다.") comes back in `reply` and the session
 becomes `POSTED`. Before saving, the server enriches the draft with everything the provider's own
 screen would add: the region `selectionId` (국가/도시), `selectionMemo` (출장지 상세, ≤10 chars),
-period times on time-enabled forms, and the per-traveller `bstrRoutes` legs with TMap distances.
+period times on time-enabled forms, and the `bstrRoutes` legs. Each leg carries the ids,
+addresses, 시도, admin codes and coordinates of the registered destinations the traveller
+named, plus the TMap driving distance; when no route was named, an origin → destination →
+origin round trip is written instead. With several travellers the draft holds ONE document
+per traveller and every one of them is enriched — each carrying that person's own route
+when they were given one, and the trip's shared route otherwise.
 An unresolvable required region refuses with HTTP 400 instead of saving a broken document.
 
 ## 4. One-shot save — `POST /plans`
@@ -133,8 +138,20 @@ enrichment, same validation as the chat create.
 | `GET /agents/plan/destination-options?corpNo&purpose&segment` (or `purposeId`/`segmentId`, or `citiesOf=<countryCode>`) | what the form's region rules actually allow: `source` = `policy` (flat allowed list), `sido`, `countries` (then cascade with `citiesOf`), or `any` |
 | `POST /agents/plan/destination-pick` `{message, options[], context}` | LLM semantic pick when typed text matches no option — returns the 0-based `index` or null |
 | `GET /plans/by-status?corpNo&travelerId&status&startDate&endDate` | the user's plans (`APPROVED` ones are the settleable set) |
+| `GET /agents/plan/route-options?corpNo` | the corporation's registered travel destinations (출장지) — `{id, name, address, sido}`. A route leg's `departureId`/`arrivalId`, addresses, admin codes and coordinates all come from here; offer them as a picker, or let the user type the route in words |
 | `POST /agents/plan/{sessionId}/note` `{user, assistant}` | record a CLIENT-handled turn into the session transcript (no pipeline runs) — keeps the agent's history complete when your UI answers something locally, e.g. approval-line picks |
 | `POST /agents/plan/approval-intent` `{message, pendingRolePerson, awaitingSaveConfirm, lines, people[]}` | LLM judgment of what the user MEANS at a client-side approval-line step → `{action: pick_person\|assign_role\|no_more\|save_now\|not_yet\|remove_person\|other, person?, role?}` — use it instead of word lists in your own UI |
+
+## 5a. Self-correction (alignment gate)
+
+Every turn that changes the draft is checked by a verifier sub-agent before the reply is sent:
+does what the agent DID match what the user asked? On a mismatch the draft is rewound to exactly
+where the turn began and the turn is run once more, told what was missed — then that second
+answer stands. One correction, never a loop; a verifier that cannot answer never delays a reply.
+Verdicts appear in the server log as `[VERIFY] gate` lines.
+
+Responses also carry `uiRefresh` — the parts this turn changed (`travellers`, `route`, or `all`)
+— so a client redraws exactly those, instead of inferring it from the reply text.
 
 ## 6. Intents a client may want to react to
 
@@ -144,6 +161,7 @@ enrichment, same validation as the chat create.
 | `FORM_LOAD`, `FIELD_COMPLETION` | just showing `reply` |
 | `TRAVELER_PICK` | rendering `pendingChoices` |
 | `DESTINATION_ASK` | offering `destination-options` as a picker (optional — typing works; the server binds the answer) |
+| `ROUTE_ASK` | offering `route-options` as a picker for 이동경로(출장) (optional — typing the route in words works; the server resolves it against the same master). Asked once for the trip; naming a traveller ("김도하는 …") gives that person their own legs |
 | `SUBMIT_REQUESTED` | calling `create` |
 | `GUARDRAIL_BLOCKED` | showing `reply`; the turn was off-topic/unsafe |
 | `DRAFT_QUERY` / `DATA_QUERY` | showing `reply` (the agent answered a question about the draft/data) |

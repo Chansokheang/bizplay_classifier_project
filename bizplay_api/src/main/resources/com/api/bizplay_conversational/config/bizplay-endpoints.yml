@@ -67,5 +67,5 @@ bizplay:
     region-used-list: /api/v2/bstr/area/region/used/{regionType}
     region-used-cities: /api/v2/bstr/area/region/used/CITY/{countryCode}
     region-by-id: /api/v2/bstr/area/region/id/{regionId}
-    destination-list: /api/v2/bstr/destination/popUp/active/list
+    destination-list: /api/v2/bstr/destination/active/list
     misc-bypass: /api/v2/misc/bypass

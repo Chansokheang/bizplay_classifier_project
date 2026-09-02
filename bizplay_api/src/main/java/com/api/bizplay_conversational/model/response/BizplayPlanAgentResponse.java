@@ -40,6 +40,20 @@ public class BizplayPlanAgentResponse {
     /** Departure place (출발지) held by the agent — no slot in the save body; place-validated. */
     private String origin;
     /** EXACTLY the plan-draft request-body array — the retrieved form's structure, values only. */
+    /**
+     * What this turn CHANGED, so a client knows which parts of its preview to redraw instead of
+     * guessing from the reply text: "travellers", "route", "destination", "period", or "all".
+     * Deterministic — the server just made the change, so it says so.
+     */
+    private List<String> uiRefresh;
+
+    /**
+     * True when the route legs carry the PAPER'S DEFAULT vehicle (flight for an overseas trip)
+     * because the user never named one - so a preview can show it as a default rather than as
+     * something they chose. The legs always need a transportType; this says where it came from.
+     */
+    private Boolean transportDefaulted;
+
     private JsonNode draftJson;
     private LocalDateTime createdDate;
     private LocalDateTime updatedDate;

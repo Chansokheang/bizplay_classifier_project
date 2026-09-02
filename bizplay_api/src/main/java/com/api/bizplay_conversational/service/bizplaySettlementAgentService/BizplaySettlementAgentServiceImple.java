@@ -119,8 +119,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // Also a this-turn INTENT: the same actions the UI chips send as machine tokens,
             // judged from the user's own words so typing works exactly like clicking.
             "flowAction", "the ACTION the user asks for THIS turn, EXACTLY one of: "
-                    + "manual-expense (wants to enter/register an expense by hand — manual, "
-                    + "직접/수기 입력, has no card receipt to attach), "
+                    + "manual-expense (ASKS FOR the hand-entry form — manual, 직접/수기 입력, or "
+                    + "says they have no card receipt — WITHOUT describing the expense itself. A "
+                    + "message that describes an actual expense ('택시 탔어', 'flew to Osaka', a "
+                    + "merchant, an amount) is NOT this: omit the field so the assistant can take "
+                    + "the details down in conversation), "
                     + "receipts-done (finished attaching receipts/evidence — nothing more to add), "
                     + "expense-confirm (approves registering the expense just previewed — "
                     + "'register it', '등록해줘'), "
@@ -268,6 +271,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         String browse = extractedSlots == null ? ""
                 : extractedSlots.path("browseReceipts").asText("").trim()
                         .toUpperCase(java.util.Locale.ROOT);
+        // Precedence, as everywhere else: a message that ANSWERS the pending question is that
+        // answer. "기타증빙으로 조회해줘" at the card-type question means "search those cards",
+        // not "show me my receipt list" — both are lookups, and only the stage tells them apart.
+        if (!browse.isBlank() && "AWAIT_CARD_TYPES".equals(state.path("stage").asText(""))
+                && !parseCardWords(message).isEmpty()) {
+            browse = "";
+        }
         if (java.util.Set.of("NOT_ISSUED", "NOT_DRAFTED", "ISSUED").contains(browse)) {
             String browseReply = t(ko,
                     "Here are your receipts — use the calendar and filters to browse them. ",
@@ -584,14 +594,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (!machineToken && state.path("anchor").hasNonNull("approvalId")
                 && hasEvidence(documents) && !"DONE".equals(stage)) {
             String fin = finishDecision(message, ko, recentTurns(session));
-            if ("submit".equals(fin)) {
-                return chatSubmit(session, state, documents, message, bizplayToken, ko);
-            }
-            if ("done".equals(fin)) {
+            // A JUDGED "submit" is not the same as being told to submit. Filing sends the
+            // settlement to BizPlay for approval, and words like "등록해줘" right after a receipt
+            // was registered read as "register that", not "file everything". So a judged submit
+            // shows the summary and asks — the explicit chip (and an outright "제출해줘", caught
+            // by isSubmitRequest above) still files straight away.
+            if ("submit".equals(fin) || "done".equals(fin)) {
                 state.put("stage", "DONE");
                 session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
                 StringBuilder done = new StringBuilder();
                 summarize(documents, done, ko);
+                done.append(t(ko, "\nShall I submit it to BizPlay?",
+                        "\n이대로 BizPlay에 제출할까요?"));
                 appendTurn(session, "user", message);
                 appendTurn(session, "assistant", done.toString());
                 session.setDraftJson(documents);
@@ -2199,7 +2213,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         Slot answering = asked.isEmpty() ? null : asked.get(0);
         java.util.List<String> turns = recentTurns(session);
         String priorApprovalDate = pending.path("approvalDate").asText("");
-        String priorRoute = pending.path("routeType").asText("");
+        java.util.Map<String, String> priorChoices = new java.util.LinkedHashMap<>();
+        for (String k : CHOICE_SLOT_MEANINGS.keySet()) {
+            priorChoices.put(k, pending.path(k).asText(""));
+        }
         java.util.Map<String, String> priorDates = new java.util.LinkedHashMap<>();
         for (String k : DATE_SLOT_KEYS) {
             priorDates.put(k, pending.path(k).asText(""));
@@ -2209,11 +2226,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         filled += backfillIsoDates(pending, message, slots);
         filled += backfillAmount(pending, message, slots);
         filled += backfillRoute(pending, message, slots);
+        java.util.Set<String> literalChoices = java.util.Set.of();
         filled -= dropInventedToday(pending, message, priorApprovalDate);
         filled += fillAskedSlot(pending, message, answering, ko, turns);
         filled += defaultLodgingPaymentDate(pending);
-        int routeDropped = dropUnstatedRoute(pending, message, priorRoute, turns, ko);
-        filled -= routeDropped;
+        // A choice read literally out of the user's own words needs no further proof.
+        literalChoices.forEach(k -> priorChoices.put(k, pending.path(k).asText("")));
+        java.util.Set<String> choiceDropped = dropUnstatedChoices(pending, message, priorChoices, turns, ko);
+        filled -= choiceDropped.size();
         filled -= dropEchoedDate(pending, priorDates, answering);
         if (!building && filled == 0) {
             state.remove("pendingExpense");
@@ -2237,6 +2257,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         normalizeRouteType(pending);
         promoteTrainType(pending);
         slots = expenseSlots(state, pending);
+        // Now that the slot list reflects the vehicle named THIS turn, recover any choice whose
+        // option word is written in the message but which the extractor dropped. Needs no
+        // verification: the word is in the user's own text, not a model's claim.
+        filled += backfillChoices(pending, message, slots).size();
         List<Slot> missing = missingExpenseSlots(pending, slots);
         // LLM-first recovery: before asking the USER for anything, ask the MODEL again — a
         // focused pass over only the still-missing slots. The broad pass offers every slot at
@@ -2244,13 +2268,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // narrowing its attention to what's missing recovers them without a single re-ask.
         String answeredDate = answering != null && DATE_SLOT_KEYS.contains(answering.key())
                 ? pending.path(answering.key()).asText("") : "";
-        String routeBeforeFocused = pending.path("routeType").asText("");
+        java.util.Map<String, String> choicesBeforeFocused = new java.util.LinkedHashMap<>();
+        for (String k : CHOICE_SLOT_MEANINGS.keySet()) {
+            choicesBeforeFocused.put(k, pending.path(k).asText(""));
+        }
         if (!missing.isEmpty() && message.length() >= 10) {
             java.util.LinkedHashMap<String, String> wanted = new java.util.LinkedHashMap<>();
             for (Slot s : missing) {
                 // The route was just judged "not stated in this message" — re-offering it here
                 // would only re-invent the same assumption the guard removed.
-                if (routeDropped > 0 && "routeType".equals(s.key())) {
+                if (choiceDropped.contains(s.key())) {
                     continue;
                 }
                 wanted.put(s.key(), s.meaning());
@@ -2285,7 +2312,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // The focused pass is where the route usually surfaces — and where an assumption
             // would too. Same verification as the broad pass: keep it only if the user's own
             // words say it, so an unstated route becomes a question, not a silent ONEWAY.
-            dropUnstatedRoute(pending, message, routeBeforeFocused, turns, ko);
+            dropUnstatedChoices(pending, message, choicesBeforeFocused, turns, ko);
             slots = expenseSlots(state, pending);   // a route answered here adds the trip dates
             missing = missingExpenseSlots(pending, slots);
         }
@@ -2780,10 +2807,41 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * states it is judged by the MODEL reading the user's own words (no word list); anything it
      * cannot confirm is dropped, so the flow asks. Returns 1 when a value was dropped.
      */
-    private int dropUnstatedRoute(ObjectNode pending, String message, String priorRoute,
-                                  java.util.List<String> turns, boolean ko) {
-        String now = pending.path("routeType").asText("");
-        if (now.isBlank() || now.equals(priorRoute)) {
+    /**
+     * The CHOICE fields — the ones whose answer comes from a fixed list. Each is asked, never
+     * assumed: the extractor is happy to answer ONEWAY or 일반석 for a sentence that says nothing
+     * about either, and a receipt filed with a guessed cabin is a wrong receipt. The value is
+     * what "stating it" means for that field, in the traveller's own words.
+     */
+    private static final java.util.Map<String, String> CHOICE_SLOT_MEANINGS = java.util.Map.of(
+            "routeType", "whether the journey is ONE WAY or a RETURN/ROUND trip "
+                    + "(편도 / 왕복 / one-way / return / both directions)",
+            "seatGrade", "which SEAT CLASS or grade they travelled in "
+                    + "(일반석 / 프리미엄 일반석 / 비즈니스석 / 일등석 / 일반실 / 특실 / 일반 / 우등 / "
+                    + "프리미엄, economy / business / first)",
+            "trainType", "WHICH TRAIN they took (KTX / SRT / ITX / 새마을호 / 무궁화호)");
+
+    /**
+     * Verify every choice field that changed this turn against the traveller's own words, and
+     * drop the ones they never actually stated so the flow asks instead. Returns the keys dropped.
+     */
+    private java.util.Set<String> dropUnstatedChoices(ObjectNode pending, String message,
+                                                      java.util.Map<String, String> prior,
+                                                      java.util.List<String> turns, boolean ko) {
+        java.util.Set<String> dropped = new java.util.LinkedHashSet<>();
+        for (java.util.Map.Entry<String, String> e : CHOICE_SLOT_MEANINGS.entrySet()) {
+            if (dropUnstatedChoice(pending, e.getKey(), e.getValue(), message,
+                    prior.getOrDefault(e.getKey(), ""), turns, ko) > 0) {
+                dropped.add(e.getKey());
+            }
+        }
+        return dropped;
+    }
+
+    private int dropUnstatedChoice(ObjectNode pending, String key, String what, String message,
+                                   String priorValue, java.util.List<String> turns, boolean ko) {
+        String now = pending.path(key).asText("");
+        if (now.isBlank() || now.equals(priorValue)) {
             return 0;   // nothing new arrived this turn
         }
         // Only the TRAVELLER's own words count. The assistant's question ("편도인가요 왕복인가요?")
@@ -2798,24 +2856,33 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // user may reply with something else entirely ("KTX"), and the asked-slot pass would
         // otherwise force that into the route as a silent ONEWAY.
         try {
-            String stated = slotFillerAgentService.extract(message, java.util.Map.of(
-                    "statesRoute", "Answer \"yes\" ONLY if the TRAVELLER has said whether the "
-                            + "journey is ONE WAY or a RETURN/ROUND trip (편도 / 왕복 / one-way / "
-                            + "return / both directions) — in this message or in one of their own "
-                            + "earlier messages shown above. Messages that merely name a route, a "
-                            + "date or an amount do NOT state it — omit the field then"),
-                    ko, saidByUser)
-                    .path("statesRoute").asText("").trim().toLowerCase(java.util.Locale.ROOT);
-            if (stated.startsWith("y") || "true".equals(stated)) {
-                return 0;
+            // Ask for the WORDS, not a yes/no. A yes/no invites the model to agree with itself —
+            // it answered ONEWAY, so of course the route was "stated". Made to quote the
+            // traveller instead, its claim can be checked against the raw text: a quote that is
+            // not actually there is the invention it was covering for.
+            String quote = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "quote", "Copy the EXACT words, verbatim, in which the traveller said " + what
+                            + " — from this message or from one of their own earlier messages "
+                            + "shown above. Copy only those few words, nothing else. If they "
+                            + "never said it, omit the field entirely"),
+                    ko, saidByUser).path("quote").asText("").trim();
+            String haystack = (message + " " + String.join(" ", saidByUser))
+                    .replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+            String needle = quote.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+            if (!needle.isBlank() && needle.length() >= 2 && haystack.contains(needle)) {
+                return 0;   // the words really are there — the traveller did state it
+            }
+            if (!quote.isBlank()) {
+                log.info("[SETTLE] {} claim quoted '{}', which the traveller never wrote.",
+                        key, truncate(quote, 30));
             }
         } catch (Exception e) {
-            log.info("[SETTLE] route-stated check failed ({}) — asking rather than assuming.",
-                    e.getMessage());
+            log.info("[SETTLE] {}-stated check failed ({}) — asking rather than assuming.",
+                    key, e.getMessage());
         }
-        pending.remove("routeType");
-        log.info("[SETTLE] routeType {} was not stated in '{}' — dropped so the flow asks.",
-                now, truncate(message, 40));
+        pending.remove(key);
+        log.info("[SETTLE] {} {} was not stated in '{}' — dropped so the flow asks.",
+                key, now, truncate(message, 40));
         return 1;
     }
 
@@ -3173,6 +3240,74 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             filled++;
         }
         return filled;
+    }
+
+    /**
+     * The form's OWN option labels for the two choice fields, longest first. Same category as the
+     * vehicle word map: these are the provider's catalogue entries, so finding one in the user's
+     * text is matching DATA, not guessing intent — and unlike a model's claim, the word is
+     * demonstrably there. Only used to recover a choice the extractor dropped.
+     */
+    private static final java.util.List<String[]> ROUTE_WORDS = java.util.List.of(
+            new String[]{"왕복", "ROUNDTRIP"},
+            new String[]{"round trip", "ROUNDTRIP"},
+            new String[]{"round-trip", "ROUNDTRIP"},
+            new String[]{"roundtrip", "ROUNDTRIP"},
+            new String[]{"return trip", "ROUNDTRIP"},
+            new String[]{"편도", "ONEWAY"},
+            new String[]{"one way", "ONEWAY"},
+            new String[]{"one-way", "ONEWAY"},
+            new String[]{"oneway", "ONEWAY"});
+
+    private static final java.util.List<String[]> SEAT_WORDS = java.util.List.of(
+            new String[]{"프리미엄 일반석", "PREMIUM_ECONOMY"},
+            new String[]{"프리미엄일반석", "PREMIUM_ECONOMY"},
+            new String[]{"premium economy", "PREMIUM_ECONOMY"},
+            new String[]{"비즈니스석", "BUSINESS"},
+            new String[]{"비즈니스", "BUSINESS"},
+            new String[]{"business", "BUSINESS"},
+            new String[]{"일등석", "FIRST"},
+            new String[]{"first class", "FIRST"},
+            new String[]{"특실", "DELUXE"},
+            new String[]{"deluxe", "DELUXE"},
+            new String[]{"일반실", "STANDARD"},
+            new String[]{"일반석", "STANDARD"},
+            new String[]{"economy", "STANDARD"},
+            new String[]{"우등", "SUPERIOR"},
+            new String[]{"superior", "SUPERIOR"},
+            new String[]{"프리미엄", "PREMIUM"},
+            new String[]{"일반", "STANDARD"});
+
+    /**
+     * Recover choice fields whose option word is written in the message but which the extractor
+     * dropped. Returns the keys filled this way — their proof is the text itself, so they skip
+     * the "did the traveller state it?" verification that guards the model's own answers.
+     */
+    private java.util.Set<String> backfillChoices(ObjectNode pending, String message,
+                                                  List<Slot> slots) {
+        java.util.Set<String> filledKeys = new java.util.LinkedHashSet<>();
+        if (message == null || message.isBlank()) {
+            return filledKeys;
+        }
+        String haystack = message.toLowerCase(java.util.Locale.ROOT);
+        record Choice(String key, java.util.List<String[]> words) { }
+        for (Choice c : java.util.List.of(new Choice("routeType", ROUTE_WORDS),
+                new Choice("seatGrade", SEAT_WORDS))) {
+            boolean inPlay = slots.stream().anyMatch(sl -> sl.key().equals(c.key()));
+            if (!inPlay || !pending.path(c.key()).asText("").isBlank()) {
+                continue;
+            }
+            for (String[] pair : c.words()) {
+                if (haystack.contains(pair[0])) {
+                    pending.put(c.key(), pair[1]);
+                    filledKeys.add(c.key());
+                    log.info("[SETTLE] {} {} read straight from the words '{}'.",
+                            c.key(), pair[1], pair[0]);
+                    break;
+                }
+            }
+        }
+        return filledKeys;
     }
 
     /**

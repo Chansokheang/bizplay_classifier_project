@@ -30,7 +30,28 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
         if (documents == null || documents.isEmpty() || !documents.get(0).isObject()) {
             return notes;
         }
-        ObjectNode doc = (ObjectNode) documents.get(0);
+        // ONE DOCUMENT PER TRAVELLER — and every one of them needs the region on its period
+        // rows and its own bstrRoutes legs. Enriching only the first filed the second traveller's
+        // document with no region and no route at all.
+        for (int i = 0; i < documents.size(); i++) {
+            if (!documents.get(i).isObject()) {
+                continue;
+            }
+            // documents[] fans out in travelerIds order, so index i is that traveller's copy —
+            // which is how a per-traveller route finds the document it belongs to.
+            String who = state.path("travelers").path(i).asText("");
+            List<String> docNotes = enrichDocument((ObjectNode) documents.get(i), state, token, ko, who);
+            if (i == 0) {
+                notes.addAll(docNotes);   // the notes describe the trip, not each traveller's copy
+            }
+        }
+        return notes;
+    }
+
+    /** Everything the provider's own screen adds, for ONE traveller's document. */
+    private List<String> enrichDocument(ObjectNode doc, ObjectNode state, String token, boolean ko,
+                                        String travellerName) {
+        List<String> notes = new ArrayList<>();
         JsonNode paper = planPaper(doc, token);
         if (paper == null) {
             log.warn("Plan paper {} not found while enriching — leaving the draft as-is.",
@@ -126,7 +147,7 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
             boolean required = routeItem.path("required").asBoolean(false);
             JsonNode itemDto = routeItem.path("itemDto");
             boolean calcDistance = itemDto.path("calcDistanceUsed").asBoolean(true);
-            int legs = buildRoutes(doc, state, bstrType, calcDistance, token);
+            int legs = buildRoutes(doc, state, bstrType, calcDistance, token, travellerName);
             if (legs > 0) {
                 notes.add(t(ko, "Travel route saved (" + legs + " leg(s)).",
                         "이동경로 " + legs + "개 구간을 저장했어요."));
@@ -198,9 +219,41 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
                                 + "연결하지 못했어요. 어느 나라, 어느 도시로 가시나요?"));
             }
         }
-        // ② Route legs on this paper must carry a transport type — ask once; a vehicle named in
-        // ANY earlier message was already captured into state by the plan agent.
         JsonNode routeItem = paperItem(paper, "BSTR_ROUTE");
+        // ② 이동경로(출장) — the traveller's own route between the company's REGISTERED
+        // destinations. Its legs carry the ids, addresses, admin codes and coordinates that the
+        // save body's bstrRoutes[] needs, and only the traveller knows which sites they visit,
+        // so it is asked (once) with that list in the question.
+        // Answered either way: one route for the trip, or a route for every traveller
+        // individually (the picker sends one per person).
+        boolean everyoneHasOne = state.path("travelers").size() > 0;
+        for (JsonNode n : state.path("travelers")) {
+            if (!state.path("routePointsByTraveller").path(n.asText("")).isArray()) {
+                everyoneHasOne = false;
+                break;
+            }
+        }
+        if (routeItem != null && routeItem.path("used").asBoolean(true)
+                && state.path("routePoints").isMissingNode() && !everyoneHasOne
+                && !state.path("routeAskSkipped").asBoolean(false)) {
+            JsonNode options = routeOptions(token);
+            if (!options.isEmpty()) {
+                // Short on purpose: the picker below lists the registered destinations, so the
+                // question does not repeat them. One line, and it says both ways of answering.
+                int party = state.path("travelers").size();
+                String perPerson = party > 1
+                        ? t(ko, " Each traveller can have their own.", " 출장자별로 지정할 수 있어요.")
+                        : "";
+                return ask("route", t(ko,
+                        "What was your travel route? Pick the departure, destination and return "
+                                + "point below — or just tell me." + perPerson,
+                        "이동경로가 어떻게 되나요? 아래에서 출발지·목적지·복귀지를 고르시거나 "
+                                + "말씀해 주세요." + perPerson));
+            }
+        }
+        // ③ ... and then how they travel it. Asked AFTER the route on purpose: the vehicle is a
+        // property OF the journey, so a person answers it more easily once the journey is
+        // named. A vehicle mentioned in ANY earlier message was already captured into state.
         if (routeItem != null && routeItem.path("used").asBoolean(true)
                 && routeItem.path("itemDto").path("transportBound").path("transportSelectUsed").asBoolean(false)
                 && state.path("transportType").asText("").isBlank()
@@ -211,7 +264,7 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
                     "그리고 이동은 주로 어떤 교통수단인가요? 비행기·기차·버스·자차 중에서 말씀해 "
                             + "주세요 (이동경로 구간마다 교통수단이 필요해요)"));
         }
-        // ③ Optional 출장지 상세 (the period row's selectionMemo) — asked ONCE, nullable.
+        // ④ Optional 출장지 상세 (the period row's selectionMemo) — asked ONCE, nullable.
         // state carries "" after the ask (answered-or-skipped marker), so absence of the
         // key is the only state that triggers the question.
         if (("OVERSEA".equals(bstrType) || regionUsed) && !state.has("destinationDetail")) {
@@ -224,6 +277,139 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
         return null;
     }
 
+
+    @Override
+    public void previewRoutes(ArrayNode documents, ObjectNode state, String token) {
+        if (documents == null || documents.isEmpty() || !documents.get(0).isObject()) {
+            return;
+        }
+        JsonNode paper = planPaper((ObjectNode) documents.get(0), token);
+        JsonNode routeItem = paper == null ? null : paperItem(paper, "BSTR_ROUTE");
+        if (routeItem == null || !routeItem.path("used").asBoolean(true)) {
+            return;
+        }
+        String bstrType = paper.path("bstrType").asText("");
+        boolean calcDistance = routeItem.path("itemDto").path("calcDistanceUsed").asBoolean(true);
+        for (int i = 0; i < documents.size(); i++) {
+            if (!documents.get(i).isObject()) {
+                continue;
+            }
+            String who = state.path("travelers").path(i).asText("");
+            buildRoutes((ObjectNode) documents.get(i), state, bstrType, calcDistance, token, who);
+        }
+    }
+
+    @Override
+    public JsonNode routeOptions(String token) {
+        ArrayNode out = objectMapper.createArrayNode();
+        try {
+            for (JsonNode d : safeArray(bizplayGatewayService.getPlanDestinations(token))) {
+                ObjectNode o = out.addObject();
+                o.put("id", d.path("id").asLong());
+                o.put("name", d.path("name").asText(""));
+                JsonNode a = d.path("address");
+                o.put("address", a.isObject()
+                        ? firstText(a, "roadAddress", "jibunAddress") : a.asText(""));
+                o.put("sido", a.isObject() ? a.path("sido").asText("") : d.path("sido").asText(""));
+            }
+        } catch (Exception e) {
+            log.warn("Destination master unavailable: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    @Override
+    public JsonNode resolveRoutePoints(String message, List<String> travellerNames, String token,
+                                       boolean korean) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        JsonNode options = routeOptions(token);
+        if (options.isEmpty()) {
+            return null;
+        }
+        List<String> names = new ArrayList<>();
+        for (JsonNode o : options) {
+            names.add(o.path("name").asText(""));
+        }
+        try {
+            // The route is read from the user's own sentence against the company's own list —
+            // no phrasing is predefined, and every name is validated against that list below.
+            java.util.LinkedHashMap<String, String> wanted = new java.util.LinkedHashMap<>();
+            wanted.put("route", "The registered travel destinations are: " + String.join(", ", names)
+                    + ". If this message describes a TRAVEL ROUTE between them (where they "
+                    + "set out from, where they went, where they returned to), list those "
+                    + "places IN ORDER, '>'-separated, each name copied EXACTLY from that "
+                    + "list — e.g. \"비즈플레이 > 티엑스알로보틱스(본사) > 비즈플레이\". Omit "
+                    + "the field when the message describes no such route");
+            if (travellerNames != null && travellerNames.size() > 1) {
+                // Several people are on this trip and they may not travel together. Only when the
+                // sentence pins the route on ONE of them does it become that person's own route.
+                wanted.put("traveller", "The travellers on this trip are: "
+                        + String.join(", ", travellerNames) + ". If the route above belongs to ONE "
+                        + "of them in particular (\"김도하는 …\", \"for 김충북\"), answer with that "
+                        + "person's name copied exactly. Omit the field when the route is simply "
+                        + "the trip's route for everyone");
+            }
+            JsonNode got = slotFillerAgentService.extract(message, wanted,
+                    korean, java.util.List.<String>of());
+            String raw = got.path("route").asText("").trim();
+            if (raw.isBlank()) {
+                return null;
+            }
+            ArrayNode points = objectMapper.createArrayNode();
+            for (String part : raw.split(">")) {
+                String want = part.trim();
+                if (want.isEmpty()) {
+                    continue;
+                }
+                for (String cand : names) {
+                    if (cand.equalsIgnoreCase(want) || cand.contains(want) || want.contains(cand)) {
+                        points.add(cand);   // validated against the master — never invented
+                        break;
+                    }
+                }
+            }
+            if (points.size() < 2) {
+                return null;
+            }
+            // A trip goes AND comes back. "이동경로는 비즈플레이에서 티엑스알로보틱스(본사)" names where they set out
+            // and where they went, not that they stayed there - and the ask itself promises the
+            // return leg is added for them. So the loop is closed back to the departure unless
+            // the user already named it; the reply prints the full path, so an unwanted return
+            // leg is visible and can be corrected in words.
+            if (!points.get(points.size() - 1).asText("")
+                    .equals(points.get(0).asText(""))) {
+                points.add(points.get(0).asText(""));
+                log.info("[ENRICH] route closed back to the departure: {}", points);
+            }
+            ObjectNode out = objectMapper.createObjectNode();
+            out.set("points", points);
+            String who = got.path("traveller").asText("").trim();
+            if (!who.isBlank() && travellerNames != null) {
+                for (String cand : travellerNames) {
+                    if (cand.equalsIgnoreCase(who) || cand.contains(who) || who.contains(cand)) {
+                        // Validated twice: the name must be one of this trip's travellers AND
+                        // actually written in the sentence. A name the model supplied from
+                        // anywhere else turns a trip-wide route into one person's by accident.
+                        if (message.contains(cand)) {
+                            out.put("traveller", cand);
+                        } else {
+                            log.info("[ENRICH] route not pinned on {} — the message never names them.",
+                                    cand);
+                        }
+                        break;
+                    }
+                }
+            }
+            log.info("[ENRICH] route read from the words: {}{}", points,
+                    out.has("traveller") ? " (for " + out.path("traveller").asText() + ")" : "");
+            return out;
+        } catch (Exception e) {
+            log.info("Route resolution failed: {}", e.getMessage());
+            return null;
+        }
+    }
 
     /** The readiness ask as {kind, text} — the kind drives WHICH UI re-opens, the text is the words. */
     private ObjectNode ask(String kind, String text) {
@@ -428,7 +614,42 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
      * exactly how the provider's screen degrades. Returns the number of legs written.
      */
     private int buildRoutes(ObjectNode doc, ObjectNode state, String bstrType,
-                            boolean calcDistance, String token) {
+                            boolean calcDistance, String token, String travellerName) {
+        // The traveller's own route, when they gave one: every point is a registered destination,
+        // so each leg carries real ids, addresses, admin codes and coordinates — the shape the
+        // provider's Route Setup dialog produces. Legs run in the order named.
+        // This traveller's OWN route wins over the trip-wide one — several people on one plan
+        // do not always travel together, and each document carries its own legs.
+        JsonNode chosen = state.path("routePoints");
+        JsonNode own = travellerName == null || travellerName.isBlank()
+                ? null : state.path("routePointsByTraveller").path(travellerName);
+        if (own != null && own.isArray() && own.size() >= 2) {
+            chosen = own;
+            log.info("[ENRICH] using {}'s own route: {}", travellerName, own);
+        }
+        if (chosen.isArray() && chosen.size() >= 2) {
+            List<ObjectNode> points = new ArrayList<>();
+            for (JsonNode n : chosen) {
+                ObjectNode p = resolvePoint(n.asText(""), token, true);
+                if (p != null) {
+                    points.add(p);
+                }
+            }
+            if (points.size() >= 2) {
+                String transportChosen = state.path("transportType").asText("");
+                if (transportChosen.isBlank()) {
+                    transportChosen = "OVERSEA".equals(bstrType) ? "PUBLIC_AIRLINE" : "PUBLIC";
+                }
+                ArrayNode legs = doc.putArray("bstrRoutes");
+                for (int i = 0; i + 1 < points.size(); i++) {
+                    legs.add(leg(i + 1, points.get(i), points.get(i + 1), transportChosen,
+                            calcDistance, token));
+                }
+                log.info("[ENRICH] bstrRoutes written from the traveller's route: {} legs ({})",
+                        legs.size(), chosen);
+                return legs.size();
+            }
+        }
         String origin = state.path("origin").asText("").trim();
         String destination = state.path("destination").asText("").trim();
         if (destination.isBlank()) {
@@ -514,10 +735,14 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
                 if (!dn.isBlank() && (dn.contains(name) || name.contains(dn))) {
                     JsonNode a = d.path("address");
                     p.put("id", d.path("id").asLong());
+                    // Two shapes of the same master: destination/active/list is FLAT (address is
+                    // a string, 시도/adminCode/coordinates sit on the row), the popUp variant
+                    // nests them under address. Read whichever this list carries.
                     p.put("address", a.isObject()
                             ? firstText(a, "roadAddress", "jibunAddress") : a.asText(""));
-                    p.put("sido", a.path("sido").asText(""));
-                    p.put("adminCode", a.path("adminCode").asText(""));
+                    p.put("sido", a.isObject() ? a.path("sido").asText("") : d.path("sido").asText(""));
+                    p.put("adminCode", a.isObject()
+                            ? a.path("adminCode").asText("") : d.path("adminCode").asText(""));
                     p.put("lat", firstText(d, "latitude").isBlank()
                             ? a.path("latitude").asText("") : firstText(d, "latitude"));
                     p.put("lon", firstText(d, "longitude").isBlank()
