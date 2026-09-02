@@ -257,6 +257,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (request.getDestinationDetail() != null) {
             state.put("destinationDetail", request.getDestinationDetail().trim());
         }
+        // What the agent said last, in full: if this turn changes nothing and would say the very
+        // same thing again, the user hears their answer land instead of the question twice.
+        final String saidBeforeTurn = lastAssistantText(session);
+        // The slots a user would call "the plan": travellers, destination, dates, route.
+        final String slotsAtTurnStart = planSlots(documents, state);
         JsonNode turnStartDoc = strippedDoc(documents);
         // Full snapshots (not the stripped comparison copy): the alignment gate rewinds to
         // exactly here before a second attempt, so a retry can never double-apply the turn.
@@ -502,8 +507,20 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 ? List.<String>of() : travelerNames(state);
         // A per-traveller route can arrive at ANY time — including after the trip-wide one is
         // already set ("김도하는 부산 쪽으로 갔다가 복귀") — so this block keeps listening.
+        // ... and a route can be CHANGED at any time. The cheap gate is DATA: does the message
+        // name one of the corporation's own registered destinations? "Change travel route:
+        // depart from 비즈플레이, go to 티엑스알로보틱스(부산)" was never even read, because the
+        // block closed itself as soon as a route existed.
+        boolean namesASite = false;
+        for (JsonNode o : planEnrichmentService.routeOptions(bizplayToken)) {
+            String site = o.path("name").asText("");
+            if (site.length() >= 2 && stripChatContext(turnText).contains(site)) {
+                namesASite = true;
+                break;
+            }
+        }
         boolean routeStillOpen = state.path("routePoints").isMissingNode()
-                || tripTravellers.size() > 1;
+                || tripTravellers.size() > 1 || namesASite;
         if (!documents.isEmpty() && routeStillOpen && !turnText.isBlank()) {
             boolean askedRoute = state.path("pendingRouteAsk").asBoolean(false);
             if (askedRoute || turnText.length() >= 8) {
@@ -530,16 +547,30 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     restoreDestinationAfterRoute(documents, state, destAtTurnStart, route);
                     log.info("Route for {} captured from '{}': {}", forWhom,
                             truncateForLog(turnText), route.path("points"));
-                } else if (route != null && route.path("points").isArray()
-                        && state.path("routePoints").isMissingNode()) {
+                } else if (route != null && route.path("points").isArray()) {
+                    // A route stated with NOBODY named is the TRIP's route - including when it
+                    // replaces one ("change travel route: ... 티엑스알로보틱스(부산) ..."). It used
+                    // to be written only when no route existed yet, so the second statement was
+                    // read, echoed and then dropped. Per-traveller routes go with it: the trip's
+                    // route now applies to everyone, and naming a person is still how one
+                    // traveller gets their own.
+                    boolean replacing = !state.path("routePoints").isMissingNode()
+                            && !state.path("routePoints").equals(route.path("points"));
                     state.set("routePoints", route.path("points").deepCopy());
+                    if (state.path("routePointsByTraveller").isObject()) {
+                        replacing = replacing || state.path("routePointsByTraveller").size() > 0;
+                        state.remove("routePointsByTraveller");
+                    }
                     state.remove("pendingRouteAsk");
                     StringBuilder path = new StringBuilder();
                     for (JsonNode p : route.path("points")) {
                         path.append(path.length() == 0 ? "" : " → ").append(p.asText(""));
                     }
-                    reply.append(t(ko, "Route set: " + path + ". ",
-                            "이동경로를 " + path + "(으)로 정했어요. "));
+                    reply.append(replacing
+                            ? t(ko, "Route changed to " + path + ". ",
+                                    "이동경로를 " + path + "(으)로 변경했어요. ")
+                            : t(ko, "Route set: " + path + ". ",
+                                    "이동경로를 " + path + "(으)로 정했어요. "));
                     state.put("routeTurn", true);
                     state.set("routeTurnPoints", route.path("points").deepCopy());
                     restoreDestinationAfterRoute(documents, state, destAtTurnStart, route);
@@ -973,13 +1004,35 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 // paper's region lists actually allow, a transport type when the route demands
                 // one — are asked HERE, while the user can still answer, not discovered as a
                 // refusal at create. One question at a time, same as every other gap.
-                JsonNode readyAsk = countryCityAsked ? null
+                // A trip is often not a solo trip. The moment the first traveller is on the
+                // plan, ask ONCE whether anyone else is coming - before the remaining form
+                // questions, so the party (and each person's route) is settled early rather
+                // than after everything else is filled in.
+                List<String> onTrip = travelerNames(state) == null
+                        ? List.<String>of() : travelerNames(state);
+                boolean askMoreTravellers = !onTrip.isEmpty()
+                        && !state.path("askedMoreTravellers").asBoolean(false)
+                        && (pendingChoices == null || pendingChoices.isEmpty())
+                        && clarify == null && !countryCityAsked;
+                if (askMoreTravellers) {
+                    state.put("askedMoreTravellers", true);
+                    session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
+                    intent = "TRAVELER_MORE_ASK";
+                    reply.append(t(ko,
+                            "Travelling: " + String.join(", ", onTrip)
+                                    + ". Is anyone else coming along? If it's just them, say so.",
+                            "출장자: " + String.join(", ", onTrip)
+                                    + ". 함께 가는 분이 더 있나요? 없으면 없다고 말씀해 주세요."));
+                }
+                JsonNode readyAsk = (countryCityAsked || askMoreTravellers) ? null
                         : planEnrichmentService.readinessAsk(documents, state, bizplayToken, ko);
                 if (countryCityAsked) {
                     // The reply already asks "which city in <country>?" — keep it, keep the ask.
                     session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
                     intent = "DESTINATION_ASK";
                     state.put("pendingDestinationAsk", true);
+                } else if (askMoreTravellers) {
+                    // asked above - nothing else this turn
                 } else
                 if (readyAsk != null) {
                     session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
@@ -1015,7 +1068,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     state.remove("pendingDestinationAsk");   // resolved — the asks are over
                     state.remove("pendingTransportAsk");
                 }
-                if (readyAsk == null)
+                // The party question owns this turn: no "the form is all filled in" underneath it,
+                // and the status stays COLLECTING until it is answered.
+                if (readyAsk == null && !askMoreTravellers)
                 if (!turnChangedSomething && wantsToFileNow(turnText, session, ko)) {
                     appendTurn(session, "user", message);
                     saveState(session, state);
@@ -1073,7 +1128,18 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         ? t(ko, " (" + (missing.size() - 1) + " more to go after this)",
                                 " (이후 " + (missing.size() - 1) + "개 더 남았어요)")
                         : "";
-                if (routeField) {
+                // The missing field IS 이동경로 - the very thing the Route Setup picker answers.
+                // Ask it the way the readiness check does, so the client gets intent ROUTE_ASK
+                // and shows the registered-destination dropdowns instead of a paragraph asking
+                // the user to describe the route in prose.
+                JsonNode routeFieldAsk = routeField
+                        ? planEnrichmentService.readinessAsk(documents, state, bizplayToken, ko)
+                        : null;
+                if (routeFieldAsk != null && "route".equals(routeFieldAsk.path("kind").asText())) {
+                    reply.append(routeFieldAsk.path("text").asText()).append(' ');
+                    intent = "ROUTE_ASK";
+                    state.put("pendingRouteAsk", true);
+                } else if (routeField) {
                     // "What is the travel route?" told the user nothing about what to answer.
                     // This field needs the DEPARTURE point (and ideally the transport) — say
                     // so explicitly, with an example, instead of letting the follow-up LLM
@@ -1237,6 +1303,49 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         + "is spent.");
             }
             state.remove("routeTurnPoints");
+        }
+
+        // The turn changed nothing and the agent is about to ask the exact same question again:
+        // the user's answer WAS understood, it just matched what the plan already says ("me",
+        // when they are already the traveller). Repeating the question reads as being ignored,
+        // so the plan answers them first - from the draft - and then asks again.
+        String composed = reply.toString().trim().replaceAll("\s+", " ");
+        // The test is the REPLY, not the draft: the mapper rewrites some field on nearly every
+        // turn (a regenerated title, an echoed value), so "the document is unchanged" was never
+        // true. A word-for-word identical answer is the evidence that we are repeating ourselves.
+        if (!composed.isBlank() && composed.equals(saidBeforeTurn)
+                && planSlots(documents, state).equals(slotsAtTurnStart)
+                && !documents.isEmpty()
+                && agentPromptService.isModuleEnabled("form-follow-up")) {
+            try {
+                ObjectNode slim = state.deepCopy();
+                for (String k : new String[]{"fields", "staged", "validatedDestination",
+                        "validatedOrigin", "lang", "travelerIds", "pendingTravelers"}) {
+                    slim.remove(k);
+                }
+                String ack = formFollowUpAgentService.answerDraftQuestion(
+                        "STATE: " + slim + "\nDOCUMENT: "
+                                + truncate(documents.get(0).toString(), 3500),
+                        // Not the bare message as a "question" - "me" is not one, and the QA
+                        // agent answered by asking for a clearer question. Say what the draft
+                        // ALREADY holds that the message refers to, in one sentence, no question.
+                        "The user just said: \"" + stripChatContext(message) + "\". Their answer "
+                                + "matches what this plan already records, so nothing changed. In "
+                                + "ONE short sentence, tell them what the plan already has for "
+                                + "what they mentioned (for example who is already on the "
+                                + "traveller list). State it as a fact. Do NOT ask a question and "
+                                + "do NOT apologise.", ko);
+                if (ack != null && !ack.isBlank()) {
+                    reply.setLength(0);
+                    reply.append(ack.trim()).append(' ').append(composed);
+                    subAgents.add("FOLLOW_UP_AGENT");
+                    log.info("Nothing changed and the question would repeat - answered from the "
+                            + "draft first: '{}'", truncateForLog(ack));
+                }
+            } catch (Exception e) {
+                log.warn("Could not compose the 'already there' answer ({}) - asking again as before",
+                        e.getMessage());
+            }
         }
 
         // What changed, so the client redraws the right cards rather than guessing from the
@@ -2984,6 +3093,104 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
     }
 
+    /**
+     * Correct ONE field of a draft in place. Deterministic on purpose - the value is the user's
+     * own, so nothing needs judging; it goes through the SAME writer the agent's mapper feeds,
+     * and the route preview is rebuilt so the card shows what would be filed.
+     */
+    @Override
+    public BizplayPlanAgentResponse editField(String sessionId, String corpNo, String key,
+                                              String value, String bizplayToken) {
+        BizplayPlanAgentRequest lookup = new BizplayPlanAgentRequest();
+        lookup.setCorpNo(corpNo);
+        lookup.setSessionId(sessionId);
+        ConversationalAgentSession session = resolveSession(lookup);
+        ObjectNode state = loadState(session);
+        ArrayNode documents = documents(session);
+        if (documents.isEmpty() || key == null || key.isBlank()) {
+            throw new IllegalArgumentException("No draft to edit, or no field key given.");
+        }
+        ObjectNode doc = (ObjectNode) documents.get(0);
+        String v = value == null ? "" : value.trim();
+        boolean ko = state.path("lang").asText("").startsWith("ko");
+        String what = key;
+        switch (key) {
+            case "destination" -> {
+                writeDestination(documents, state, v);
+                state.remove("destinationCountry");   // re-resolved from the new place
+                what = ko ? "출장지" : "destination";
+            }
+            case "destinationDetail" -> {
+                state.put("destinationDetail", v);
+                formValueWriterService.refreshPeriod(doc, state);
+                what = ko ? "출장지 상세" : "destination detail";
+            }
+            case "transportType" -> {
+                state.put("transportType", v.toUpperCase(java.util.Locale.ROOT));
+                what = ko ? "교통수단" : "transport";
+            }
+            case "startDate", "endDate" -> {
+                String iso = v.length() >= 10 ? v.substring(0, 10) : v;
+                doc.put("startDate".equals(key) ? "bstrStartDate" : "bstrEndDate",
+                        iso + "T00:00:00.000Z");
+                formValueWriterService.refreshPeriod(doc, state);
+                what = ko ? "출장기간" : "trip period";
+            }
+            default -> {
+                // A form field: hand it to the writer exactly as the mapper would.
+                ObjectNode mapped = objectMapper.createObjectNode();
+                mapped.put(key, v);
+                java.util.List<String> wrote = formValueWriterService.apply(
+                        doc, state.path("fields"), state, mapped);
+                if (wrote == null || wrote.isEmpty()) {
+                    throw new IllegalArgumentException("Field '" + key + "' is not on this form.");
+                }
+                // The writer reports "제목 = 오사카 장기 점검"; the reply adds the value itself,
+                // so keep the label only.
+                what = wrote.get(0).contains(" = ")
+                        ? wrote.get(0).substring(0, wrote.get(0).indexOf(" = ")).trim()
+                        : wrote.get(0);
+            }
+        }
+        // Every traveller's document carries the same trip-level values.
+        // The drafter is already on the master document - keep it, do not invent one.
+        syncTravelerDocuments(documents, state,
+                doc.path("draftUserId").asText(doc.path("corporationUserId").asText(null)));
+        if (!state.path("routePoints").isMissingNode()
+                || state.path("routePointsByTraveller").size() > 0) {
+            planEnrichmentService.previewRoutes(documents, state, bizplayToken);
+        }
+        session.setDraftJson(documents);
+        saveState(session, state);
+        // The transcript keeps every change, however it was made - a later "그건 다시 바꿔줘"
+        // has to see this edit even though no chat turn produced it.
+        appendTurn(session, "user", "[UI] " + what + " = " + v);
+        String reply = t(ko, what + " updated: " + v + ".", what + "을(를) " + v + "(으)로 바꿨어요.");
+        appendTurn(session, "assistant", reply);
+        ConversationalAgentSession saved = sessionRepo.save(session);
+        log.info("[EDIT] {} = '{}' on session {}", key, truncateForLog(v), sessionId);
+        java.util.List<String> missing = formValueWriterService.missingRequired(
+                documents.get(0), state.path("fields"), state);
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(saved.getId().toString())
+                .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                .intent("FIELD_EDITED")
+                .subAgents(List.of("FORM_VALUE_WRITER"))
+                .uiRefresh(List.of("all"))
+                .reply(reply)
+                .missingFields(missing.isEmpty() ? null : missing)
+                .travelers(travelerNames(state))
+                .travelerIds(travelerIdList(state))
+                .destination(state.path("destination").asText(null))
+                .destinationCountry(state.path("destinationCountry").asText(null))
+                .destinationDetail(state.has("destinationDetail")
+                        ? state.path("destinationDetail").asText("") : null)
+                .periodPlaces(periodPlacesForResponse(state))
+                .transportDefaulted(state.path("transportType").asText("").isBlank() ? true : null)
+                .draftJson(saved.getDraftJson())
+                .build();
+    }
+
     @Override
     public JsonNode approvalIntent(String corpNo, JsonNode body) {
         String message = body.path("message").asText("");
@@ -3445,6 +3652,24 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     }
 
     /** The editable slots that live in state rather than the document. */
+    /**
+     * The parts of the draft a person would call "the plan" - who travels, where, when, and by
+     * which route. The raw document is no use for "did anything change?": the mapper rewrites a
+     * title or echoes a value nearly every turn.
+     */
+    private String planSlots(ArrayNode documents, ObjectNode state) {
+        ObjectNode d = documents.isEmpty() || !documents.get(0).isObject()
+                ? objectMapper.createObjectNode() : (ObjectNode) documents.get(0);
+        return state.path("travelers").toString()
+                + "|" + state.path("destination").asText("")
+                + "|" + state.path("destinationCountry").asText("")
+                + "|" + state.path("routePoints").toString()
+                + "|" + state.path("routePointsByTraveller").toString()
+                + "|" + state.path("transportType").asText("")
+                + "|" + d.path("bstrStartDate").asText("") + "~" + d.path("bstrEndDate").asText("")
+                + "|" + d.path("title").asText("");
+    }
+
     private String turnSignature(ArrayNode documents, ObjectNode state) {
         return state.path("travelers").toString()
                 + "|" + state.path("travelerIds").toString()
@@ -4221,6 +4446,20 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         log.info("Answer-first: '{}' vs pending ask '{}' -> {}", truncateForLog(message),
                 truncateForLog(asked), answers ? "ANSWER (other judges skipped)" : "not an answer");
         return answers;
+    }
+
+    /** The last thing the agent said, in full. */
+    private String lastAssistantText(ConversationalAgentSession session) {
+        JsonNode events = session.getChatEventJson();
+        if (events == null || !events.isArray()) {
+            return "";
+        }
+        for (int i = events.size() - 1; i >= 0; i--) {
+            if ("assistant".equals(events.get(i).path("role").asText(""))) {
+                return events.get(i).path("content").asText("").replaceAll("\s+", " ").trim();
+            }
+        }
+        return "";
     }
 
     /** The last thing the agent said, which is what any pending question was worded as. */

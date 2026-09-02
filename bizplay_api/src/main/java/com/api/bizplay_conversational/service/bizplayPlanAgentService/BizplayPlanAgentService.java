@@ -41,6 +41,20 @@ public interface BizplayPlanAgentService {
     void noteTurn(String sessionId, String corpNo, String userText, String assistantText);
 
     /**
+     * Correct ONE field of the session's draft directly - the same edit a user would otherwise
+     * have to phrase in chat ("change the title to ..."), available as a deterministic call so a
+     * preview can be edited in place. No LLM: the value is written through the same writer the
+     * agent uses, the route preview is rebuilt, and the turn is recorded in the transcript so
+     * later context still resolves.
+     *
+     * <p>{@code key} is a form field key ("basic:BASIC_TITLE", "item:18403") or one of the
+     * slot names the flow keeps outside the document: {@code destination},
+     * {@code destinationDetail}, {@code startDate}, {@code endDate}, {@code transportType}.
+     */
+    BizplayPlanAgentResponse editField(String sessionId, String corpNo, String key, String value,
+                                       String bizplayToken);
+
+    /**
      * LLM intent judge for the client-side approval-line step — NO word lists. Given the
      * user's message and the step's context (who can be picked, whose role is pending,
      * whether the save question was just asked), the model answers what the user MEANS:

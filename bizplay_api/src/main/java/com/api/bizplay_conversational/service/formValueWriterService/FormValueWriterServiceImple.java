@@ -468,6 +468,10 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         return value == null ? "" : value;
     }
 
+    /** yyyy-MM-dd - the only shape a period bound may be written from. */
+    private static final java.util.regex.Pattern ISO_DAY =
+            java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
     /** BSTR_PERIOD: top-level dates + the save body's selections encoding (start/name, end/erpCode). */
     private String writePeriod(ObjectNode document, ObjectNode state, ObjectNode issued, JsonNode value, String label) {
         String start = text(value.path("start"));
@@ -484,11 +488,20 @@ public class FormValueWriterServiceImple implements FormValueWriterService {
         if (memo != null) {
             state.put("periodMemo", memo);
         }
-        if (start != null) {
+        // A period bound takes a DATE, never anything else. Given a message carrying both
+        // a period and a route ("... from September 8 to 10 ... route from 비즈플레이 to ..."),
+        // the mapper has handed this writer the departure SITE as the start: it was stored
+        // as "비즈플레이T00:00:00.000Z", then reverted - taking the correct date, written
+        // earlier in the same turn, with it. A non-date is ignored, so what stands survives.
+        if (start != null && ISO_DAY.matcher(start).matches()) {
             document.put("bstrStartDate", start + "T00:00:00.000Z");
+        } else if (start != null) {
+            log.info("[WRITE] period start '{}' is not a date - ignored.", start);
         }
-        if (end != null) {
+        if (end != null && ISO_DAY.matcher(end).matches()) {
             document.put("bstrEndDate", end + "T00:00:00.000Z");
+        } else if (end != null) {
+            log.info("[WRITE] period end '{}' is not a date - ignored.", end);
         }
         writePeriodSelections(document, state, issued);
         refreshDailyCostRows(document, state);

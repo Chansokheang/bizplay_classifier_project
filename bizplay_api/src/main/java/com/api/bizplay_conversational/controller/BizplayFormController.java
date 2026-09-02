@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -234,6 +235,26 @@ public class BizplayFormController {
         bizplayPlanAgentService.noteTurn(sessionId, corpNo,
                 body.path("user").asText(null), body.path("assistant").asText(null));
         return ResponseEntity.ok(ApiResponse.ok("noted"));
+    }
+
+    @Operation(summary = "Correct ONE field of a plan draft in place - the same change a user "
+            + "would otherwise phrase in chat. Body {key, value}; key is a form field key "
+            + "(\"basic:BASIC_TITLE\", \"item:18403\") or a slot name (destination, "
+            + "destinationDetail, startDate, endDate, transportType). Returns the updated draft.")
+    @PatchMapping("/agents/plan/{sessionId}/field")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> editPlanField(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode body,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String bizplayToken) {
+        com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.set(corpNo);
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(bizplayPlanAgentService.editField(
+                    sessionId, corpNo, body.path("key").asText(null),
+                    body.path("value").asText(""), bizplayToken)));
+        } finally {
+            com.api.bizplay_conversational.service.agentPromptService.AgentTenantContext.clear();
+        }
     }
 
     @Operation(summary = "Create this plan: POST the session's draft_json to BizPlay (DRAFT_ONLY save). "

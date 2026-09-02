@@ -1225,6 +1225,10 @@ let planPeriodPlaces = null;
 /* Set when the server itself just asked for the destination — the wizard then renders
  * only the picker, without repeating a generic question above it. */
 let planDestAskQuiet = false;
+// The server's reply for THIS turn already ended in a question, so the wizard shows its widget
+// (chips, calendar, roster) without phrasing a second question on top of it - "Who is the person
+// going on the business trip?" was landing right above "Who is going on the trip (travellers)?".
+let wizAskQuiet = false;
 
 const TRIP_COUNTRIES = ["Japan", "China", "Vietnam", "Cambodia", "Singapore", "USA", "Germany", "United Kingdom", "India", "Thailand", "Indonesia", "UAE"];
 /* One entry per 출장 목적, mirroring the real Bizplay templates: each has its own
@@ -2923,6 +2927,18 @@ function resetAgent() {
   agent.booking = false;
   $("agentInput").value = "";
   $("agentFileInput").value = "";
+  // Plan-scoped state belongs to the plan that is ending, not to the next one. A leftover
+  // 출장지 상세 ("floor 2") and the previous trip's per-day places were still on the card of a
+  // brand-new plan - and rode along to the server with it.
+  planDestDetail = null;
+  planDestCountry = null;
+  planPeriodPlaces = null;
+  planDestAskQuiet = false;
+  prevCards = { info: null, details: null, extra: null, trav: null, route: null };
+  wizAsked = null;
+  bzApproval.lines = [];
+  bzApproval.pendingKindFor = null;
+  bzApproval.awaitSaveConfirm = false;
   renderAgentFiles();
 }
 
@@ -3034,9 +3050,102 @@ function previewCard(key, title, icon, rowsHtml) {
   }
 }
 
-function pcRow(label, value) {
+/* A preview row. `edit` (a field key the server's PATCH .../field understands, optionally
+ * "key|type", type = text|date|textarea) makes the VALUE editable in place: click it, type,
+ * Enter or blur saves. Correcting a field the chat got wrong should not require a sentence. */
+function pcRow(label, value, edit) {
   if (value == null || value === "") return "";
-  return `<div class="pc-row"><span class="pc-k">${esc(label)}</span><span class="pc-v">${esc(value)}</span></div>`;
+  if (!edit) {
+    return `<div class="pc-row"><span class="pc-k">${esc(label)}</span><span class="pc-v">${esc(value)}</span></div>`;
+  }
+  const [key, kind] = String(edit).split("|");
+  return `<div class="pc-row"><span class="pc-k">${esc(label)}</span>`
+    + `<span class="pc-v pc-edit" tabindex="0" role="button" data-edit="${esc(key)}"`
+    + ` data-kind="${esc(kind || "text")}" title="${esc(T("Click to edit", "클릭해서 수정"))}">`
+    + `${esc(value)}<span class="pc-pen">✎</span></span></div>`;
+}
+
+/* One delegated handler for every editable row, present and future. */
+document.addEventListener("click", (e) => {
+  const cell = e.target.closest && e.target.closest(".pc-edit:not(.pc-editing)");
+  if (cell) startPcEdit(cell);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const cell = e.target.closest && e.target.closest(".pc-edit:not(.pc-editing)");
+  if (cell) { e.preventDefault(); startPcEdit(cell); }
+});
+
+function startPcEdit(cell) {
+  const key = cell.dataset.edit;
+  const kind = cell.dataset.kind || "text";
+  const was = cell.textContent.replace(/✎$/, "").trim();
+  cell.classList.add("pc-editing");
+  cell.innerHTML = kind === "textarea"
+    ? `<textarea class="pc-input" rows="2"></textarea>`
+    : `<input class="pc-input" type="${kind === "date" ? "date" : "text"}">`;
+  const input = cell.querySelector(".pc-input");
+  input.value = kind === "date" ? (was.slice(0, 10) || "") : was;
+  input.focus();
+  if (input.select) input.select();
+  let closed = false;
+  const close = (text) => {
+    if (closed) return;
+    closed = true;
+    cell.classList.remove("pc-editing");
+    cell.innerHTML = `${esc(text)}<span class="pc-pen">✎</span>`;
+  };
+  const commit = async () => {
+    const now = input.value.trim();
+    if (closed) return;
+    if (!now || now === was) { close(was); return; }
+    close(now);
+    cell.classList.add("pc-saving");
+    const ok = await planEditField(key, now, was);
+    cell.classList.remove("pc-saving");
+    if (!ok) close(was);
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && kind !== "textarea") { ev.preventDefault(); commit(); }
+    if (ev.key === "Escape") { ev.preventDefault(); close(was); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+/* The edit goes to the SERVER, never only to the card: same draft, same writers, same
+ * transcript, so a later "change it back" still resolves and curl sees the same result. */
+async function planEditField(key, value, was) {
+  if (!agent.sessionId) return false;
+  const typing = appendTyping();
+  setAgentBusy(true);
+  try {
+    const res = await fetch(`${BZ_API_BASE()}/agents/plan/${encodeURIComponent(agent.sessionId)}`
+      + `/field?corpNo=${encodeURIComponent(CORP_NO)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    const j = await res.json().catch(() => ({}));
+    typing.remove();
+    if (!res.ok) throw apiError(j, res);
+    const data = (j && (j.data || j.payload)) || {};
+    agent.status = data.status || agent.status;
+    agent.draft = data.draftJson || agent.draft;
+    agent.lastData = data;
+    appendMsg("user", `${key.replace(/^.*:/, "")} → ${value}`, {});
+    await applyBizplayTurnToForm(data);
+    appendMsg("assistant", data.reply || T("Updated.", "수정했어요."));
+    ensureWizardSections();
+    showAllPreviews(true);
+    return true;
+  } catch (e) {
+    typing.remove();
+    appendMsg("assistant", "⚠ " + (e.message || T("Could not save that change.",
+      "수정을 저장하지 못했어요.")), { error: true });
+    return false;
+  } finally {
+    setAgentBusy(false);
+  }
 }
 
 function pcPerson(t) {
@@ -3115,6 +3224,8 @@ function ensureWizardSections() {
   if (detailsDone) {
     const days = dayCount(t.start, t.end);
     previewCard("details", T("Trip Details", "출장 상세"), "calendar",
+      pcRow(T("Start", "시작일"), t.start, "startDate|date") +
+      pcRow(T("End", "종료일"), t.end, "endDate|date") +
       pcRow(T("Period", "출장 기간"), `${t.start} → ${t.end} (${days}${T(days === 1 ? " day" : " days", "일")})`) +
       // The company form repeats Trip Period/국가 PER DAY — when the agent captured per-day
       // destinations, mirror that: one row per date with its country / city / detail.
@@ -3125,7 +3236,7 @@ function ensureWizardSections() {
       // Overseas region forms store the CITY (its id is what BizPlay saves); the country the
       // user picked/typed rides alongside for display, so the card never labels 도쿄 a country.
       : planDestCountry && planDestCountry.trim() && planDestCountry.trim() !== t.destination.trim()
-        ? pcRow(T("Country", "국가"), planDestCountry) + pcRow(T("City", "도시"), t.destination)
+        ? pcRow(T("Country", "국가"), planDestCountry) + pcRow(T("City", "도시"), t.destination, "destination")
         // Never caption the single-row fallback "Country": before the country is resolved
         // the value may be a CITY ("Osaka"), and the stale label read as a wrong detection.
         : pcRow(cfg.destLabel && cfg.destLabel !== "Country"
@@ -3133,9 +3244,9 @@ function ensureWizardSections() {
       // Optional 출장지 상세 (the period rows' memo) — shown once it exists, so an edit
       // like 'add destination detail of "floor 2"' is visible on the card, not invisible.
       (planDestDetail && planDestDetail.trim()
-        ? pcRow(T("Detail", "출장지 상세"), planDestDetail) : "") +
-      pcRow(T("Title", "제목"), t.title) +
-      pcRow(T("Content", "내용"), t.content));
+        ? pcRow(T("Detail", "출장지 상세"), planDestDetail, "destinationDetail") : "") +
+      pcRow(T("Title", "제목"), t.title, "basic:BASIC_TITLE") +
+      pcRow(T("Content", "내용"), t.content, "basic:BASIC_CONTENT|textarea"));
     const extras = extraDefsFromDom().filter((d) => d.value);
     if (!$("tripExtraSection").classList.contains("hidden") && !nextUnaskedExtra() && extras.length) {
       previewCard("extra", T("Additional Information", "추가 정보"), "cpu",
@@ -3145,7 +3256,10 @@ function ensureWizardSections() {
   // Travellers preview once confirmed (Done) — or when the agent resolved them. The card is
   // the provider's own traveller block: who they are, their cost centre, and their route with
   // distances — everything the user needs to decide whether this is right to file.
-  if (travelers.some((x) => x.name) && (wizTravDone || !(wizAsked && wizAsked.step === "travelers"))) {
+  // Shown as soon as anyone is on the list. It used to wait for the traveller step's "Done",
+  // so adding someone mid-question changed the data with nothing on screen to show it - there
+  // was no way to tell whether the second traveller had been added.
+  if (travelers.some((x) => x.name)) {
     previewCard("trav", T("Travellers", "출장자"), "users", travellerBlocks());
   }
 }
@@ -5405,6 +5519,7 @@ function askExtraField(d) {
  * sub-agent as the plan flow) — the hardcoded string is only the instant
  * placeholder / offline fallback, so questions never feel predefined. */
 async function askNaturally(el, labels) {
+  if (wizAskQuiet) return;   // the server's reply above IS the question for this turn
   const bubble = el && el.closest && el.closest(".msg")?.querySelector(".bubble");
   if (!bubble) return;
   try {
@@ -6124,6 +6239,7 @@ async function sendAgent(opts) {
     agent.status = data.status || null;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;   // full last turn (missingFields etc.) for panels/tests
+    wizAskQuiet = /\?\s*$/.test(String(data.reply || "").trim());
     // Track the server's country attribution 1:1 — including CLEARING it when the
     // destination changed to something unresolved (a stale 일본 next to "shibuya" lied).
     if (data.destinationCountry) planDestCountry = data.destinationCountry;
@@ -6187,9 +6303,10 @@ async function sendAgent(opts) {
       // list was updated in memory, but nothing re-rendered the card.
       if (data.uiRefresh && data.uiRefresh.length) {
         ensureWizardSections();
-        // A traveller coming off the plan changes what is filed, so the whole plan is
-        // re-presented for a look before the user decides to save.
-        if (data.uiRefresh.includes("travellers")) showAllPreviews(true);
+        // EVERY change is shown, not just a traveller coming off the plan: the user asked to
+        // see the plan again after each update. Cards whose content did not change are not
+        // re-appended (previewCard compares), so this adds a card only where something moved.
+        showAllPreviews(true);
       }
       // A picker still on screen when the agent has moved on is a question that no longer
       // stands — the user answered it in words. Retire it instead of inviting a second answer.
@@ -6990,6 +7107,12 @@ function bzChatApprovalCard() {
 const BZ_KIND_EN = { APPROVAL: "Approval", AGREE: "Agree", ACCEPT: "Receive", REFERENCE: "Reference" };
 
 function bzChatAskApprover() {
+  // Everything gathered, shown together, right before the approval line: this is the last
+  // moment to correct anything, and every row that can be edited is editable in place.
+  if (!bzApproval.lines.length) {
+    ensureWizardSections();
+    showAllPreviews(true);
+  }
   // Retire any earlier, unanswered approval chip rows — the question re-asks at
   // the bottom after corrections, and two active rows would conflict.
   document.querySelectorAll("#agentThread .choice-row.appr-row:not(.choice-done)")

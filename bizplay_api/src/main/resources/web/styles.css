@@ -1611,6 +1611,20 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .rp-add { border: 1px solid var(--line, #d8dce6); background: #fff; border-radius: 6px;
   width: 28px; height: 28px; cursor: pointer; font-size: 15px; line-height: 1; }
 .rp-add:hover { background: var(--hover, #f2f5fa); }
+/* Editable preview values: quiet until hovered, so a card still reads as a summary. */
+.pc-v.pc-edit { cursor: text; border-bottom: 1px dashed transparent; border-radius: 3px; }
+.pc-v.pc-edit:hover, .pc-v.pc-edit:focus-visible {
+  border-bottom-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  background: color-mix(in srgb, var(--primary) 5%, transparent); outline: none; }
+.pc-pen { margin-left: 6px; font-size: 11px; color: var(--muted, #667); opacity: 0; }
+.pc-v.pc-edit:hover .pc-pen, .pc-v.pc-edit:focus-visible .pc-pen { opacity: 1; }
+.pc-v.pc-editing { display: block; }
+.pc-input { width: 100%; font: inherit; padding: 3px 7px; border-radius: 6px;
+  border: 1px solid var(--primary); background: var(--card, #fff); color: inherit; }
+.pc-v.pc-saving { opacity: .5; }
+.prev-card.pc-past .pc-edit { pointer-events: none; border-bottom-color: transparent; }
+.prev-card.pc-past .pc-pen { display: none; }
+
 /* A superseded preview stays in the transcript as the record of what the plan looked
    like then - readable, but visibly not the current one. */
 .prev-card.pc-past { opacity: .62; }
