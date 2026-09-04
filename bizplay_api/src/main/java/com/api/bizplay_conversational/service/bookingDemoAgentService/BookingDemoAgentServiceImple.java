@@ -586,7 +586,7 @@ public class BookingDemoAgentServiceImple implements BookingDemoAgentService {
             } else if (lower.contains("모레")) {
                 plus = 2;
             } else if (lower.contains("내일") || lower.contains("tomorrow")
-                    || lower.matches(".*\btmr\b.*")) {
+                    || lower.matches(".*\\btmr\\b.*")) {
                 plus = 1;
             } else if (lower.contains("오늘") || lower.contains("today")) {
                 plus = 0;

@@ -56,6 +56,14 @@ class BizplaySettlementStructureTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    /**
+     * The corp gate, stubbed: these tests are about the settlement body, not about registering a
+     * corp, so the number passes through unchanged. The real one registers unknown 사업자번호 and
+     * refuses unusable ones (CorpProvisioningService).
+     */
+    private static final com.api.bizplay_conversational.service.corpProvisioningService
+            .CorpProvisioningService CORP_PASSTHROUGH = (corpNo, token) -> corpNo;
+
     @Test
     void settlementDraftMatchesTheCapturedSampleStructure() throws Exception {
         JsonNode sample = mapper.readTree(Files.readString(SAMPLE)).get(0);
@@ -87,7 +95,7 @@ class BizplaySettlementStructureTest {
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // --- drive the flow --------------------------------------------------------
         String sessionId = null;
@@ -178,7 +186,7 @@ class BizplaySettlementStructureTest {
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         String sessionId = null;
         for (String msg : new String[]{"2026-08-01 ~ 2026-08-31", "settle-plan:9001",
@@ -242,7 +250,7 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("161");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         BizplayPlanAgentRequest req = new BizplayPlanAgentRequest();
         req.setCorpNo("1234567890");
@@ -316,7 +324,7 @@ class BizplaySettlementStructureTest {
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // --- turn 1: rich message fills slots, but LISTS the plans (no auto-pick) ----
         BizplayPlanAgentRequest t1 = new BizplayPlanAgentRequest();
@@ -398,7 +406,7 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("161");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // import a plan so a draft exists
         String sessionId = null;
@@ -481,7 +489,7 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("30447");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // "submit" with no draft yet → NOT a submit (no provider call)
         BizplayPlanAgentRequest early = new BizplayPlanAgentRequest();

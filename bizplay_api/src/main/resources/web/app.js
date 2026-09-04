@@ -3082,7 +3082,8 @@ function startPcEdit(cell) {
   const kind = cell.dataset.kind || "text";
   const was = cell.textContent.replace(/✎$/, "").trim();
   cell.classList.add("pc-editing");
-  if (kind === "people" || kind === "route") { startPcPicker(cell, kind, key, was); return; }
+  // Anything chosen from a LIST goes to the picker: a person, a route, a vehicle.
+  if (kind === "people" || kind === "route" || kind === "transport") { startPcPicker(cell, kind, key, was); return; }
   cell.innerHTML = kind === "textarea"
     ? `<textarea class="pc-input" rows="2"></textarea>`
     : `<input class="pc-input" type="${kind === "date" ? "date" : "text"}">`;
@@ -3118,10 +3119,40 @@ function startPcEdit(cell) {
  * corporation's registered destinations for a route. Same commit path as any other
  * inline edit - the server writes it, the card redraws from what came back. */
 async function startPcPicker(cell, kind, key, was) {
+  const TRANSPORT_OPTS = transportOptions();
   const close = (text) => {
     cell.classList.remove("pc-editing");
     cell.innerHTML = `${esc(text)}<span class="pc-pen">✎</span>`;
   };
+  if (kind === "transport") {
+    // The vehicle is a short, fixed list — the same enum the server accepts — so it is picked,
+    // never typed. Changing it here rewrites the transport on EVERY leg of the route, which is
+    // what the agent does when you say it in words.
+    const opts = TRANSPORT_OPTS.map(([code, label]) =>
+      `<option value="${esc(code)}"${label === was ? " selected" : ""}>${esc(label)}</option>`).join("");
+    cell.innerHTML = `<select class="pc-input pc-pick">${opts}</select>`;
+    const sel = cell.querySelector("select");
+    sel.focus();
+    let done = false;
+    const commit = async () => {
+      if (done) return;
+      done = true;
+      const code = sel.value;
+      const label = (TRANSPORT_OPTS.find((o) => o[0] === code) || [code, code])[1];
+      close(label);
+      if (label === was) return;
+      cell.classList.add("pc-saving");
+      const ok = await planEditField(key, code, was);
+      cell.classList.remove("pc-saving");
+      if (!ok) close(was);
+    };
+    sel.addEventListener("change", commit);
+    sel.addEventListener("blur", commit);
+    sel.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") { done = true; close(was); }
+    });
+    return;
+  }
   if (kind === "people") {
     try { await bzLoadRoster(); } catch (e) { /* fall through to whatever we have */ }
     const opts = (bzApproval.roster || []).map((u) =>
@@ -3336,16 +3367,23 @@ function docCostCentre(doc) {
  * traveller's identity and cost centre, the 이동경로(출장) summary, the section table and the
  * total mileage. Routes come from that traveller's own document, so what is previewed is what
  * will be filed. Sections stay out until the route is known. */
+/* The provider's transportType enum with its labels — the traveller card prints from it and the
+ * inline picker offers exactly these, so a row can never be edited into a value the server rejects. */
+function transportOptions() {
+  return [["PUBLIC_AIRLINE", T("Flight", "항공")], ["PUBLIC_TRAIN", T("Train", "열차")],
+    ["PUBLIC_BUS", T("Bus", "버스")], ["PUBLIC", T("Flight/Train/Bus", "대중교통")],
+    ["TAXI", T("Taxi", "택시")], ["RENTAL_CAR", T("Rental car", "렌터카")],
+    ["CORP_CAR", T("Company car", "법인차량")], ["PRIVATE", T("Private vehicle", "자차")],
+    ["CARPOOL", T("Carpool", "카풀")]];
+}
+
 function travellerBlocks() {
+  const TRANSPORT_OPTS = transportOptions();
   const docs = (agent.draft && agent.draft.length) ? agent.draft : [];
   // The server says whether the vehicle on the legs is the paper's default (nobody named one)
   // or the user's own answer - the table shows which, instead of presenting a default as a choice.
   const transportDefaulted = !!(agent.lastData && agent.lastData.transportDefaulted);
-  const TRANSPORT = { PUBLIC_AIRLINE: T("Flight", "항공"), PUBLIC_TRAIN: T("Train", "열차"),
-    PUBLIC_BUS: T("Bus", "버스"), PUBLIC: T("Flight/Train/Bus", "대중교통"),
-    TAXI: T("Taxi", "택시"), RENTAL_CAR: T("Rental car", "렌터카"),
-    CORP_CAR: T("Company car", "법인차량"), PRIVATE: T("Private vehicle", "자차"),
-    CARPOOL: T("Carpool", "카풀") };
+  const TRANSPORT = Object.fromEntries(TRANSPORT_OPTS);
   const place = (addr) => String(addr || "").split(" ").slice(0, 3).join(" ") || "—";
   const row = (k, v, edit) => (v ? pcRow(k, v, edit) : "");
   return travelers.filter((x) => x.name).map((t, i) => {
@@ -3375,6 +3413,10 @@ function travellerBlocks() {
         ${row(T("Cost centre", "코스트센터"), docCostCentre(doc))}
         ${row(T("Travel route", "이동경로(출장)"), summary || T("not set yet", "미설정"),
               `route:${t.name}|route`)}
+        ${legs.length ? row(T("Transport", "교통수단"),
+              (TRANSPORT[legs[0].transportType] || legs[0].transportType || "—")
+                + (transportDefaulted ? T(" (default)", " (기본값)") : ""),
+              "transportType|transport") : ""}
         ${table}
       </div>`;
   }).join("");

@@ -249,6 +249,10 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             session = resolveSession(request);
         }
         ObjectNode state = loadState(session);
+        // A one-word answer keeps the conversation in its language (see the overload), and the
+        // save flow reads state.lang later, so record what this turn decided.
+        ko = koreanConversation(message, state);
+        state.put("lang", ko ? "ko" : "en");
         ArrayNode documents = documents(session);
         // The NET turn signature: what the draft (and the traveller/place slots) looked like when
         // this turn began. The mapper echoes history values every turn — overwriting the composed
@@ -779,6 +783,15 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // TURN-START dates so a mapper that also fires cannot double-shift.
         boolean dateEdited = backfillDateEdit(documents, turnStartDoc, reply,
                 stripChatContext(turnText), ko);
+        // "change Transport to flight" — the legs are rewritten by the enrichment below; the
+        // sentence is what tells the traveller it happened.
+        boolean transportChangedTurn = state.hasNonNull("transportChanged");
+        if (state.hasNonNull("transportChanged")) {
+            String now = state.path("transportChanged").asText("");
+            state.remove("transportChanged");
+            reply.append(t(ko, "Transport changed to " + transportLabel(now, false) + ". ",
+                    "교통수단을 " + withRo(transportLabel(now, true)) + " 바꿨어요. "));
+        }
         // Per-day destinations: the company form gives EVERY period row its own
         // country/city ("첫날은 랑바레네, 둘째 날은 티메리") — captured here whenever the
         // message pairs days with resolvable places.
@@ -877,7 +890,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 }
             }
         }
-        if (destBackfilled || dateEdited
+        if (destBackfilled || dateEdited || transportChangedTurn
                 || !state.path("destination").asText("").equals(destAtTurnStart)) {
             // The turn DID change the destination — by the backfill OR by the mapper itself.
             // Keeping the mapper's clarify would bury that: on "목적지를 도쿄로 바꿔줘" it
@@ -1849,6 +1862,30 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return hangul > 0 && hangul * 3 > latin;
     }
 
+    /**
+     * The same judgement, but a SHORT answer never changes the language of the conversation:
+     * "car", "KTX", "solo" carry no language of their own, and letting them flip a Korean chat
+     * into English mid-form is jarring — a one-word answer to the transport question did it.
+     */
+    private boolean koreanConversation(String message, ObjectNode state) {
+        // The misaligned-turn retry prepends an English note to the traveller's own message;
+        // counting it made every retried Korean turn answer in English.
+        message = message.replaceFirst("(?s)^\\(Note for this attempt[^)]*\\)\\s*", "");
+        if (message.contains("Respond in Korean only")) {
+            return true;
+        }
+        if (message.contains("Respond in English only")) {
+            return false;
+        }
+        String stored = state == null ? null : state.path("lang").asText(null);
+        boolean hasHangul = message.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+        long letters = message.codePoints().filter(Character::isAlphabetic).count();
+        if (stored != null && !hasHangul && letters <= 12) {
+            return "ko".equals(stored);
+        }
+        return koreanConversation(message);
+    }
+
     /** Reply fragment in the conversation's language — never mix the two in one turn. */
     private static String t(boolean ko, String en, String kr) {
         return ko ? kr : en;
@@ -2484,6 +2521,39 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         log.info("Destination '{}' applied deterministically (was '{}').", place, oldDest);
     }
 
+    /** The provider enum in the words people use for it — the reply says "항공", not PUBLIC_AIRLINE. */
+    /**
+     * "…(으)로" is how a form prints it, not how a person says it: 항공+으로, 열차+로. The particle
+     * follows the last syllable — a final consonant takes 으로, a bare vowel takes 로.
+     */
+    private String withRo(String word) {
+        if (word == null || word.isBlank()) {
+            return "";
+        }
+        char last = word.charAt(word.length() - 1);
+        if (last < 0xAC00 || last > 0xD7A3) {
+            return word + "(으)로";   // not hangul (an enum fell through) - stay neutral
+        }
+        int finalConsonant = (last - 0xAC00) % 28;
+        // ㄹ is the exception: 카풀로, not 카풀으로.
+        return word + (finalConsonant == 0 || finalConsonant == 8 ? "로" : "으로");
+    }
+
+    private String transportLabel(String code, boolean ko) {
+        return switch (code == null ? "" : code) {
+            case "PUBLIC_AIRLINE" -> t(ko, "Flight", "항공");
+            case "PUBLIC_TRAIN" -> t(ko, "Train", "열차");
+            case "PUBLIC_BUS" -> t(ko, "Bus", "버스");
+            case "PUBLIC" -> t(ko, "public transport", "대중교통");
+            case "TAXI" -> t(ko, "Taxi", "택시");
+            case "RENTAL_CAR" -> t(ko, "Rental car", "렌터카");
+            case "CORP_CAR" -> t(ko, "Company car", "법인차량");
+            case "PRIVATE" -> t(ko, "Private vehicle", "자차");
+            case "CARPOOL" -> t(ko, "Carpool", "카풀");
+            default -> code;
+        };
+    }
+
     /**
      * Is this message the user saying "go ahead and file it"? Decided by the slot-filler LLM with
      * the recent turns as context — not a phrase list, which is exactly what kept failing here:
@@ -2517,19 +2587,25 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // Latin words need WORD BOUNDARIES: "bus" matched inside "business trip" (the chat
         // sends a context preamble that says exactly that), and every flight became a bus.
         String[][] map = {
-                {"비행기|항공|플라이트|\bflight\b|\bairplane\b|\bair\b|\bfly\b|\bflying\b|\bflew\b", "PUBLIC_AIRLINE"},
-                {"\bKTX\b|\bSRT\b|기차|열차|\btrain\b", "PUBLIC_TRAIN"},
-                {"고속버스|버스|\bbus\b", "PUBLIC_BUS"},
-                {"렌터카|렌트카|\brental\b", "RENTAL_CAR"},
+                {"비행기|항공|플라이트|\\bflight\\b|\\bairplane\\b|\\bair\\b|\\bfly\\b|\\bflying\\b|\\bflew\\b", "PUBLIC_AIRLINE"},
+                {"\\bKTX\\b|\\bSRT\\b|기차|열차|\\btrain\\b", "PUBLIC_TRAIN"},
+                {"고속버스|버스|\\bbus\\b", "PUBLIC_BUS"},
+                {"렌터카|렌트카|\\brental\\b", "RENTAL_CAR"},
                 {"법인차|법인 ?차량", "CORP_CAR"},
-                {"택시|\btaxi\b", "TAXI"},
-                {"자차|자가용|내 ?차|\bmy car\b|\bdrive\b", "PRIVATE"},
+                {"택시|\\btaxi\\b", "TAXI"},
+                {"자차|자가용|내 ?차|\\bmy car\\b|\\bdrive\\b", "PRIVATE"},
                 {"대중교통", "PUBLIC"},
         };
         for (String[] m : map) {
             if (java.util.regex.Pattern.compile("(?iu)(" + m[0] + ")").matcher(text).find()) {
                 if (!m[1].equals(state.path("transportType").asText(""))) {
+                    String previous = state.path("transportType").asText("");
                     state.put("transportType", m[1]);
+                    if (!previous.isBlank()) {
+                        // Replacing an answer is a CHANGE the traveller must see confirmed —
+                        // it used to be applied silently while the reply answered something else.
+                        state.put("transportChanged", m[1]);
+                    }
                     log.info("Transport type set to {} from the user's words.", m[1]);
                 }
                 return;
@@ -3326,10 +3402,13 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // has to see this edit even though no chat turn produced it.
         appendTurn(session, "user", "[UI] " + what + " = " + v);
         // Clearing a field is not "changed to nothing" - say what actually happened.
+        // The enum is how the form stores it; the confirmation says what the card shows.
+        String shown = "transportType".equals(key) ? transportLabel(
+                v.toUpperCase(java.util.Locale.ROOT), ko) : v;
         String reply = v.isBlank()
                 ? t(ko, what + " cleared.", what + " 항목을 비웠어요.")
-                : t(ko, what + " updated: " + v + ".",
-                        what + "을(를) " + v + "(으)로 바꿔어요.");
+                : t(ko, what + " updated: " + shown + ".",
+                        what + "을(를) " + withRo(shown) + " 바꿨어요.");
         appendTurn(session, "assistant", reply);
         ConversationalAgentSession saved = sessionRepo.save(session);
         log.info("[EDIT] {} = '{}' on session {}", key, truncateForLog(v), sessionId);
