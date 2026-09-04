@@ -78,6 +78,27 @@ public class BizplayEndpoints {
     /** ⑧ Optional additional receipt detail (ReceiptEtcDto): PATCH {receiptId}. */
     private String receiptEtcDetail = "/api/v2/receipt-etc/{receiptId}";
 
+
+    /** Edit an already-registered 기타증빙 (base + detail in one body): PATCH {receiptId}. */
+    private String etcCardUpdate = "/api/v2/receipt/etc-card/{receiptId}";
+
+    /** 통화코드 master (nation / currencyCodeName / name): GET, no params. */
+    private String currencyCodes = "/api/v2/currency-code/combo";
+
+    /** 환율 단건 (캐시): GET ?businessType=&fromCurrencyCode=&standardDate=&noticeTimes=. */
+    private String exchangeRate = "/api/v2/exchange-rate/cached";
+
+    /** 환율 상세 — its currencyName carries the QUOTE UNIT, e.g. "일본 JPY (100)". */
+    private String exchangeRateDetail = "/api/v2/cardmis-api/exchange-rate/{currencyCode}";
+
+    /** 규정조회: POST the trip + expense facts, get the 용도 policy back (한도/지급구분/초과사유 필요 여부). */
+    private String policyLimit = "/api/v2/bstr/policy/limit";
+
+    /** Which 용도 a 출장비 규정 is attached to, per TranKind type: GET {tranKindType}. */
+    private String policyTranKinds = "/api/v2/bstr/policy/trankindlist/{tranKindType}";
+
+    /** 세금코드 master (id, taxCode, taxName, deductionStatus, acctSubjectId): GET, no params. */
+    private String taxCodeList = "/api/v2/basic/tax-code";
     /** TranKind master (id → name/type): GET, no params. */
     private String trankindList = "/api/v2/trankind/list";
 

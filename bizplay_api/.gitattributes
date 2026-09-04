@@ -1,2 +1,19 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+
+# Byte-for-byte fixtures. Git's own text detection only looks for NUL bytes, and the
+# generated PDFs under src/test/data have none - so it "helpfully" checked them out with
+# CRLF, which shifts every xref offset and makes PDFBox (and BizPlay's filebox) reject the
+# file: "Missing root object specification in trailer".
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.xlsx binary
+*.xls binary
+*.zip binary
+*.jar binary
+*.woff binary
+*.woff2 binary

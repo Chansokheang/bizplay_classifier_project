@@ -1622,6 +1622,11 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .pc-input { width: 100%; font: inherit; padding: 3px 7px; border-radius: 6px;
   border: 1px solid var(--primary); background: var(--card, #fff); color: inherit; }
 .pc-v.pc-saving { opacity: .5; }
+.pc-route { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pc-route .pc-input { flex: 1 1 130px; min-width: 0; }
+.pc-route .btn { padding: 3px 12px; font-size: 12px; }
+.pc-cancel { border: 0; background: none; cursor: pointer; color: var(--muted, #667); font-size: 14px; line-height: 1; padding: 2px 4px; }
+select.pc-input { cursor: pointer; }
 .prev-card.pc-past .pc-edit { pointer-events: none; border-bottom-color: transparent; }
 .prev-card.pc-past .pc-pen { display: none; }
 
@@ -1631,3 +1636,20 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .prev-card.pc-past .pc-head { color: var(--muted, #667); }
 .rt-none { font-size: 12px; color: var(--muted, #667); padding: 4px 0 2px; }
 .rt-block .rp-who { margin: 2px 0 8px; }
+
+/* Editable rows on the settlement expense card — same affordance as the plan preview: the pencil
+   appears on hover, the row turns into an input (or a dropdown for 교통수단/좌석) in place. */
+.rc-f.rc-edit .rc-v { cursor: text; border-bottom: 1px dashed transparent; border-radius: 3px; }
+.rc-f.rc-edit:hover .rc-v { border-bottom-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+.rc-pen { margin-left: 6px; font-size: 11px; color: var(--muted, #667); opacity: 0;
+  border: 0; background: none; cursor: pointer; padding: 0 2px; line-height: 1; }
+.rc-f.rc-edit:hover .rc-pen, .rc-f.rc-edit:focus-within .rc-pen { opacity: 1; }
+.rc-input, .rc-select { font: inherit; padding: 2px 6px; border-radius: 6px; min-width: 110px;
+  border: 1px solid var(--primary); background: var(--card, #fff); color: inherit; text-align: left; }
+select.rc-select { cursor: pointer; }
+.rc-ok, .rc-cancel { border: 0; background: none; cursor: pointer; font-size: 13px; line-height: 1;
+  padding: 2px 4px; }
+.rc-ok { color: var(--primary); }
+.rc-cancel { color: var(--muted, #667); }
+.prev-card.pc-past .rc-pen { display: none; }
+.prev-card.pc-past .rc-f.rc-edit .rc-v { border-bottom-color: transparent; }

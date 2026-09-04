@@ -36,4 +36,11 @@ public class BizplayPlanAgentRequest {
 
     /** Optional 출장지 상세 (Trip Destination Details) — saved as the period row's selectionMemo. */
     private String destinationDetail;
+
+    /**
+     * A title the USER typed into the form before/while chatting. It is a VALUE, not context:
+     * without it the freshly loaded document has no title and the agent composes one, which is
+     * how a typed title ended up replaced by "9월 8일부터 10일까지 오사카 해외출장".
+     */
+    private String title;
 }

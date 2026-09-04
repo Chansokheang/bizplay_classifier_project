@@ -667,6 +667,141 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         }
     }
 
+
+    @Override
+    public JsonNode getPolicyLimit(JsonNode request, String token) {
+        if (request == null || !request.isObject()) {
+            throw new IllegalArgumentException("A policy-limit request body is required.");
+        }
+        String url = buildUrl(endpoints.getPolicyLimit());
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(request))
+                    .retrieve()
+                    .body(String.class);
+            // An EMPTY 200 body means "no 규정 for this 용도" - a real answer. Everything downstream
+            // treats null as "no policy", so the expense is simply registered without a 규정금액.
+            if (response == null || response.isBlank()) {
+                log.info("[POLICY] no 규정 for tranKind {} ({})", request.path("tranKindId").asText("?"),
+                        request.path("tranKindType").asText("?"));
+                return null;
+            }
+            JsonNode policy = objectMapper.readTree(response);
+            log.info("[POLICY] tranKind {} -> id={} {} limit={} {}",
+                    request.path("tranKindId").asText("?"), policy.path("id").asText("?"),
+                    policy.path("bstrPayClassType").asText("?"), policy.path("limitAmount").asText("?"),
+                    policy.path("currencyCode").asText(""));
+            return policy;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // A missing/!matching policy must never block the registration the user asked for.
+            log.warn("규정조회 failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            return null;
+        } catch (Exception e) {
+            log.warn("규정조회 failed: {}", rootMessage(e));
+            return null;
+        }
+    }
+
+    @Override
+    public JsonNode getTaxCodes(String token) {
+        return getCached("taxcodes", buildUrl(endpoints.getTaxCodeList()), token);
+    }
+
+    @Override
+    public JsonNode getPolicyTranKinds(String tranKindType, String token) {
+        if (tranKindType == null || tranKindType.isBlank()) {
+            throw new IllegalArgumentException("tranKindType is required.");
+        }
+        return getCached("policy-trankinds-" + tranKindType,
+                buildUrl(endpoints.getPolicyTranKinds(), "tranKindType", tranKindType), token);
+    }
+
+
+    @Override
+    public String patchEtcCardReceipt(long receiptId, JsonNode body, String token) {
+        if (receiptId <= 0 || body == null || !body.isObject()) {
+            throw new IllegalArgumentException("A receipt id and an update body are required.");
+        }
+        String url = buildUrl(endpoints.getEtcCardUpdate(), "receiptId", receiptId);
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.patch()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(body))
+                    .retrieve()
+                    .body(String.class);
+            log.info("BizPlay etc-card receipt {} updated.", receiptId);
+            return response == null ? "" : response;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("etc-card update failed for {}: HTTP {} {}", receiptId,
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the receipt edit (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("etc-card update failed for {}: {}", receiptId, e.getMessage());
+            throw new IllegalStateException("BizPlay receipt edit failed: " + rootMessage(e));
+        }
+    }
+
+
+    @Override
+    public JsonNode getCurrencyCodes(String token) {
+        return getCached("currency-codes", buildUrl(endpoints.getCurrencyCodes()), token);
+    }
+
+    @Override
+    public JsonNode getExchangeRate(String fromCurrencyCode, String standardDate, String token) {
+        if (fromCurrencyCode == null || fromCurrencyCode.isBlank() || standardDate == null) {
+            throw new IllegalArgumentException("A currency code and a date are required.");
+        }
+        String url = buildUrl(endpoints.getExchangeRate())
+                + "?businessType=BSTR&fromCurrencyCode=" + fromCurrencyCode.trim().toUpperCase(java.util.Locale.ROOT)
+                + "&standardDate=" + standardDate + "&noticeTimes=1";
+        try {
+            // Cached per currency+day: a published rate never changes afterwards.
+            return getCached("fx-" + fromCurrencyCode + "-" + standardDate, url, token);
+        } catch (Exception e) {
+            // A day with no published rate answers 500 — not an error we can fix, and the caller
+            // simply tries the day before. Anything louder would make a normal case look broken.
+            log.info("No 환율 for {} on {} ({})", fromCurrencyCode, standardDate, rootMessage(e));
+            return null;
+        }
+    }
+
+    @Override
+    public int getCurrencyUnit(String fromCurrencyCode, String standardDate, String token) {
+        String code = fromCurrencyCode == null ? "" : fromCurrencyCode.trim().toUpperCase(java.util.Locale.ROOT);
+        if (code.isBlank() || "KRW".equals(code)) {
+            return 1;
+        }
+        String url = buildUrl(endpoints.getExchangeRateDetail(), "currencyCode", code)
+                + "?standardDate=" + standardDate + "&noticeTimes=1";
+        try {
+            JsonNode detail = getCached("fx-unit-" + code + "-" + standardDate, url, token);
+            String name = detail == null ? "" : detail.path("currencyName").asText("");
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\((\\d+)\\)").matcher(name);
+            if (m.find()) {
+                int unit = Integer.parseInt(m.group(1));
+                log.info("[FX] {} is quoted per {} ({})", code, unit, name);
+                return unit > 0 ? unit : 1;
+            }
+            return 1;
+        } catch (Exception e) {
+            log.info("No rate detail for {} ({}) — treating the quote as per 1.", code, rootMessage(e));
+            return 1;
+        }
+    }
+
     /** Per-request token wins; the configured dev token is a local-testing fallback only. */
     private String resolveToken(String token) {
         if (token != null && !token.isBlank()) {

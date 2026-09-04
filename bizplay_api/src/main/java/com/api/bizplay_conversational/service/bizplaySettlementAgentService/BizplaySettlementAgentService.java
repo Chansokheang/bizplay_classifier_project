@@ -41,6 +41,14 @@ public interface BizplaySettlementAgentService {
      *                      receipt via /receipt-etc/{receiptId}. Null/empty = skip that step.
      * @param image         the receipt image bytes (required).
      */
+    /**
+     * Register the expense the CHAT already collected, with the receipt image the client just
+     * attached. Every 기타증빙 must carry its 증빙 image, and a file cannot ride a chat turn - so
+     * the conversation holds the finished expense and this call supplies the missing file.
+     */
+    BizplayPlanAgentResponse registerHeldExpense(String sessionId, String corpNo,
+                                                 byte[] image, String filename, String bizplayToken);
+
     BizplayPlanAgentResponse addManualExpense(String sessionId, String corpNo, JsonNode expenseFields,
                                               JsonNode detail, byte[] image, String filename, String bizplayToken);
 
@@ -78,4 +86,12 @@ public interface BizplaySettlementAgentService {
      * view. Full detail comes from {@link #getSession}.
      */
     java.util.List<java.util.Map<String, Object>> listSettlements(String corpNo);
+
+    /**
+     * Correct one field of an expense already on the settlement (from the preview card). The edit is
+     * applied to the RECEIPT in BizPlay and the settlement line is then rebuilt from the server's
+     * copy, with 규정조회 and the 세금코드 re-resolved.
+     */
+    BizplayPlanAgentResponse editExpenseField(String sessionId, String corpNo, long receiptId,
+                                              String key, String value, String bizplayToken);
 }

@@ -3,6 +3,8 @@ Generate test PDFs for the PDF sub-agent and the multi-file /trip-plan flow.
 
 No third-party deps: writes minimal but valid single-page PDFs (Helvetica text)
 that Apache PDFBox can extract text from.
+Byte offsets are exact, so these files must never be line-ending converted
+(.gitattributes marks *.pdf binary).
 
 Produces three PDFs:
   1. toronto_booking.pdf - a flight booking that ALIGNS with the Toronto message
@@ -45,7 +47,11 @@ def make_pdf(path: str, lines: list[str]) -> None:
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
 
     # Assemble the file with a correct xref table.
-    out = bytearray(b"%PDF-1.4\n")
+    # The second line is the conventional binary marker: four high bytes that make every
+    # tool - git's own text detection included - treat the file as binary. Without it git
+    # checked these fixtures out with CRLF on Windows, which shifts every xref offset below
+    # and makes PDFBox reject the file: 'Missing root object specification in trailer'.
+    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = []
     for i, body in enumerate(objects, start=1):
         offsets.append(len(out))

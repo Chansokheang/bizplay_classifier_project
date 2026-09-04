@@ -105,6 +105,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * three sources (the static user seed, the user's answers, and endpoint responses) so nothing
      * is ever asked twice. Slot descriptors below are what the follow-up extractor understands.
      */
+    /** Write the title onto every document of the settlement draft. */
+    private void applyDocumentTitle(ArrayNode documents, String title) {
+        for (JsonNode d : documents) {
+            if (d.isObject()) {
+                ((ObjectNode) d).put("title", title);
+            }
+        }
+    }
+
     private static final java.util.Map<String, String> SLOT_MEANINGS = java.util.Map.of(
             "startDate", "the trip-search period START date (ISO yyyy-MM-dd)",
             "endDate", "the trip-search period END date (ISO yyyy-MM-dd)",
@@ -129,6 +138,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     + "'register it', '등록해줘'), "
                     + "expense-cancel (cancels/drops the expense being entered). "
                     + "Omit unless the message clearly asks for one of these",
+            // The document's own title. Composed by default ("출장정산서_테테 - 김충북"),
+            // but a title the USER states wins - theirs is the one that gets filed.
+            "documentTitle", "the TITLE the user wants ON THIS SETTLEMENT DOCUMENT, when "
+                    + "they state one (\"제목을 ...으로\", \"title it ...\"). Copy just the title "
+                    + "text, without quotes. Omit the field unless they are naming the "
+                    + "document - a trip, a place or an expense mentioned in passing is not "
+                    + "a title",
             "browseReceipts", "ONLY when the user asks to SEE/BROWSE/LIST their own card "
                     + "receipts (영수증 보여줘/조회/목록, show my receipts) — NOT when attaching, "
                     + "cancelling or registering an expense: answer NOT_ISSUED ONLY if the user "
@@ -156,13 +172,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private final java.util.concurrent.Executor agentTaskExecutor;
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
     private final ObjectMapper objectMapper;
+    private final com.api.bizplay_conversational.service.corpProvisioningService.CorpProvisioningService corpProvisioningService;
 
     @Override
     @Transactional
     public BizplayPlanAgentResponse chat(BizplayPlanAgentRequest request, String bizplayToken) {
-        if (request.getCorpNo() == null || request.getCorpNo().isBlank()) {
-            throw new IllegalArgumentException("corpNo is required.");
-        }
+        // BizPlay sends the business number of whoever is logged in, and a session hangs off a
+        // corp row. Unknown-but-valid numbers are registered here on first use; unusable ones are
+        // refused with a reason instead of failing later as an unhandled FK violation (500).
+        request.setCorpNo(corpProvisioningService.requireUsableCorpNo(request.getCorpNo(), bizplayToken));
         // Settlement demo runs as ONE static user: travelerId == corpUserId == the configured
         // default, regardless of what the request carries. Seeded into the slot bag on load.
         request.setCorpUserId(bizplayProperties.getDefaultCorpUserId());
@@ -170,7 +188,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (rawMessage.isBlank()) {
             throw new IllegalArgumentException("message is required.");
         }
-        boolean ko = koreanConversation(rawMessage);
+        boolean ko = koreanConversation(rawMessage);   // provisional; refined once the session loads
         // The language marker has done its job — drop it before anything reads the message as
         // content (slot extraction, plan hints, the stage tokens), or "Respond in Korean only"
         // ends up being searched for as a trip name. Reassigned when the LLM judges a chip-action
@@ -229,10 +247,45 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             session = resolveSession(request);
         }
         ObjectNode state = loadState(session);
+        // A one-word answer must not flip the conversation's language (see the overload). `ko`
+        // above is captured by the parallel lambdas and so cannot be reassigned; from here on the
+        // turn speaks whatever THIS decides, and the session remembers it.
+        final boolean koTurn = koreanConversation(rawMessage, state);
+        state.put("lang", koTurn ? "ko" : "en");
         seedStaticUser(state);                              // travelerId/corpUserId slots = static default
         ArrayNode documents = documents(session);
         if (!machineToken) {
             gatherIntoSlots(state, message, extractedSlots);   // deterministic parse + merge LLM extraction
+            // A title the user states is THEIR document's title - it wins over the composed
+            // default and survives every later turn (the import stamps a default one, and
+            // nothing used to read a title out of the conversation at all).
+            String wantedTitle = extractedSlots.path("documentTitle").asText("").trim();
+            if (!wantedTitle.isBlank()) {
+                slots(state).put("documentTitle", wantedTitle);
+                applyDocumentTitle(documents, wantedTitle);
+                session.setDraftJson(documents);
+                saveState(session, state);
+                sessionRepo.save(session);
+                log.info("[TITLE] settlement document titled by the user: '{}'", wantedTitle);
+                // When the title was ALL the turn asked for, say so and stop - otherwise the
+                // change lands silently under the next question and the user cannot tell it
+                // took. A turn that also carries dates, a plan hint or an action just
+                // continues; the title is applied either way.
+                boolean titleOnly = true;
+                for (String other : new String[]{"startDate", "endDate", "cardTypes",
+                        "planHint", "flowAction", "browseReceipts", "pendingPlans"}) {
+                    if (!extractedSlots.path(other).asText("").isBlank()) {
+                        titleOnly = false;
+                        break;
+                    }
+                }
+                if (titleOnly && !documents.isEmpty()) {
+                    return simpleTurn(session, state, message,
+                            t(koTurn, "Titled \"" + wantedTitle + "\".",
+                                    "제목을 \"" + wantedTitle + "\"(으)로 바꿠어요."),
+                            "TITLE_SET", null);
+                }
+            }
             // PROMPT PARITY with the chips: the LLM reads the same actions the UI chips send as
             // machine tokens out of the user's own words, so "add manual" / "다 붙였어" work typed
             // exactly like a click. The token is PREPENDED (the words stay in the message, and in
@@ -245,7 +298,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             if ("manual-expense".equals(flowAction)
                     && "AWAIT_TRANKIND".equals(state.path("stage").asText(""))
                     && (matchTranKindByName(state, message) != null
-                        || pickTranKindSemantic(state, message, ko) != null)) {
+                        || pickTranKindSemantic(state, message, koTurn) != null)) {
                 flowAction = "";
             }
             // Same precedence for a message that carries the expense ITSELF (a date, an
@@ -253,6 +306,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // extracts those details and asks only what is missing. Re-opening the empty
             // entry form here would throw everything the user just typed away.
             if ("manual-expense".equals(flowAction) && message.matches(".*\\d.*")) {
+                flowAction = "";
+            }
+            // Already building one: "등록해줘" / "register it" means REGISTER THIS RECEIPT. Judged
+            // as manual-expense it re-opened the entry flow and threw the half-built receipt back
+            // to the card-type question, answers and all.
+            if ("manual-expense".equals(flowAction) && pendingExpense(state).size() > 0) {
+                log.info("[SETTLE] '{}' judged manual-expense while a receipt is already being"
+                        + " built — treated as an answer to the open question instead.",
+                        truncate(message, 40));
                 flowAction = "";
             }
             if (java.util.Set.of("manual-expense", "receipts-done", "expense-confirm",
@@ -279,7 +341,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             browse = "";
         }
         if (java.util.Set.of("NOT_ISSUED", "NOT_DRAFTED", "ISSUED").contains(browse)) {
-            String browseReply = t(ko,
+            String browseReply = t(koTurn,
                     "Here are your receipts — use the calendar and filters to browse them. ",
                     "영수증 목록이에요 — 달력과 필터로 조회할 수 있어요. ");
             appendTurn(session, "user", message);
@@ -310,7 +372,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             List<String> pendingAgents = new ArrayList<>();
             List<TripPlanAgentResponse.PendingChoice> pendingChips = pendingPlans(
                     state, Long.parseLong(request.getCorpUserId().trim()), bizplayToken,
-                    pendingAgents, pendingReply, ko);
+                    pendingAgents, pendingReply, koTurn);
             appendTurn(session, "user", message);
             appendTurn(session, "assistant", pendingReply.toString());
             saveState(session, state);
@@ -326,6 +388,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .build();
         }
 
+        // A finished receipt is parked waiting for its image file. That attach IS the open
+        // question, so it outranks every judge below - the draft Q&A, and the "wrap it up"
+        // judge that used to read a typed "register" as finish-the-settlement and silently
+        // abandon the receipt. The file can only ride the multipart endpoint, so this turn
+        // never registers anything itself; it tells the client what to do with the picker.
+        if (state.path("heldExpense").isObject()
+                && (!machineToken || message.matches("(?i)\\s*expense-(confirm|cancel).*"))) {
+            return heldExpenseTurn(session, state, message, recentTurns(session), koTurn);
+        }
+
         // Sub-agent: Follow-up (draft Q&A) — free-form questions about the in-progress
         // settlement ("얼마 첨부했어?", "which trip did I pick?") answer from the draft
         // itself, without advancing the stage machine.
@@ -333,7 +405,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (midSession && !documents.isEmpty() && isDraftQuestion(message)) {
             String context = "STAGE: " + state.path("stage").asText("") + "\nANCHOR: "
                     + state.path("anchor") + "\nDOCUMENT: " + truncate(documents.get(0).toString(), 3500);
-            String answer = formFollowUpAgentService.answerDraftQuestion(context, message, ko);
+            String answer = formFollowUpAgentService.answerDraftQuestion(context, message, koTurn);
             appendTurn(session, "user", message);
             appendTurn(session, "assistant", answer);
             saveState(session, state);
@@ -365,7 +437,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             appendTurn(session, "user", message);
             if (!partial && !complete) {
                 // ask the mode
-                String ask = t(ko,
+                String ask = t(koTurn,
                         "How would you like to register" + (tkName.isEmpty() ? "" : " the " + tkName) + " receipt "
                                 + "— partial (basics now, details later) or complete (everything at once)?",
                         (tkName.isEmpty() ? "" : tkName + " ") + "영수증을 어떻게 등록할까요 — 부분(기본 정보 먼저, "
@@ -380,24 +452,24 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         .subAgents(List.of("SETTLEMENT_AGENT"))
                         .reply(ask)
                         .pendingChoices(List.of(TripPlanAgentResponse.PendingChoice.builder()
-                                .kind("MANUAL_EXPENSE_MODE").name(t(ko, "how to register", "등록 방식"))
+                                .kind("MANUAL_EXPENSE_MODE").name(t(koTurn, "how to register", "등록 방식"))
                                 .options(List.of(
                                         TripPlanAgentResponse.Option.builder()
-                                                .label(t(ko, "Partial (basics first)", "부분 (기본 정보 먼저)"))
+                                                .label(t(koTurn, "Partial (basics first)", "부분 (기본 정보 먼저)"))
                                                 .sendText("manual-expense:partial").build(),
                                         TripPlanAgentResponse.Option.builder()
-                                                .label(t(ko, "Complete (all at once)", "전체 (한 번에)"))
+                                                .label(t(koTurn, "Complete (all at once)", "전체 (한 번에)"))
                                                 .sendText("manual-expense:complete").build()))
                                 .build()))
                         .draftJson(savedChoose.getDraftJson())
                         .build();
             }
             String prompt = complete
-                    ? t(ko, "Complete registration" + (tkName.isEmpty() ? "" : " for " + tkName)
+                    ? t(koTurn, "Complete registration" + (tkName.isEmpty() ? "" : " for " + tkName)
                                 + " — enter the expense and its details together. A receipt image is optional.",
                             "전체 등록" + (tkName.isEmpty() ? "" : " (" + tkName + ")") + " — 경비 정보와 상세를 "
                                 + "함께 입력해 주세요. 영수증 이미지는 선택 사항입니다.")
-                    : t(ko, "Partial registration — enter the basics" + (tkName.isEmpty() ? "" : " for " + tkName)
+                    : t(koTurn, "Partial registration — enter the basics" + (tkName.isEmpty() ? "" : " for " + tkName)
                                 + " first; you'll add the details next.",
                             "부분 등록 — 먼저 기본 정보" + (tkName.isEmpty() ? "" : " (" + tkName + ")") + "를 입력하면 "
                                 + "이어서 상세를 추가합니다.");
@@ -421,7 +493,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             long approverId = Long.parseLong(approverPick.group(1));
             slots(state).put("approverId", approverId);
             String who = approverName(approverId, bizplayToken);
-            String reply = t(ko,
+            String reply = t(koTurn,
                     (who.isEmpty() ? "Approver set." : who + " will approve this settlement.")
                             + " Submit it to BizPlay when you're ready.",
                     (who.isEmpty() ? "결재자를 지정했어요." : who + " 님이 이 정산서를 결재합니다.")
@@ -436,7 +508,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .intent("APPROVER_PICKED")
                     .subAgents(List.of("SETTLEMENT_AGENT"))
                     .reply(reply)
-                    .pendingChoices(submitChips(ko, bizplayToken))
+                    .pendingChoices(submitChips(koTurn, bizplayToken))
                     .draftJson(savedAp.getDraftJson())
                     .build();
         }
@@ -450,7 +522,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 slots(state).put("approverId", (long) named);
                 if (!isSubmitRequest(message)) {
                     String who = approverName(named, bizplayToken);
-                    String reply = t(ko,
+                    String reply = t(koTurn,
                             (who.isEmpty() ? "Approver set." : who + " will approve this settlement.")
                                     + " Submit it to BizPlay when you're ready.",
                             (who.isEmpty() ? "결재자를 지정했어요." : who + " 님이 이 정산서를 결재합니다.")
@@ -465,7 +537,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             .intent("APPROVER_PICKED")
                             .subAgents(List.of("SETTLEMENT_AGENT"))
                             .reply(reply)
-                            .pendingChoices(submitChips(ko, bizplayToken))
+                            .pendingChoices(submitChips(koTurn, bizplayToken))
                             .draftJson(savedApw.getDraftJson())
                             .build();
                 }
@@ -478,7 +550,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // endpoint; a chat submit carries just the drafter's DRAFT line.
         if (!documents.isEmpty() && isSubmitRequest(message)
                 && state.path("anchor").hasNonNull("approvalId")) {
-            return chatSubmit(session, state, documents, message, bizplayToken, ko);
+            return chatSubmit(session, state, documents, message, bizplayToken, koTurn);
         }
 
         // "Done — no more expenses" (receipts-done) — works at ANY point after a plan is imported.
@@ -489,7 +561,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 // Nothing attached: finishing here would offer a submit that can only file a ₩0
                 // document. An attach may have been refused (a receipt with no ISSUED child)
                 // without the user registering it, so say what is missing and stay on this step.
-                String empty = t(ko,
+                String empty = t(koTurn,
                         "There's nothing on this settlement yet, so there's nothing to submit. "
                                 + "Attach a receipt, or register the expense manually. ",
                         "아직 이 정산서에 첨부된 경비가 없어서 제출할 수 없어요. 증빙을 첨부하시거나 "
@@ -504,14 +576,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         .intent("EVIDENCE_PICK_PENDING")
                         .subAgents(List.of("SETTLEMENT_AGENT"))
                         .reply(empty)
-                        .pendingChoices(receiptChips(state, documents, ko))
+                        .pendingChoices(receiptChips(state, documents, koTurn))
                         .draftJson(savedEmptyDone.getDraftJson())
                         .build();
             }
             state.put("stage", "DONE");
             session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
             StringBuilder r = new StringBuilder();
-            summarize(documents, r, ko);
+            summarize(documents, r, koTurn);
             appendTurn(session, "user", message);
             appendTurn(session, "assistant", r.toString());
             session.setDraftJson(documents);
@@ -523,7 +595,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     .intent("SETTLEMENT_READY")
                     .subAgents(List.of("SETTLEMENT_AGENT"))
                     .reply(r.toString().trim())
-                    .pendingChoices(submitChips(ko))
+                    .pendingChoices(submitChips(koTurn))
                     .draftJson(savedDone.getDraftJson())
                     .build();
         }
@@ -544,7 +616,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 state.put("stage", "AWAIT_CARD_TYPES");
                 slots(state).remove("cardTypes");   // fresh card choice for the new type
                 String tkName = slots(state).path("evidenceTranKindName").asText("");
-                String r = t(ko,
+                String r = t(koTurn,
                         (tkName.isBlank() ? "" : tkName + " — ") + "which card types should I search? ",
                         (tkName.isBlank() ? "" : tkName + " — ") + "어떤 카드의 사용 내역을 조회할까요? ");
                 appendTurn(session, "user", message);
@@ -557,7 +629,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         .intent("TRANKIND_PICKED")
                         .subAgents(List.of("SETTLEMENT_AGENT"))
                         .reply(r)
-                        .pendingChoices(cardTypeChips(ko))
+                        .pendingChoices(cardTypeChips(koTurn))
                         .draftJson(savedTk.getDraftJson())
                         .build();
             }
@@ -570,7 +642,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (state.path("anchor").hasNonNull("approvalId") && !documents.isEmpty()) {
             BizplayPlanAgentResponse conv =
                     conversationalExpenseTurn(session, state, documents, message, machineToken,
-                            request.getCorpNo(), bizplayToken, ko);
+                            request.getCorpNo(), bizplayToken, koTurn);
             if (conv != null) {
                 return conv;
             }
@@ -593,7 +665,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // narrows it to the current question. (Stage DONE has its own submit judge below.)
         if (!machineToken && state.path("anchor").hasNonNull("approvalId")
                 && hasEvidence(documents) && !"DONE".equals(stage)) {
-            String fin = finishDecision(message, ko, recentTurns(session));
+            String fin = finishDecision(message, koTurn, recentTurns(session));
             // A JUDGED "submit" is not the same as being told to submit. Filing sends the
             // settlement to BizPlay for approval, and words like "등록해줘" right after a receipt
             // was registered read as "register that", not "file everything". So a judged submit
@@ -603,8 +675,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 state.put("stage", "DONE");
                 session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
                 StringBuilder done = new StringBuilder();
-                summarize(documents, done, ko);
-                done.append(t(ko, "\nShall I submit it to BizPlay?",
+                summarize(documents, done, koTurn);
+                done.append(t(koTurn, "\nShall I submit it to BizPlay?",
                         "\n이대로 BizPlay에 제출할까요?"));
                 appendTurn(session, "user", message);
                 appendTurn(session, "assistant", done.toString());
@@ -617,7 +689,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         .intent("SETTLEMENT_READY")
                         .subAgents(List.of("SETTLEMENT_AGENT"))
                         .reply(done.toString().trim())
-                        .pendingChoices(submitChips(ko))
+                        .pendingChoices(submitChips(koTurn))
                         .draftJson(savedFin.getDraftJson())
                         .build();
             }
@@ -629,16 +701,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 if (m.matches()) {
                     intent = "PLAN_IMPORT";
                     importPlan(state, documents, Long.parseLong(m.group(1)), corpUserId,
-                            bizplayToken, subAgents, reply, ko);
+                            bizplayToken, subAgents, reply, koTurn);
                     if (formPinsNoKinds(state)) {
                         // Refused (no expense kinds): answer with the FRESH approved-unsettled
                         // list — the UI renders the period calendar beside it — never a dead end.
-                        chips = openingApprovedPlans(state, corpUserId, bizplayToken, subAgents, reply, ko);
+                        chips = openingApprovedPlans(state, corpUserId, bizplayToken, subAgents, reply, koTurn);
                         if (chips == null) {
                             intent = "AWAIT_PLAN_PERIOD";
                         }
                     } else {
-                        chips = afterImportChips(state, ko);
+                        chips = afterImportChips(state, koTurn);
                     }
                 } else {
                     String[] period = slotPeriod(state);
@@ -649,7 +721,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         // that turn falls through to the picker below.
                         intent = "PLAN_SEARCH";
                         chips = searchPlans(state, corpUserId, period[0], period[1],
-                                bizplayToken, subAgents, reply, ko);
+                                bizplayToken, subAgents, reply, koTurn);
                         if (chips == null) {
                             intent = "AWAIT_PLAN_PERIOD";   // nothing found -> offer the calendar
                         }
@@ -660,7 +732,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         if (state.withArray("planCandidates").isEmpty() && !hintWords(hint).isEmpty()) {
                             intent = "PLAN_SEARCH";
                             chips = searchPlansByName(state, corpUserId, hint, bizplayToken,
-                                    subAgents, reply, ko);
+                                    subAgents, reply, koTurn);
                             break;
                         }
                         // Sub-agent: Plan Picker — "the Busan education trip" resolves against
@@ -670,21 +742,21 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         if (picked != null) {
                             intent = "PLAN_IMPORT";
                             importPlan(state, documents, picked, corpUserId,
-                                    bizplayToken, subAgents, reply, ko);
+                                    bizplayToken, subAgents, reply, koTurn);
                             if (formPinsNoKinds(state)) {
                                 // Same re-offer as the chip path — see above.
                                 chips = openingApprovedPlans(state, corpUserId, bizplayToken,
-                                        subAgents, reply, ko);
+                                        subAgents, reply, koTurn);
                                 if (chips == null) {
                                     intent = "AWAIT_PLAN_PERIOD";
                                 }
                             } else {
-                                chips = afterImportChips(state, ko);
+                                chips = afterImportChips(state, koTurn);
                             }
                         } else {
                             intent = "PLAN_PICK_PENDING";
-                            chips = planChipsFromState(state, ko);
-                            reply.append(t(ko,
+                            chips = planChipsFromState(state, koTurn);
+                            reply.append(t(koTurn,
                                     "I couldn't match that to one plan — please pick from the list "
                                             + "(or give me a different date range). ",
                                     "말씀하신 내용과 정확히 일치하는 출장을 찾지 못했어요 — 목록에서 선택해 "
@@ -702,15 +774,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 Long tkByName = tk.matches() ? Long.valueOf(tk.group(1))
                         : matchTranKindByName(state, message);
                 if (tkByName == null && !machineToken) {
-                    tkByName = pickTranKindSemantic(state, message, ko);
+                    tkByName = pickTranKindSemantic(state, message, koTurn);
                 }
                 if (tkByName != null && hasTranKind(state, tkByName)) {
                     intent = "TRANKIND_PICKED";
                     selectTranKind(state, tkByName);
                     state.put("stage", "AWAIT_CARD_TYPES");
-                    reply.append(t(ko, "Which card types should I search? ",
+                    reply.append(t(koTurn, "Which card types should I search? ",
                             "어떤 카드의 사용 내역을 조회할까요? "));
-                    chips = cardTypeChips(ko);
+                    chips = cardTypeChips(koTurn);
                 } else {
                     // The global judge above already said this message is neither "done" nor
                     // "submit" — so here only the two fallbacks remain.
@@ -720,22 +792,22 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         // they'd said nothing. The clarify itself becomes context: a repeated
                         // bare word is unambiguous on the next turn.
                         intent = "TRANKIND_PENDING";
-                        reply.append(t(ko,
+                        reply.append(t(koTurn,
                                 "Do you want to add another expense, or wrap up and submit this "
                                         + "settlement? ",
                                 "경비를 더 추가할까요, 아니면 이대로 마무리해서 정산서를 제출할까요? "));
-                        chips = addAnotherChips(state, ko);
+                        chips = addAnotherChips(state, koTurn);
                         chips.add(TripPlanAgentResponse.PendingChoice.builder()
-                                .kind("SUBMIT").name(t(ko, "submit", "제출"))
+                                .kind("SUBMIT").name(t(koTurn, "submit", "제출"))
                                 .options(List.of(TripPlanAgentResponse.Option.builder()
-                                        .label(t(ko, "Submit to BizPlay", "BizPlay에 제출"))
+                                        .label(t(koTurn, "Submit to BizPlay", "BizPlay에 제출"))
                                         .sendText("submit").build()))
                                 .build());
                     } else {
                         intent = "TRANKIND_PENDING";
-                        reply.append(t(ko, "Please pick an expense type to add. ",
+                        reply.append(t(koTurn, "Please pick an expense type to add. ",
                                 "추가할 경비 항목을 선택해 주세요. "));
-                        chips = tranKindChips(state, ko);
+                        chips = tranKindChips(state, koTurn);
                     }
                 }
             }
@@ -755,24 +827,24 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         // required params for the receipt endpoint are complete, so run it now.
                         intent = "EVIDENCE_LOAD";
                         chips = loadEvidence(state, documents, corpUserId, knownCards,
-                                bizplayToken, subAgents, reply, ko);
+                                bizplayToken, subAgents, reply, koTurn);
                     } else {
                         intent = "EVIDENCE_PERIOD";
                         state.put("stage", "AWAIT_CARD_TYPES");
-                        reply.append(t(ko,
+                        reply.append(t(koTurn,
                                 "Evidence period set to " + period[0] + " ~ " + period[1]
                                         + ". Which card types should I search? ",
                                 "증빙 조회 기간을 " + period[0] + " ~ " + period[1]
                                         + "(으)로 설정했어요. 어떤 카드의 사용 내역을 불러올까요? "));
-                        chips = cardTypeChips(ko);
+                        chips = cardTypeChips(koTurn);
                     }
                 } else {
                     intent = "EVIDENCE_PERIOD_PENDING";
                     // Sub-agent: Follow-up phrases the re-ask with the flow's own label.
                     reply.append(formFollowUpAgentService.composeFollowUp(
-                            "출장정산서", List.of(t(ko, "evidence search period (증빙 조회 기간)", "증빙 조회 기간")), ko));
+                            "출장정산서", List.of(t(koTurn, "evidence search period (증빙 조회 기간)", "증빙 조회 기간")), koTurn));
                     subAgents.add("FOLLOW_UP_AGENT");
-                    chips = evidencePeriodChips(state, ko);
+                    chips = evidencePeriodChips(state, koTurn);
                 }
             }
             case "AWAIT_CARD_TYPES" -> {
@@ -783,15 +855,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         : parseCardWords(message);
                 if (!types.isEmpty()) {
                     intent = "EVIDENCE_LOAD";
-                    chips = loadEvidence(state, documents, corpUserId, types, bizplayToken, subAgents, reply, ko);
+                    chips = loadEvidence(state, documents, corpUserId, types, bizplayToken, subAgents, reply, koTurn);
                 } else {
                     // The global wrap-up judge already ran before the stage machine, so anything
                     // reaching here really is just "not card types yet" — re-ask.
                     intent = "CARD_TYPES_PENDING";
                     reply.append(formFollowUpAgentService.composeFollowUp(
-                            "출장정산서", List.of(t(ko, "card types to search (조회할 카드 종류)", "조회할 카드 종류")), ko));
+                            "출장정산서", List.of(t(koTurn, "card types to search (조회할 카드 종류)", "조회할 카드 종류")), koTurn));
                     subAgents.add("FOLLOW_UP_AGENT");
-                    chips = cardTypeChips(ko);
+                    chips = cardTypeChips(koTurn);
                 }
             }
             case "AWAIT_EVIDENCE_PICK" -> {
@@ -801,41 +873,41 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     // and say what is missing — an attach can have been refused (a receipt with no
                     // ISSUED child) without the user noticing.
                     intent = "EVIDENCE_PICK_PENDING";
-                    reply.append(t(ko,
+                    reply.append(t(koTurn,
                             "There's nothing on this settlement yet, so there is nothing to submit. "
                                     + "Attach a receipt, or register the expense manually. ",
                             "아직 이 정산서에 첨부된 경비가 없어서 제출할 수 없어요. 증빙을 첨부하시거나 "
                                     + "경비를 직접 등록해 주세요. "));
-                    chips = receiptChips(state, documents, ko);
+                    chips = receiptChips(state, documents, koTurn);
                 } else if (RECEIPTS_DONE.matcher(message).matches()) {
                     intent = "SETTLEMENT_READY";
                     state.put("stage", "DONE");
                     session.setStatus(ConversationalAgentSession.AgentStatus.READY_FOR_REVIEW);
-                    summarize(documents, reply, ko);
-                    chips = submitChips(ko);   // the draft is ready — offer to submit it to BizPlay
+                    summarize(documents, reply, koTurn);
+                    chips = submitChips(koTurn);   // the draft is ready — offer to submit it to BizPlay
                 } else if (m.matches()) {
                     intent = "EVIDENCE_ATTACH";
-                    attachReceipts(state, documents, m.group(1), bizplayToken, reply, ko);
-                    chips = receiptChips(state, documents, ko);
+                    attachReceipts(state, documents, m.group(1), bizplayToken, reply, koTurn);
+                    chips = receiptChips(state, documents, koTurn);
                 } else {
                     // Not a chip: the user may be choosing in WORDS ("전부 붙여줘", "the KTX one",
                     // "첫 번째랑 세 번째"). The LLM maps the message onto the listed rows; the
                     // attach itself still runs through the exact same deterministic path.
-                    List<String> picks = resolveReceiptPickWords(state, message, ko);
+                    List<String> picks = resolveReceiptPickWords(state, message, koTurn);
                     if (!picks.isEmpty()) {
                         intent = "EVIDENCE_ATTACH";
                         for (String p : picks) {
-                            attachReceipts(state, documents, p, bizplayToken, reply, ko);
+                            attachReceipts(state, documents, p, bizplayToken, reply, koTurn);
                         }
-                        chips = receiptChips(state, documents, ko);
+                        chips = receiptChips(state, documents, koTurn);
                     } else {
                         // The global wrap-up judge already ran — this really is a receipt pick
                         // still to be made.
                         intent = "EVIDENCE_PICK_PENDING";
-                        reply.append(t(ko,
+                        reply.append(t(koTurn,
                                 "Pick receipts to attach, or say \"done\" to finish. ",
                                 "첨부할 증빙을 선택하거나 \"첨부 완료\"라고 말씀해 주세요. "));
-                        chips = receiptChips(state, documents, ko);
+                        chips = receiptChips(state, documents, koTurn);
                     }
                 }
             }
@@ -845,23 +917,23 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     // receipts, questions all return above) — so at the ready stage an unclaimed
                     // sentence may simply MEAN "submit it", in whatever words. The LLM decides;
                     // the narrow isSubmitRequest fast-path above stays as a shortcut.
-                    if (!machineToken && wantsToSubmitNow(message, ko, recentTurns(session))) {
-                        return chatSubmit(session, state, documents, message, bizplayToken, ko);
+                    if (!machineToken && wantsToSubmitNow(message, koTurn, recentTurns(session))) {
+                        return chatSubmit(session, state, documents, message, bizplayToken, koTurn);
                     }
                     intent = "SETTLEMENT_READY";
-                    summarize(documents, reply, ko);
-                    chips = submitChips(ko);
+                    summarize(documents, reply, koTurn);
+                    chips = submitChips(koTurn);
                 } else {
                     // Emptied out (or never filled) — don't keep offering a submit that can only
                     // produce a ₩0 document.
                     intent = "EVIDENCE_PICK_PENDING";
                     state.put("stage", "AWAIT_EVIDENCE_PICK");
-                    reply.append(t(ko,
+                    reply.append(t(koTurn,
                             "This settlement has no expense on it yet — attach a receipt or register "
                                     + "the expense manually before submitting. ",
                             "이 정산서에는 아직 경비가 없어요 — 제출 전에 증빙을 첨부하거나 경비를 "
                                     + "직접 등록해 주세요. "));
-                    chips = receiptChips(state, documents, ko);
+                    chips = receiptChips(state, documents, koTurn);
                 }
             }
             default -> {
@@ -873,7 +945,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     // Always list the matching plans for the user to pick — never auto-select one.
                     intent = "PLAN_SEARCH";
                     chips = searchPlans(state, corpUserId, period[0], period[1],
-                            bizplayToken, subAgents, reply, ko);
+                            bizplayToken, subAgents, reply, koTurn);
                     if (chips == null) {
                         intent = "AWAIT_PLAN_PERIOD";   // nothing found -> offer the calendar
                     }
@@ -882,19 +954,19 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     // the recent months and answer with a preview / a table / a way forward.
                     intent = "PLAN_SEARCH";
                     chips = searchPlansByName(state, corpUserId, nameHint, bizplayToken,
-                            subAgents, reply, ko);
+                            subAgents, reply, koTurn);
                 } else {
                     // Nothing named yet. Don't open with a question - open with the reminder:
                     // the approved plans of the last month, the ones that CAN be settled.
                     state.put("stage", "AWAIT_PLAN_PICK");   // next parsable period triggers the search
-                    chips = openingApprovedPlans(state, corpUserId, bizplayToken, subAgents, reply, ko);
+                    chips = openingApprovedPlans(state, corpUserId, bizplayToken, subAgents, reply, koTurn);
                     intent = chips == null ? "AWAIT_PERIOD" : "PLAN_SEARCH";
                     if (chips != null) {
                         break;
                     }
                     // Nothing approved and nothing pending: say what to do when no plan exists -
                     // a settlement can only ever ride an approved request plan.
-                    reply.append(t(ko,
+                    reply.append(t(koTurn,
                             "Happy to settle a trip. Which one is it — the trip name, or the period "
                                     + "it falls in (e.g. 2026-07-06 ~ 2026-08-06, \"last month\")? "
                                     + "If the request plan (출장계획서) was never filed, create it on the "
@@ -913,7 +985,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (session.getStatus() == null) {
             session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
         }
-        state.put("lang", ko ? "ko" : "en");   // the create-flow reply reuses the conversation language
+        state.put("lang", koTurn ? "ko" : "en");   // the create-flow reply reuses the conversation language
         // Readiness of each endpoint given the current data in hand — the ask-only-missing gate.
         log.info("settlement data-in-hand={} | planList needs {} | receiptStream needs {}",
                 slots(state), missingSlots("planList", state), missingSlots("receiptStream", state));
@@ -1003,7 +1075,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private static final String[] ETC_EXPENSE_KEYS = {
             "approvalDate", "approvalTime", "currencyCode", "mestName", "mestCorpNo", "overseasUsed",
             "approvalAmount", "supplyAmount", "originalSupplyAmount", "vatAmount", "originalVatAmount",
-            "tranKindId", "tranKindType"};
+            "tranKindId", "tranKindType",
+            // 외화 (feedback #5): without these three the conversion never reached the receipt —
+            // the KRW amount was stored but the original currency and rate were dropped.
+            "overseasApprovalAmount", "exchangeRate", "overseasRuledAmount"};
 
     /**
      * ⑧ STEP 1 — register the receipt: POST /receipt/etc-card with just the base fields (+ the picked
@@ -1030,6 +1105,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             ObjectNode state = loadState(session);
             // PARTIAL create = just the base fields (no TranKind) — the detail is a separate PATCH.
             ObjectNode fields = prepareBaseFields(expenseFields, corpNo);
+            applyCurrency(fields, bizplayToken);   // 외화 -> 원화, same rule as the complete path
             long receiptId = createEtcReceipt(fields, bizplayToken);
 
             // Stash for STEP 2 (the detail PATCH + image + mapping run against this receipt).
@@ -1135,6 +1211,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
             ObjectNode state = loadState(session);
             ObjectNode base = prepareExpenseFields(state, expenseFields, corpNo);   // base + TranKind
+            // 외화로 입력된 경비는 여기서 원화로 환산됩니다 (feedback #5): 원화 금액은 정산 합계가 쓰는
+            // approvalAmount 로, 외화 원금액과 환율은 overseasApprovalAmount/exchangeRate 로 남습니다.
+            Fx fx = applyCurrency(base, bizplayToken);
             if (!base.hasNonNull("tranKindId")) {
                 // A receipt POSTed with no tranKindId comes back NOT ISSUED and can never be
                 // attached to a settlement — refuse rather than leave dead evidence behind.
@@ -1168,12 +1247,24 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 entry.put("receiptId", newReceiptId);          // link to the created receipt (as in the sample)
                 confirmIssued(entry, newReceiptId, bizplayToken);   // ISSUED? pull the server copy back
             }
+            boolean ko = "ko".equals(state.path("lang").asText(null));
+            // 규정조회 runs while the line is built; what it found is told to the user (feedback #9).
+            StringBuilder policyNote = new StringBuilder();
             ObjectNode doc = (ObjectNode) documents.get(0);
-            doc.withArray("etcReceiptSaveRequests").add(entry);
+            // An ISSUED receipt is ATTACHED by reference, exactly like a card receipt. Re-declaring it
+            // in etcReceiptSaveRequests made the SAVE create a second, near-empty receipt (only
+            // routeType survived) and point the 정산서 at THAT one — which is why 교통수단/출발지/도착지/
+            // 이용일/규정금액/세금코드 came back blank in the detail (feedback #8). The old mapping stays
+            // for a NOT_ISSUED receipt, which cannot be attached at all.
+            long issuedId = entry.path("issuedReceiptId").asLong(0);
+            if (newReceiptId <= 0 || issuedId <= 0
+                    || !attachRegisteredReceipt(doc, newReceiptId, issuedId, bizplayToken, policyNote, ko)) {
+                doc.withArray("etcReceiptSaveRequests").add(entry);
+            }
             recomputeTotals(doc);
 
-            boolean ko = "ko".equals(state.path("lang").asText(null));
-            String reply = t(ko, "Added manual expense.", "직접 입력 경비를 추가했어요.");
+            String reply = t(ko, "Added manual expense. ", "직접 입력 경비를 추가했어요. ")
+                    + fxNote(fx, ko) + policyNote;
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
             // The expense often arrives conversationally while the stage machine still waits at
@@ -1323,7 +1414,16 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             confirmIssued(entry, receiptId, token);   // ISSUED? mark it and pull the issued id back
         }
         ObjectNode doc = (ObjectNode) documents.get(0);
-        doc.withArray("etcReceiptSaveRequests").add(entry);
+        // Same as the COMPLETE path: attach the receipt we just registered by reference, so the
+        // 정산서 points at OUR receipt (which holds 교통수단/출발지/도착지/이용일) instead of a copy
+        // the save makes for itself.
+        long issuedId = entry.path("issuedReceiptId").asLong(0);
+        // (No note buffer here: this path answers through the form, not a chat turn — the
+        // 규정 still reaches the line, it is just not narrated.)
+        if (receiptId <= 0 || issuedId <= 0
+                || !attachRegisteredReceipt(doc, receiptId, issuedId, token, null, false)) {
+            doc.withArray("etcReceiptSaveRequests").add(entry);
+        }
         recomputeTotals(doc);
     }
 
@@ -1919,7 +2019,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         ObjectNode doc = ((ObjectNode) form.getDocument()).deepCopy();
         String drafter = d.path("draftUserName").asText("");
         String paperName = form.getPaperName() == null ? "출장정산서" : form.getPaperName();
-        doc.put("title", drafter.isEmpty() ? paperName + " - " + title : paperName + " - " + drafter);
+        // The user's own title wins - including one stated before the plan was imported.
+        String chosenTitle = slots(state).path("documentTitle").asText("").trim();
+        doc.put("title", !chosenTitle.isBlank() ? chosenTitle
+                : (drafter.isEmpty() ? paperName + " - " + title : paperName + " - " + drafter));
         doc.put("content", d.path("content").asText(title));
         // Idempotency key of this settlement draft — one per imported plan, kept across turns.
         doc.put("clientRequestId", "er-" + LocalDate.now().toString().replace("-", "")
@@ -2125,6 +2228,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
         if (message.matches("(?i)\\s*expense-cancel.*")) {
             state.remove("pendingExpense");
+            state.remove("heldExpense");   // a cancel drops the finished-but-unfiled receipt too
             String reply = t(ko, "Dropped that receipt — nothing was registered.",
                     "해당 영수증 입력을 취소했어요 — 등록된 내용은 없습니다.");
             return simpleTurn(session, state, message, reply, "EXPENSE_CANCELLED", null);
@@ -2155,8 +2259,17 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         Matcher stop = STOP_PICK.matcher(message);
         if (stop.matches() && building) {
             String field = "from".equalsIgnoreCase(stop.group(1)) ? "depart" : "arrival";
-            String label = nodeName(vehicleNodes(pending.path("vehicleType").asText(""), bizplayToken),
-                    stop.group(2), "");
+            String picked = stop.group(2);
+            String label;
+            if (picked.startsWith("terminal:")) {
+                // A bus terminal, picked from the same master the form's dropdown shows.
+                // Only the NAME is stored: the save path resolves it back to the id, so
+                // chat and form send the identical body.
+                label = terminalName(bizplayToken, picked.substring("terminal:".length()));
+            } else {
+                label = nodeName(vehicleNodes(pending.path("vehicleType").asText(""), bizplayToken),
+                        picked, "");
+            }
             if (!label.isBlank()) {
                 pending.put(field, label);
             }
@@ -2170,7 +2283,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
             BizplayPlanAgentResponse ask = askAmbiguousStop(session, state, pending, message, bizplayToken, ko);
             return ask != null ? ask
-                    : simpleTurn(session, state, message, expensePreview(pending, after, ko),
+                    : simpleTurn(session, state, message, expensePreview(pending, after, ko, bizplayToken),
                             "EXPENSE_PREVIEW", expenseConfirmChips(ko));
         }
         if (machineToken || isDraftQuestion(message)) {
@@ -2352,7 +2465,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         "EXPENSE_CANCELLED", null);
             }
         }
-        return simpleTurn(session, state, message, expensePreview(pending, slots, ko),
+        return simpleTurn(session, state, message, expensePreview(pending, slots, ko, bizplayToken),
                 "EXPENSE_PREVIEW", expenseConfirmChips(ko));
     }
 
@@ -2366,13 +2479,326 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         ObjectNode fields = expenseFieldsFromPending(pending);
         ObjectNode detail = expenseDetailFromPending(pending, state);
         enrichTransportDetail(detail, pending.path("seatGrade").asText(""), bizplayToken);
+        // Every 기타증빙 must carry its receipt image. A file cannot ride a chat turn, so the
+        // finished expense WAITS here, and the client attaches the image against
+        // .../manual-expense/attach - which registers exactly this expense.
+        state.set("heldExpense", objectMapper.createObjectNode()
+                .set("fields", fields));
+        ((ObjectNode) state.get("heldExpense")).set("detail", detail);
         state.remove("pendingExpense");
-        appendTurn(session, "user", message);
+        String ask = t("ko".equals(state.path("lang").asText(null)), "One last thing — attach the receipt image and I'll register it.",
+                "마지막으로 영수증 이미지를 첨부해 주세요 — 바로 등록해 드릴게요.");
+        return simpleTurn(session, state, message, ask, "EXPENSE_IMAGE_REQUIRED", null);
+    }
+
+    /** Our own echo of a judged flow action: "expense-confirm (words the user typed)". */
+    private static final Pattern FLOW_ECHO =
+            Pattern.compile("(?is)\\s*([a-z-]+)\\s+\\((.*)\\)\\s*");
+
+    /**
+     * The turn taken while an expense sits in {@code heldExpense} waiting for its receipt file.
+     * Nothing here can register anything on its own - the bytes live in the client - so the reply
+     * tells the client what to do with the attach form it is already showing: EXPENSE_IMAGE_SUBMIT
+     * (send the chosen file now), EXPENSE_CANCELLED (drop it), or EXPENSE_IMAGE_REQUIRED (still
+     * waiting). curl users reach the same three outcomes by calling .../manual-expense/attach, or
+     * simply not calling it.
+     */
+    private BizplayPlanAgentResponse heldExpenseTurn(ConversationalAgentSession session,
+                                                     ObjectNode state, String message,
+                                                     java.util.List<String> turns, boolean ko) {
+        // The extractor upstream may already have judged these words a confirm or a cancel and
+        // rewritten them into our own echo token, "expense-confirm (what the user typed)". That
+        // verdict stands - and only the raw words go to the judge below, never the token, whose
+        // noise had it answer "waiting" to a plain "register it now".
+        Matcher echo = FLOW_ECHO.matcher(message);
+        String action = "";
+        String words = message;
+        if (echo.matches()) {
+            action = echo.group(1).toLowerCase(java.util.Locale.ROOT);
+            words = echo.group(2);
+        } else if (message.matches("(?i)\\s*expense-(confirm|cancel)\\s*")) {
+            action = message.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+        String decision = "expense-confirm".equals(action) ? "attach"
+                : "expense-cancel".equals(action) ? "cancel"
+                : heldExpenseDecision(words, ko, turns);
+        log.info("[IMAGE] held-expense turn on '{}': '{}'", truncate(message, 60),
+                decision.isEmpty() ? "waiting" : decision);
+        if ("cancel".equals(decision)) {
+            state.remove("heldExpense");
+            return simpleTurn(session, state, message,
+                    t(ko, "Dropped that receipt — nothing was registered.",
+                            "해당 영수증 입력을 취소했어요 — 등록된 내용은 없습니다."),
+                    "EXPENSE_CANCELLED", null);
+        }
+        if ("attach".equals(decision)) {
+            // The user said go ahead. If a file is already picked the client submits it against the
+            // multipart endpoint; if not, it asks them to choose one - either way the receipt stays
+            // parked until the bytes actually arrive.
+            return simpleTurn(session, state, message,
+                    t(ko, "Registering it now with the file you attached.",
+                            "첨부하신 파일로 바로 등록할게요."),
+                    "EXPENSE_IMAGE_SUBMIT", null);
+        }
+        String ask = t(ko, "The receipt is ready — attach the image or PDF and I'll register it, "
+                        + "or tell me to cancel it.",
+                "영수증이 준비됐어요 — 이미지나 PDF를 첨부해 주세요. 취소하시려면 말씀해 주세요.");
+        // Neither. A question still deserves its answer - but answered HERE, against the
+        // parked receipt, because the draft Q&A above sees the settlement and not the file
+        // we are waiting on ("what format do you need?" got a lecture about structured data).
+        if (isDraftQuestion(message)) {
+            String context = "SITUATION: the receipt below is complete and is waiting for its "
+                    + "receipt image or PDF, which the user attaches through the file picker on "
+                    + "screen; JPG/PNG images and PDF files are both accepted. Nothing else is "
+                    + "pending.\nRECEIPT: " + truncate(state.path("heldExpense").toString(), 1200);
+            String answer = formFollowUpAgentService.answerDraftQuestion(context, message, ko);
+            if (answer != null && !answer.isBlank()) {
+                ask = answer.trim() + "\n\n" + ask;
+            }
+        }
+        return simpleTurn(session, state, message, ask, "EXPENSE_IMAGE_REQUIRED", null);
+    }
+
+    /**
+     * Send it, drop it, or neither - judged, never phrase-matched, so any wording in any language
+     * works. Empty string on anything else (a question, an edit, chatter) and on judge failure,
+     * which keeps the receipt parked rather than guessing.
+     */
+    private String heldExpenseDecision(String message, boolean ko, java.util.List<String> turns) {
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "decision", "Situation: the receipt is complete and the assistant asked the user "
+                            + "to attach its image or PDF file, which is done through a file picker "
+                            + "on screen. Judge THIS message: the single word attach if it tells the "
+                            + "assistant to go ahead and register it now, or says the file is "
+                            + "attached / chosen / uploaded - any wording, any language. The single "
+                            + "word cancel if it abandons the receipt or refuses to attach anything. "
+                            + "A question or anything else is neither - omit the field then"),
+                    ko, turns).path("decision").asText("").trim().toLowerCase();
+            return "attach".equals(verdict) || "cancel".equals(verdict) ? verdict : "";
+        } catch (Exception e) {
+            log.warn("Held-expense decision judge unavailable: {}", e.getMessage());
+            return "";
+        }
+    }
+
+
+    /**
+     * Correct ONE field of an expense already on the settlement, from the preview card. The receipt
+     * exists in BizPlay, so the edit goes there first (PATCH /receipt/etc-card/{id}) and the line is
+     * then REBUILT from the server's own copy — never patched locally, which would let the draft and
+     * the receipt drift apart. 규정조회 and the 세금코드 re-run, because a changed vehicle, route,
+     * date or amount can change what the 규정 says.
+     *
+     * <p>Keys are the ones the card shows: {@code merchant}, {@code amount}, {@code date},
+     * {@code vehicleType}, {@code depart}, {@code arrival}, {@code seatClass}, {@code usedStartDate},
+     * {@code usedEndDate}, {@code routeType}, {@code roomType}, {@code starRating},
+     * {@code partnerHotel}, {@code personCount}, {@code foodDivisionType}.
+     */
+    @Override
+    public BizplayPlanAgentResponse editExpenseField(String sessionId, String corpNo, long receiptId,
+                                                     String key, String value, String bizplayToken) {
+        BizplayPlanAgentRequest lookup = new BizplayPlanAgentRequest();
+        lookup.setCorpNo(corpNo);
+        lookup.setSessionId(sessionId);
+        ConversationalAgentSession session = resolveSession(lookup);
+        ObjectNode state = loadState(session);
+        ArrayNode documents = documents(session);
+        boolean ko = "ko".equals(state.path("lang").asText(null));
+        if (documents.isEmpty()) {
+            throw new IllegalArgumentException("No settlement draft in progress.");
+        }
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("A field key is required.");
+        }
+        ObjectNode doc = (ObjectNode) documents.get(0);
+        int index = indexOfLine(doc.withArray("bstrReceipts"), receiptId);
+        if (index < 0) {
+            throw new IllegalArgumentException("That expense is not on this settlement: " + receiptId);
+        }
+        // The server's copy is the base of the edit — anything we hold could be a turn behind.
+        JsonNode issued = bizplayGatewayService.getIssuedReceiptsBulk(
+                java.util.List.of(receiptId), bizplayToken);
+        if (issued == null || !issued.isArray() || issued.isEmpty()) {
+            throw new IllegalStateException("Could not read receipt " + receiptId + " back from BizPlay.");
+        }
+        JsonNode current = issued.get(0);
+        ObjectNode update = expenseUpdateBody(current, receiptId, key.trim(), value, bizplayToken);
+        bizplayGatewayService.patchEtcCardReceipt(receiptId, update, bizplayToken);
+
+        // Rebuild the line from what BizPlay now holds, with a fresh 규정조회.
+        long issuedReceiptId = doc.withArray("bstrReceipts").get(index).path("id").asLong(0);
+        JsonNode reread = bizplayGatewayService.getIssuedReceiptsBulk(
+                java.util.List.of(receiptId), bizplayToken);
+        ObjectNode enriched = (ObjectNode) (reread != null && reread.isArray() && !reread.isEmpty()
+                ? reread.get(0) : current).deepCopy();
+        enriched.set("issuedReceipt", enriched.deepCopy());
+        StringBuilder note = new StringBuilder();
+        ObjectNode row = bstrReceiptWithPolicy(doc, enriched, receiptId, issuedReceiptId,
+                bizplayToken, note, ko);
+        if (!row.hasNonNull("accountSubjectId")) {
+            applyAccountSubject(row, enriched.path("tranKindId").asLong(0), bizplayToken);
+        }
+        doc.withArray("bstrReceipts").set(index, row);
+        recomputeTotals(doc);
+        session.setDraftJson(documents);
+        String reply = t(ko, "Updated. ", "수정했어요. ") + note;
+        saveState(session, state);
+        appendTurn(session, "assistant", reply);
+        ConversationalAgentSession saved = sessionRepo.save(session);
+        log.info("[EDIT] receipt {} field '{}' -> '{}'", receiptId, key, truncate(value, 40));
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(saved.getId().toString())
+                .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                .intent("EXPENSE_UPDATED")
+                .subAgents(List.of("SETTLEMENT_AGENT"))
+                .reply(reply.trim())
+                .draftJson(saved.getDraftJson())
+                .build();
+    }
+
+    /** Where a receipt sits in the settlement's line array, or -1. */
+    private int indexOfLine(ArrayNode lines, long receiptId) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).path("receiptId").asLong(0) == receiptId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** ReceiptEtcDto keys that EtcReceiptSaveRequest also declares — the ones an edit may echo flat. */
+    private static final java.util.Set<String> ETC_DETAIL_KEYS = java.util.Set.of(
+            "vehicleType", "routeType", "seatClass", "depart", "arrival", "departTerminalId",
+            "arrivalTerminalId", "departNodeId", "arrivalNodeId", "usedStartDate", "usedEndDate",
+            "roomType", "starRating", "partnerHotel", "personCount", "foodDivisionType",
+            "outPolicyReason", "cancelReason", "etcReceiptType", "bstrRegionId", "etcIncomeRateId",
+            "incomeRateName", "incomeRateValue");
+
+    /**
+     * The PATCH body for one corrected field: the receipt as BizPlay holds it (base + its
+     * receiptEtc detail), with the one value replaced. Sending the whole record is what the
+     * provider's own PATCH expects — a partial body drops the fields it omits.
+     */
+    private ObjectNode expenseUpdateBody(JsonNode current, long receiptId, String key, String value,
+                                         String token) {
+        ObjectNode body = objectMapper.createObjectNode();
+        for (String k : ETC_EXPENSE_KEYS) {
+            if (current.hasNonNull(k)) {
+                body.set(k, current.get(k).deepCopy());
+            }
+        }
+        ObjectNode detail = current.path("receiptEtc").isObject()
+                ? (ObjectNode) current.get("receiptEtc").deepCopy()
+                : objectMapper.createObjectNode();
+        detail.remove("id");
+        detail.remove("receiptId");
+        detail.remove("issuedReceiptId");
+        detail.remove("bstrRegionDto");
+        String v = value == null ? "" : value.trim();
+        boolean reconvert = false;
+        switch (key) {
+            case "merchant", "mestName" -> body.put("mestName", v);
+            case "amount", "approvalAmount" -> body.put("approvalAmount", money(v));
+            case "date", "approvalDate" -> body.put("approvalDate", isoDate(v));
+            case "vehicleType" -> {
+                detail.put("vehicleType", v.toUpperCase(java.util.Locale.ROOT));
+                detail.putNull("departTerminalId");   // the old ids belong to the old vehicle
+                detail.putNull("arrivalTerminalId");
+            }
+            case "depart" -> {
+                detail.put("depart", v);
+                detail.putNull("departTerminalId");
+            }
+            case "arrival" -> {
+                detail.put("arrival", v);
+                detail.putNull("arrivalTerminalId");
+            }
+            case "seatClass" -> detail.put("seatClass", v);
+            case "routeType" -> detail.put("routeType", v.toUpperCase(java.util.Locale.ROOT));
+            case "usedStartDate" -> detail.put("usedStartDate", isoDate(v));
+            case "usedEndDate" -> detail.put("usedEndDate", isoDate(v));
+            case "roomType" -> detail.put("roomType", v);
+            case "partnerHotel" -> detail.put("partnerHotel", v);
+            case "starRating" -> detail.put("starRating", v.isEmpty() ? null : money(v));
+            case "personCount" -> detail.put("personCount", v.isEmpty() ? null : money(v));
+            case "foodDivisionType" -> detail.put("foodDivisionType", v);
+            // 외화 (feedback #5): switching the currency, or correcting the amount in it, re-converts
+            // with the day's 환율 — the KRW figure the settlement totals use is never typed by hand.
+            case "currencyCode", "currency" -> {
+                body.put("currencyCode", v.toUpperCase(java.util.Locale.ROOT));
+                double foreign = current.path("overseasApprovalAmount").asDouble(0);
+                body.put("approvalAmount", foreign > 0 ? foreign : current.path("approvalAmount").asDouble(0));
+                reconvert = true;
+            }
+            case "foreignAmount", "overseasApprovalAmount" -> {
+                body.put("approvalAmount", money(v));
+                reconvert = true;
+            }
+            default -> throw new IllegalArgumentException("That field can't be edited here: " + key);
+        }
+        if (reconvert) {
+            applyCurrency(body, token);
+        }
+        // A changed place or vehicle needs its locator resolved again, exactly as at registration.
+        enrichTransportDetail(detail, detail.path("seatClass").asText(""), token);
+        body.set("receiptEtc", detail);
+        // Echo the detail flat as well as nested - but ONLY the keys EtcReceiptSaveRequest declares.
+        // ReceiptEtcDto carries a few the save request does not (taxType, usedStartTime, excessReason),
+        // and the provider answers a body with any of them: 400 Unrecognized field "taxType".
+        detail.fields().forEachRemaining(e -> {
+            if (ETC_DETAIL_KEYS.contains(e.getKey())) {
+                body.set(e.getKey(), e.getValue());
+            }
+        });
+        body.put("receiptId", receiptId);
+        body.remove("id");
+        body.remove("issuedReceiptId");
+        return body;
+    }
+
+    /** "₩25,000" / "25000원" / "25000" -> 25000. Rejects anything with no number in it. */
+    private double money(String raw) {
+        String digits = raw.replaceAll("[^0-9.]", "");
+        if (digits.isBlank()) {
+            throw new IllegalArgumentException("That doesn't look like an amount: " + raw);
+        }
+        return Double.parseDouble(digits);
+    }
+
+    /** An ISO day, or a clear refusal — a half-parsed date silently moves the expense. */
+    private String isoDate(String raw) {
+        String d = raw.trim().replace('.', '-').replace('/', '-');
+        if (!d.matches("\\d{4}-\\d{1,2}-\\d{1,2}")) {
+            throw new IllegalArgumentException("Use a date like 2026-09-04: " + raw);
+        }
+        String[] p = d.split("-");
+        return String.format("%s-%02d-%02d", p[0], Integer.parseInt(p[1]), Integer.parseInt(p[2]));
+    }
+
+    @Override
+    public BizplayPlanAgentResponse registerHeldExpense(String sessionId, String corpNo,
+                                                        byte[] image, String filename,
+                                                        String bizplayToken) {
+        BizplayPlanAgentRequest lookup = new BizplayPlanAgentRequest();
+        lookup.setCorpNo(corpNo);
+        lookup.setSessionId(sessionId);
+        ConversationalAgentSession session = resolveSession(lookup);
+        ObjectNode state = loadState(session);
+        JsonNode held = state.path("heldExpense");
+        if (!held.isObject() || !held.path("fields").isObject()) {
+            throw new IllegalArgumentException("No expense is waiting for a receipt image.");
+        }
+        if (image == null || image.length == 0) {
+            throw new IllegalArgumentException("A receipt image is required for a 기타증빙 expense.");
+        }
+        state.remove("heldExpense");
         saveState(session, state);
         sessionRepo.save(session);
-        // Same call the form's "Register receipt" makes — one etc-card POST, then the draft.
-        return addManualExpense(session.getId().toString(), corpNo, fields, detail,
-                null, null, bizplayToken);
+        log.info("[IMAGE] registering the held expense with '{}' ({} bytes)", filename, image.length);
+        return addManualExpense(sessionId, corpNo, held.path("fields"),
+                held.path("detail").isObject() ? held.path("detail") : null,
+                image, filename, bizplayToken);
     }
 
     /**
@@ -2411,24 +2837,30 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             return null;   // no stop catalogue to be ambiguous about
         }
         JsonNode nodes = vehicleNodes(vehicle, token);
-        if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
-            return null;
-        }
         JsonNode terminals = null;
         try {
             terminals = bizplayGatewayService.getEtcCardTerminals(token);
         } catch (Exception e) {
             log.warn("Terminal master unavailable while checking stops: {}", e.getMessage());
         }
+        // A bus has no node catalogue at all - the provider's nodes/{vehicle} answers empty
+        // for both bus kinds - but it does stop at the 158 terminals of the master, which is
+        // exactly what the manual form now offers as a dropdown. Chat asks from the same
+        // list, so typing and clicking end up at the same terminal.
+        boolean busStops = BUS_VEHICLES.contains(vehicle);
+        if ((nodes == null || !nodes.isArray() || nodes.isEmpty()) && !busStops) {
+            return null;
+        }
         for (String[] end : new String[][]{{"depart", "from"}, {"arrival", "to"}}) {
             String name = pending.path(end[0]).asText("");
             if (name.isBlank() || terminalId(terminals, vehicle, name) != null) {
                 continue;   // a hub the terminal master already pins down
             }
-            if (nodeId(nodes, name) != null) {
+            if (nodes != null && nodes.isArray() && nodeId(nodes, name) != null) {
                 continue;   // resolves to exactly one stop
             }
-            ArrayNode options = nodeCandidates(nodes, name);
+            ArrayNode options = busStops ? terminalCandidates(terminals, name)
+                    : nodeCandidates(nodes, name);
             if (options.size() < 2) {
                 continue;   // nothing matched: the plain name is kept, no question worth asking
             }
@@ -2449,6 +2881,53 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             .kind("STOP").name(t(ko, "stop", "정류장")).options(chips).build()));
         }
         return null;
+    }
+
+    /** The terminal master's own label for an id, or "" - the name the provider expects. */
+    private String terminalName(String token, String id) {
+        try {
+            for (JsonNode t : bizplayGatewayService.getEtcCardTerminals(token)) {
+                if (id.equals(String.valueOf(t.path("id").asLong()))) {
+                    return t.path("name").asText("");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Terminal master unavailable while naming {}: {}", id, e.getMessage());
+        }
+        return "";
+    }
+
+    /** 고속버스 (BUS) and 시외버스 (CBUS) - the two that stop at terminals, not at nodes. */
+    private static final java.util.Set<String> BUS_VEHICLES =
+            java.util.Set.of("BUS", "CBUS", "EXPRESS_BUS", "INTERCITY_BUS");
+
+    /**
+     * Bus terminals whose name contains what the user said, shaped like the node candidates
+     * so the chip row is built the same way. The id rides in the nodeId slot prefixed with
+     * "terminal:" - {@link #applyStopPick} writes it to the terminal locator, not the node one.
+     */
+    private ArrayNode terminalCandidates(JsonNode terminals, String name) {
+        ArrayNode out = objectMapper.createArrayNode();
+        if (terminals == null || !terminals.isArray() || name == null || name.isBlank()) {
+            return out;
+        }
+        String wanted = name.trim().toLowerCase(java.util.Locale.ROOT);
+        for (JsonNode t : terminals) {
+            if (!"BUS".equalsIgnoreCase(t.path("vehicleType").asText(""))) {
+                continue;
+            }
+            String candidate = t.path("name").asText("");
+            String lower = candidate.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains(wanted) || wanted.contains(lower)) {
+                ObjectNode o = out.addObject();
+                o.put("nodeName", candidate);
+                o.put("nodeId", "terminal:" + t.path("id").asLong());
+                if (out.size() >= 12) {
+                    break;
+                }
+            }
+        }
+        return out;
     }
 
     /** The node catalog for a vehicle, or null - never throws, the caller treats null as "no help". */
@@ -2622,6 +3101,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             options.put("ITX", "ITX");
             options.put(t(ko, "Saemaeul", "새마을호"), "새마을호");
             options.put(t(ko, "Mugunghwa", "무궁화호"), "무궁화호");
+        } else if ("currencyCode".equals(asking.key())) {
+            // Deliberately short for the first round — the company asked for 원화/USD/JPY only. The
+            // full 통화 master (179 rows) is already exposed at /agents/settlement/currencies for the
+            // form's dropdown, so widening this list later is a one-line change.
+            options.put(t(ko, "KRW · Korean won", "원화 (KRW)"), "KRW");
+            options.put(t(ko, "USD · US dollar", "미국 달러 (USD)"), "USD");
+            options.put(t(ko, "JPY · Japanese yen", "일본 엔 (JPY)"), "JPY");
         } else if ("routeType".equals(asking.key())) {
             options.put(t(ko, "One-way", "편도"), t(ko, "One-way", "편도"));
             options.put(t(ko, "Round-trip", "왕복"), t(ko, "Round-trip", "왕복"));
@@ -2702,8 +3188,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // carries supplyAmount/vatAmount as null, so neither is collected any more.
             new Slot("approvalTime", "time", "시각",
                     "time of the expense as HH:mm:ss, only if the user said one", false),
+            // ASKED, not assumed (company feedback #5): 원화인지 외화인지 확인한 뒤 등록합니다.
+            // "원화"/"won"/"KRW" -> KRW, "달러"/"dollar"/"USD" -> USD, "엔"/"yen"/"JPY" -> JPY.
             new Slot("currencyCode", "currency", "통화",
-                    "ISO currency code, only if the user named one (default KRW)", false));
+                    "the ISO code of the currency the expense was PAID in: KRW when it was Korean won"
+                            + " (원화), USD for US dollars (달러), JPY for Japanese yen (엔). Read it"
+                            + " from a symbol or a currency word too ($, ¥, 달러, 엔, 원). Omit the"
+                            + " field when the user has not said which currency", true));
 
     /** Transport (교통비) receipts carry a detail block on top of the base. */
     private static final List<Slot> EXPENSE_TRANSPORT_SLOTS = List.of(
@@ -2819,7 +3310,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             "seatGrade", "which SEAT CLASS or grade they travelled in "
                     + "(일반석 / 프리미엄 일반석 / 비즈니스석 / 일등석 / 일반실 / 특실 / 일반 / 우등 / "
                     + "프리미엄, economy / business / first)",
-            "trainType", "WHICH TRAIN they took (KTX / SRT / ITX / 새마을호 / 무궁화호)");
+            "trainType", "WHICH TRAIN they took (KTX / SRT / ITX / 새마을호 / 무궁화호)",
+            // 통화 is verified like any other choice: a model that answers "KRW" because most
+            // receipts are in won would skip the very question the company asked us to put in.
+            "currencyCode", "which CURRENCY the money was paid in (원화/원/won/KRW, "
+                    + "달러/dollar/USD/$, 엔/yen/JPY/¥)");
 
     /**
      * Verify every choice field that changed this turn against the traveller's own words, and
@@ -3259,6 +3754,18 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             new String[]{"one-way", "ONEWAY"},
             new String[]{"oneway", "ONEWAY"});
 
+    /**
+     * The currency chips and the words people type for them. Every LABEL the UI can send has to be
+     * here — a click sends the label, and one with no mapping cannot be recovered if the extractor
+     * drops it (the lesson from the seat chips).
+     */
+    private static final java.util.List<String[]> CURRENCY_WORDS = java.util.List.of(
+            new String[]{"krw", "KRW"}, new String[]{"원화", "KRW"}, new String[]{"won", "KRW"},
+            new String[]{"usd", "USD"}, new String[]{"달러", "USD"}, new String[]{"dollar", "USD"},
+            new String[]{"미국", "USD"},
+            new String[]{"jpy", "JPY"}, new String[]{"엔", "JPY"}, new String[]{"yen", "JPY"},
+            new String[]{"일본", "JPY"});
+
     private static final java.util.List<String[]> SEAT_WORDS = java.util.List.of(
             new String[]{"프리미엄 일반석", "PREMIUM_ECONOMY"},
             new String[]{"프리미엄일반석", "PREMIUM_ECONOMY"},
@@ -3276,7 +3783,39 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             new String[]{"우등", "SUPERIOR"},
             new String[]{"superior", "SUPERIOR"},
             new String[]{"프리미엄", "PREMIUM"},
+            new String[]{"premium", "PREMIUM"},
+            // The CHIP LABELS the UI shows must all be here: a click sends the label, and a
+            // label with no mapping cannot be recovered when the extractor drops it - which
+            // is why clicking "Standard" on a bus asked the seat question all over again.
+            new String[]{"standard", "STANDARD"},
+            new String[]{"first", "FIRST"},
             new String[]{"일반", "STANDARD"});
+
+    /**
+     * "25000원", "₩25,000", "$100", "100 달러", "¥8,000" — an amount written WITH its currency needs
+     * no question. Only the number-attached forms count: a bare 원/엔 would match half the words in
+     * a Korean sentence, and asking is better than guessing wrong.
+     */
+    private static final java.util.List<String[]> CURRENCY_MARKS = java.util.List.of(
+            new String[]{"(?s).*(\\d[\\d,.]*\\s*원(?![a-zA-Z가-힣])|₩\\s*\\d).*", "KRW"},
+            new String[]{"(?s).*(\\$\\s*\\d|\\d[\\d,.]*\\s*(달러|dollars?|usd)).*", "USD"},
+            new String[]{"(?s).*(¥\\s*\\d|\\d[\\d,.]*\\s*(엔|yen|jpy)).*", "JPY"});
+
+    /** Fill currencyCode when the message already carries the currency with its amount. */
+    private boolean currencyFromAmount(ObjectNode pending, String message) {
+        if (message == null || pending.hasNonNull("currencyCode")) {
+            return false;
+        }
+        String m = message.toLowerCase(java.util.Locale.ROOT);
+        for (String[] mark : CURRENCY_MARKS) {
+            if (m.matches(mark[0])) {
+                pending.put("currencyCode", mark[1]);
+                log.info("[FX] currency read from the amount itself: {}", mark[1]);
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Recover choice fields whose option word is written in the message but which the extractor
@@ -3290,9 +3829,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             return filledKeys;
         }
         String haystack = message.toLowerCase(java.util.Locale.ROOT);
+        // The amount often states its own currency ("25000원", "$100") — no need to ask then.
+        if (currencyFromAmount(pending, message)) {
+            filledKeys.add("currencyCode");
+        }
         record Choice(String key, java.util.List<String[]> words) { }
         for (Choice c : java.util.List.of(new Choice("routeType", ROUTE_WORDS),
-                new Choice("seatGrade", SEAT_WORDS))) {
+                new Choice("seatGrade", SEAT_WORDS), new Choice("currencyCode", CURRENCY_WORDS))) {
             boolean inPlay = slots.stream().anyMatch(sl -> sl.key().equals(c.key()));
             if (!inPlay || !pending.path(c.key()).asText("").isBlank()) {
                 continue;
@@ -3396,7 +3939,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /** The request body, laid out for the user to check before it is sent. */
-    private String expensePreview(ObjectNode pending, List<Slot> slots, boolean ko) {
+    private String expensePreview(ObjectNode pending, List<Slot> slots, boolean ko, String token) {
         StringBuilder sb = new StringBuilder(t(ko,
                 "Here's the receipt I'll register — check it and confirm:\n",
                 "등록할 영수증이에요 — 확인하고 승인해 주세요:\n"));
@@ -3435,6 +3978,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 v = "KRW".equalsIgnoreCase(cur) || cur.isBlank() ? "₩" + amount : amount + " " + cur;
             }
             sb.append("· ").append(t(ko, s.en(), s.ko())).append(": ").append(v).append('\n');
+        }
+        // 외화면 원화 환산액도 같이 (feedback #5) — 등록 전에 두 금액을 함께 확인할 수 있도록.
+        Fx fx = convertToKrw(pending.path("currencyCode").asText("KRW"),
+                pending.path("approvalAmount").asDouble(0),
+                pending.path("approvalDate").asText(""), token);
+        if (fx != null) {
+            sb.append("· ").append(t(ko, "in KRW", "원화 환산")).append(": ")
+                    .append(fxNote(fx, ko).trim()).append(System.lineSeparator());
         }
         return sb.toString();
     }
@@ -3695,6 +4246,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
         List<String> added = new ArrayList<>();
         List<String> notIssued = new ArrayList<>();
+        StringBuilder policyNotes = new StringBuilder();   // what 규정조회 found, for the reply
         for (JsonNode c : picked) {
             long receiptId = c.path("id").asLong();
             JsonNode child = issuedByReceipt.get(receiptId);
@@ -3709,8 +4261,26 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             // (tranKind, split amounts, slip). Merge so both are available downstream.
             ObjectNode enriched = ((ObjectNode) c).deepCopy();
             enriched.set("issuedReceipt", child);
+            // The stream row is the CARD view: no 기타증빙 detail, no 용도. Both ride on the issued
+            // child, and without them the line loses 교통수단/출발지/도착지/이용일 and 규정조회 has no
+            // tranKindId to ask about (feedback #8/#9 apply to attached receipts, not only new ones).
+            if (!enriched.path("receiptEtc").isObject() && child.path("receiptEtc").isObject()) {
+                enriched.set("receiptEtc", child.get("receiptEtc").deepCopy());
+            }
+            if (!enriched.hasNonNull("tranKindId") && child.hasNonNull("tranKindId")) {
+                enriched.set("tranKindId", child.get("tranKindId").deepCopy());
+            }
+            if (!enriched.hasNonNull("tranKindType") && child.hasNonNull("tranKindType")) {
+                enriched.put("tranKindType", child.path("tranKindType").asText());
+            }
+            if (!enriched.hasNonNull("deductionNonDeduction") && child.hasNonNull("deductionNonDeduction")) {
+                enriched.put("deductionNonDeduction", child.path("deductionNonDeduction").asText());
+            }
             doc.withArray("receiptIds").add(issuedReceiptId);
-            doc.withArray("bstrReceipts").add(bstrReceipt(enriched, receiptId, issuedReceiptId));
+            // 규정조회 for an ATTACHED card receipt too - feedback #9 is about 증빙 attachment, and a card
+            // receipt is subject to the same 용도 규정 as one we register ourselves.
+            doc.withArray("bstrReceipts").add(bstrReceiptWithPolicy(
+                    doc, enriched, receiptId, issuedReceiptId, token, policyNotes, ko));
 
             ObjectNode field = issuedField(enriched, receiptId, issuedReceiptId, doc);
             ObjectNode dto = (ObjectNode) field.withArray("issuedReceiptDtos").get(0);
@@ -3747,6 +4317,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             reply.append(t(ko,
                     "Attached: " + String.join(", ", added) + ". ",
                     "첨부했습니다: " + String.join(", ", added) + ". "));
+        }
+        // What the 규정 said about the receipts just attached (feedback #9): 지급구분, the 한도,
+        // and a warning when one of them is over it.
+        if (policyNotes.length() > 0) {
+            reply.append(policyNotes);
         }
     }
 
@@ -3823,10 +4398,413 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         r.put("arrival", c.path("arrival").asText(null));
         r.put("complianceTypesStr", "");
         r.put("displayHidden", false);
+        // The 기타증빙 detail lives under receiptEtc on the receipt; the 정산서 detail screen
+        // reads it from the LINE, so copy it across (feedback #8).
+        applyReceiptEtcDetail(r, c);
         return r;
     }
 
     /** The issuedFields entry pairing the receipt with its issued (slip-carrying) side. */
+
+
+    // ---------------------------------------------------------------------------------------
+    // 외화 / 원화 (company feedback #5). A 기타증빙 paid abroad is entered in ITS currency; the
+    // settlement is in KRW. So the foreign amount and the day's 환율 are recorded on the receipt,
+    // and the KRW figure the settlement totals rely on is derived from them — never typed twice.
+    // ---------------------------------------------------------------------------------------
+
+    /** What one foreign-currency expense converts to, and the rate it was converted with. */
+    private record Fx(String currency, double foreignAmount, double krwAmount, double rate,
+                      int unit, String rateDate) { }
+
+    /**
+     * Convert an expense entered in a foreign currency, using the provider's own 환율 for the day
+     * of the expense. Today's rate is often not published yet, so the lookup walks back up to a
+     * week and reports WHICH day's rate it used — a silent substitution would hide a real number.
+     * Returns null for KRW (nothing to convert) and when no rate can be found at all.
+     */
+    private Fx convertToKrw(String currencyCode, double amount, String date, String token) {
+        String code = currencyCode == null ? "" : currencyCode.trim().toUpperCase(java.util.Locale.ROOT);
+        if (code.isBlank() || "KRW".equals(code) || amount <= 0) {
+            return null;
+        }
+        LocalDate day;
+        try {
+            day = LocalDate.parse(date);
+        } catch (Exception e) {
+            day = LocalDate.now();
+        }
+        for (int back = 0; back <= 7; back++) {
+            String on = day.minusDays(back).toString();
+            JsonNode rate = bizplayGatewayService.getExchangeRate(code, on, token);
+            double value = rate == null ? 0 : rate.path("exchangeRate").asDouble(0);
+            if (value <= 0) {
+                continue;
+            }
+            int unit = bizplayGatewayService.getCurrencyUnit(code, on, token);
+            double krw = Math.round(amount * value / Math.max(1, unit));
+            log.info("[FX] {} {} on {} -> ₩{} (rate {} per {})", amount, code, on, krw, value, unit);
+            return new Fx(code, amount, krw, value, unit, on);
+        }
+        log.warn("[FX] no 환율 found for {} around {} — the amount stays as entered.", code, date);
+        return null;
+    }
+
+    /**
+     * Write the currency facts onto an etc-card body. The settlement adds up
+     * {@code approvalAmount}, so that field carries the KRW figure and the foreign amount rides in
+     * {@code overseasApprovalAmount} with its {@code currencyCode} and {@code exchangeRate} — the
+     * pairing the settlement line already reads (approvalAmount/overseasApprovalAmount,
+     * ruledAmount/overseasRuledAmount). Left untouched for a KRW expense.
+     */
+    private Fx applyCurrency(ObjectNode fields, String token) {
+        String code = fields.path("currencyCode").asText("KRW");
+        double entered = fields.path("approvalAmount").asDouble(0);
+        Fx fx = convertToKrw(code, entered, fields.path("approvalDate").asText(""), token);
+        if (fx == null) {
+            if (!fields.hasNonNull("currencyCode")) {
+                fields.put("currencyCode", "KRW");
+            }
+            if ("KRW".equalsIgnoreCase(fields.path("currencyCode").asText("KRW"))) {
+                fields.put("overseasUsed", false);
+                // Back to 원화: the previous currency's amount and rate would otherwise stay on the
+                // receipt and read as if the money had been spent abroad.
+                fields.putNull("overseasApprovalAmount");
+                fields.putNull("exchangeRate");
+            }
+            return null;
+        }
+        fields.put("currencyCode", fx.currency());
+        fields.put("approvalAmount", fx.krwAmount());          // KRW — what the settlement totals
+        fields.put("overseasApprovalAmount", fx.foreignAmount());   // …and the original
+        fields.put("exchangeRate", fx.rate());
+        fields.put("overseasUsed", true);
+        return fx;
+    }
+
+    /** "US$100 · ₩136,037 (환율 1,360.37, 2026-08-27 기준)" — both numbers, and where the rate came from. */
+    private String fxNote(Fx fx, boolean ko) {
+        if (fx == null) {
+            return "";
+        }
+        String per = fx.unit() > 1 ? " / " + fx.unit() : "";
+        return t(ko,
+                fx.currency() + " " + new java.text.DecimalFormat("#,###.##").format(fx.foreignAmount())
+                        + " = ₩" + new java.text.DecimalFormat("#,###").format(fx.krwAmount())
+                        + " (rate " + new java.text.DecimalFormat("#,###.##").format(fx.rate()) + per
+                        + ", " + fx.rateDate() + "). ",
+                fx.currency() + " " + new java.text.DecimalFormat("#,###.##").format(fx.foreignAmount())
+                        + " = ₩" + new java.text.DecimalFormat("#,###").format(fx.krwAmount())
+                        + " (환율 " + new java.text.DecimalFormat("#,###.##").format(fx.rate()) + per
+                        + ", " + fx.rateDate() + " 기준). ");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 규정조회 + 증빙 상세 (company feedback #8 / #9). A registered 기타증빙 already holds its
+    // transport facts under receiptEtc; the settlement LINE has to carry them too, together with
+    // the 규정금액 the provider's own policy lookup returns, or the 정산서 detail shows blanks.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * 규정조회: ask the provider what this corp's 규정 says for the 용도 being registered, with the
+     * trip's own facts (목적/구분/기간/출발-도착) so the answer is the one that applies to THIS trip.
+     * Returns null when there is no policy — registration continues either way.
+     */
+    private JsonNode policyFor(ObjectNode doc, JsonNode receipt, String token) {
+        long tranKindId = receipt.path("tranKindId").asLong(0);
+        if (tranKindId <= 0) {
+            return null;   // nothing to look a 규정 up by
+        }
+        JsonNode etc = receipt.path("receiptEtc");
+        ObjectNode body = objectMapper.createObjectNode();
+        // BOTH ids are load-bearing, checked against cloud-dev: without corporationUserId the
+        // lookup answers 500, and without corporationId it answers 200 with an EMPTY body. The
+        // traveller is the demo's static user unless the plan names one.
+        Long corporationId = corporationIdFromToken(token);
+        long traveler = doc.path("bstrTravelerId").asLong(doc.path("regCorporationUserId").asLong(0));
+        if (traveler <= 0) {
+            try {
+                traveler = Long.parseLong(bizplayProperties.getDefaultCorpUserId().trim());
+            } catch (RuntimeException e) {
+                traveler = 0;
+            }
+        }
+        if (corporationId == null || traveler <= 0) {
+            log.info("[POLICY] skipped — no corporationId/corporationUserId to ask 규정조회 with");
+            return null;
+        }
+        body.put("corporationId", corporationId);
+        body.put("corporationUserId", traveler);
+        putIfText(body, "bstrType", doc.path("bstrType").asText(""));
+        copyNumberOrNull(body, "bstrPurposeId", doc.path("bstrPurposeId"));
+        copyNumberOrNull(body, "bstrSegmentId", doc.path("bstrSegmentId"));
+        body.put("tranKindId", tranKindId);
+        putIfText(body, "tranKindType", receipt.path("tranKindType").asText(""));
+        putIfText(body, "vehicleType", etc.path("vehicleType").asText(""));
+        putIfText(body, "departureTerminal", etc.path("depart").asText(""));
+        putIfText(body, "arrivalTerminal", etc.path("arrival").asText(""));
+        putIfText(body, "bstrDate", receipt.path("approvalDate").asText(""));
+        putIfText(body, "departureDate", doc.path("bstrStartDate").asText(""));
+        putIfText(body, "returnDate", doc.path("bstrEndDate").asText(""));
+        copyNumberOrNull(body, "receiptEtcId", etc.path("id"));
+        body.put("activityDivision", "ACTUAL");
+        try {
+            return bizplayGatewayService.getPolicyLimit(body, token);
+        } catch (RuntimeException e) {
+            log.warn("규정조회 skipped: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Write a text field only when there is one — the policy lookup errors on empty strings. */
+    private void putIfText(ObjectNode target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    /**
+     * 규정금액 for one receipt, from the 규정 the lookup returned. The provider's own sample line
+     * carries ruledAmount == approvalAmount for an 실비 (ACTUAL) 용도, so that is the default; a
+     * 한도 (LIMITED) caps it and a 정액 (FIXED / ACTUAL_FIXED) replaces it. A policy quoted in
+     * ANOTHER currency (this corp's 숙박비 is USD, the receipt KRW) is NOT converted here — there is
+     * no rate in the answer, so the actual amount stands and the 규정 is reported to the user.
+     */
+    private double ruledAmount(JsonNode policy, double approvalAmount, String currencyCode) {
+        if (policy == null || !policy.isObject()) {
+            return approvalAmount;
+        }
+        double limit = policy.path("limitAmount").asDouble(0);
+        String policyCurrency = policy.path("currencyCode").asText("");
+        if (limit <= 0 || (!policyCurrency.isBlank() && !policyCurrency.equalsIgnoreCase(currencyCode))) {
+            return approvalAmount;
+        }
+        return switch (policy.path("bstrPayClassType").asText("")) {
+            case "LIMITED" -> Math.min(approvalAmount, limit);
+            case "FIXED", "ACTUAL_FIXED" -> limit;
+            default -> approvalAmount;   // ACTUAL 실비 and anything unknown: the actual spend
+        };
+    }
+
+    /**
+     * 세금코드 for a 기타증빙: the corp's own active tax code for the receipt's deduction status.
+     * Exactly one match is an answer; none or several is a choice we are not entitled to make, so
+     * the line keeps a null code and the approver picks it (BizPlay shows the same dropdown).
+     */
+    private JsonNode taxCodeFor(JsonNode receipt, String token) {
+        String status = receipt.path("deductionNonDeduction").asText("");
+        if (status.isBlank()) {
+            status = "NON_DEDUCTABLE";   // 기타증빙 default, as the provider's own receipts carry it
+        }
+        JsonNode codes;
+        try {
+            codes = bizplayGatewayService.getTaxCodes(token);
+        } catch (RuntimeException e) {
+            log.warn("세금코드 lookup failed: {}", e.getMessage());
+            return null;
+        }
+        JsonNode match = null;
+        int hits = 0;
+        for (JsonNode c : (codes != null && codes.isArray()) ? codes : objectMapper.createArrayNode()) {
+            if (c.path("activated").asBoolean(false)
+                    && status.equalsIgnoreCase(c.path("deductionStatus").asText(""))) {
+                match = c;
+                hits++;
+            }
+        }
+        if (hits != 1) {
+            log.info("[TAX] {} active tax code(s) for {} — leaving the line's 세금코드 for the approver",
+                    hits, status);
+            return null;
+        }
+        log.info("[TAX] {} -> {} {} (id={})", status, match.path("taxCode").asText(""),
+                match.path("taxName").asText(""), match.path("id").asText(""));
+        return match;
+    }
+
+    /**
+     * Attach a receipt WE registered exactly the way a card receipt is attached: by reference
+     * (receiptIds + bstrReceipts + issuedFields), never by re-declaring it in
+     * etcReceiptSaveRequests. Re-declaring made the save create a SECOND receipt that kept only
+     * routeType, so the 정산서 detail showed 교통수단/출발지/도착지/이용일 blank (feedback #8).
+     * Returns false when the receipt cannot be read back, and the caller keeps the old mapping.
+     */
+    private boolean attachRegisteredReceipt(ObjectNode doc, long receiptId, long issuedReceiptId,
+                                            String token, StringBuilder note, boolean ko) {
+        JsonNode issued;
+        try {
+            issued = bizplayGatewayService.getIssuedReceiptsBulk(java.util.List.of(receiptId), token);
+        } catch (RuntimeException e) {
+            log.warn("Could not read back receipt {} to attach it: {}", receiptId, e.getMessage());
+            return false;
+        }
+        if (issued == null || !issued.isArray() || issued.isEmpty()) {
+            return false;
+        }
+        // The issued row is the flat one: mestName, amounts, tranKind, imageIds AND receiptEtc.
+        ObjectNode enriched = (ObjectNode) issued.get(0).deepCopy();
+        enriched.set("issuedReceipt", issued.get(0).deepCopy());
+        ObjectNode row = bstrReceiptWithPolicy(doc, enriched, receiptId, issuedReceiptId, token,
+                note, ko);
+        double ruled = row.path("ruledAmount").asDouble(0);
+        doc.withArray("receiptIds").add(issuedReceiptId);
+        doc.withArray("bstrReceipts").add(row);
+
+        ObjectNode field = issuedField(enriched, receiptId, issuedReceiptId, doc);
+        ObjectNode dto = (ObjectNode) field.withArray("issuedReceiptDtos").get(0);
+        if (!dto.path("slip").hasNonNull("accountSubjectId")) {
+            dto.set("slip", minimalSlip(slipEntry(enriched, enriched.path("issuedReceipt")),
+                    tranKindList(token), firstBudgetDepartment(token)));
+        }
+        dto.put("tranKindId", enriched.path("tranKindId").asLong(0));
+        dto.put("tranKindType", enriched.path("tranKindType").asText(null));
+        doc.withArray("issuedFields").add(field);
+        log.info("[ATTACH] registered receipt {} attached by reference (issued {}) — 규정금액 {}",
+                receiptId, issuedReceiptId, ruled);
+        return true;
+    }
+
+
+    /**
+     * One settlement line, built with the 규정 that applies to it (feedback #9): 규정조회 runs for
+     * EVERY receipt that goes onto a settlement — the ones we register and the card receipts the
+     * user attaches — and its answer sets 규정금액 (ruledAmount) and 지급구분 on the line. When a
+     * note buffer is passed, a one-line summary of the 규정 is written into it for the reply.
+     */
+    private ObjectNode bstrReceiptWithPolicy(ObjectNode doc, ObjectNode enriched, long receiptId,
+                                             long issuedReceiptId, String token,
+                                             StringBuilder note, boolean ko) {
+        double approval = enriched.path("approvalAmount").asDouble(0);
+        String currency = enriched.path("currencyCode").asText("KRW");
+        JsonNode policy = policyFor(doc, enriched, token);
+        double ruled = ruledAmount(policy, approval, currency);
+        enriched.put("ruledAmount", ruled);
+        ObjectNode row = bstrReceipt(enriched, receiptId, issuedReceiptId);
+        // The 용도's debit account, when the receipt brought no slip of its own — the provider's
+        // own sample line carries accountSubjectId/Name/ErpCode, and a 기타증빙 has no slip.
+        if (!row.hasNonNull("accountSubjectId")) {
+            applyAccountSubject(row, enriched.path("tranKindId").asLong(0), token);
+        }
+        JsonNode taxCode = taxCodeFor(enriched, token);
+        if (taxCode != null) {
+            row.put("taxCodeId", taxCode.path("id").asLong());
+            row.put("taxName", taxCode.path("taxName").asText(null));
+            row.put("taxCode", taxCode.path("taxCode").asText(null));
+        }
+        if (policy != null) {
+            putIfText(row, "bstrPayClassType", policy.path("bstrPayClassType").asText(""));
+            if (note != null) {
+                note.append(policyNote(enriched.path("mestName").asText(""), policy, approval,
+                        ruled, currency, ko));
+            }
+        }
+        return row;
+    }
+
+    /**
+     * What the 규정 says, in one sentence the traveller can act on: the 지급구분, the 한도 when
+     * there is one, and — the point of saying it at all — a warning when this receipt is over it.
+     */
+    private String policyNote(String mestName, JsonNode policy, double approval, double ruled,
+                              String currency, boolean ko) {
+        String payClass = policy.path("bstrPayClassType").asText("");
+        double limit = policy.path("limitAmount").asDouble(0);
+        String policyCurrency = policy.path("currencyCode").asText(currency);
+        String kind = switch (payClass) {
+            case "LIMITED" -> t(ko, "limit", "한도");
+            case "FIXED" -> t(ko, "fixed allowance", "정액");
+            case "ACTUAL_FIXED" -> t(ko, "actual + fixed", "실비＋정액");
+            case "ACTUAL" -> t(ko, "actual cost", "실비");
+            default -> payClass;
+        };
+        String label = t(ko, "Policy", "규정");
+        StringBuilder s = new StringBuilder();
+        if (limit > 0) {
+            s.append(label).append(": ").append(kind).append(" ")
+                    .append(money(limit, policyCurrency)).append(". ");
+            boolean comparable = policyCurrency.equalsIgnoreCase(currency);
+            if (comparable && approval > limit) {
+                s.append(policy.path("exceptionReasonRequired").asBoolean(false)
+                        ? t(ko, "This receipt is over it — a reason for the excess is required. ",
+                                "규정 금액을 초과했습니다 — 초과사유가 필요합니다. ")
+                        : t(ko, "This receipt is over it. ", "규정 금액을 초과했습니다. "));
+            } else if (!comparable) {
+                // No exchange rate comes back with the 규정, so nothing is converted — say so
+                // instead of quietly comparing two currencies.
+                s.append(t(ko, "The policy is in " + policyCurrency + " and this receipt in " + currency
+                                + ", so the policy amount stays at the actual amount. ",
+                        "규정은 " + policyCurrency + ", 영수증은 " + currency
+                                + " 기준이라 규정금액은 실제 금액으로 두었습니다. "));
+            }
+        } else {
+            s.append(label).append(": ").append(kind).append(". ");
+        }
+        if (ruled != approval) {
+            s.append(t(ko, "Policy amount " + money(ruled, currency) + ". ",
+                    "규정금액 " + money(ruled, currency) + ". "));
+        }
+        return s.toString();
+    }
+
+    /** Amounts the way the rest of the chat writes them: ₩12,000 / USD 100. */
+    private String money(double amount, String currency) {
+        String number = new java.text.DecimalFormat("#,###").format(amount);
+        return "KRW".equalsIgnoreCase(currency) ? "₩" + number : currency + " " + number;
+    }
+
+
+    /**
+     * Fill a line's 계정과목 from the 용도 master (its debit account) — what BizPlay itself puts on
+     * an ETC line, and what a receipt with no slip of its own cannot supply.
+     */
+    private void applyAccountSubject(ObjectNode row, long tranKindId, String token) {
+        if (tranKindId <= 0) {
+            return;
+        }
+        for (JsonNode tk : tranKindList(token)) {
+            if (tk.path("id").asLong() == tranKindId && tk.hasNonNull("debitId")) {
+                row.set("accountSubjectId", tk.get("debitId").deepCopy());
+                row.put("accountSubjectName", tk.path("debitName").asText(null));
+                row.put("accountSubjectErpCode", tk.path("debitCode").asText(null));
+                return;
+            }
+        }
+    }
+
+    /**
+     * Copy the 기타증빙's own detail onto the settlement line. The facts live under receiptEtc on
+     * the receipt, and BstrReceiptDto carries them at line level — vehicleType / seatClass /
+     * terminals / used dates — which is what the 정산서 detail screen reads (feedback #8). Terminal
+     * ids are STRINGS on this DTO even though the receipt holds numbers.
+     */
+    private void applyReceiptEtcDetail(ObjectNode row, JsonNode receipt) {
+        JsonNode etc = receipt.path("receiptEtc");
+        if (!etc.isObject()) {
+            return;
+        }
+        copyNumberOrNull(row, "receiptEtcId", etc.path("id"));
+        putIfText(row, "vehicleType", etc.path("vehicleType").asText(""));
+        putIfText(row, "seatClass", etc.path("seatClass").asText(""));
+        putIfText(row, "depart", etc.path("depart").asText(""));
+        putIfText(row, "arrival", etc.path("arrival").asText(""));
+        putIfText(row, "excessReason", etc.path("excessReason").asText(""));
+        putIfText(row, "outPolicyReason", etc.path("outPolicyReason").asText(""));
+        if (etc.hasNonNull("departTerminalId")) {
+            row.put("departTerminalId", etc.path("departTerminalId").asText());
+        }
+        if (etc.hasNonNull("arrivalTerminalId")) {
+            row.put("arrivalTerminalId", etc.path("arrivalTerminalId").asText());
+        }
+        String usedStart = etc.path("usedStartDate").asText("");
+        String usedEnd = etc.path("usedEndDate").asText("");
+        if (!usedStart.isBlank()) {
+            row.put("usedStartDate", usedStart);
+        }
+        if (!usedEnd.isBlank()) {
+            row.put("usedEndDate", usedEnd);
+        }
+    }
+
     private ObjectNode issuedField(JsonNode c, long receiptId, long issuedReceiptId, ObjectNode doc) {
         JsonNode ir = c.path("issuedReceipt");
         double approval = c.path("approvalAmount").asDouble(0);
@@ -4094,6 +5072,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         boolean needFrom = !detail.hasNonNull("departTerminalId") && !fromName.isBlank();
         boolean needTo = !detail.hasNonNull("arrivalTerminalId") && !toName.isBlank();
         if (!needFrom && !needTo) {
+            log.info("[LOCATOR] {} '{}'->{} '{}'->{} (terminal master)", vehicle,
+                    fromName, detail.path("departTerminalId").asText("-"),
+                    toName, detail.path("arrivalTerminalId").asText("-"));
             return;
         }
         try {
@@ -4199,8 +5180,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         String wantedCore = placeCore(wanted);
         Long contains = null;
         Long core = null;
+        // The master labels every bus terminal "BUS" - the same buildings serve 고속 and
+        // 시외 lines - so a 시외버스 (CBUS) looks up the same rows the form's dropdown offers.
+        // Without this, chat found no id for a stop the form had just resolved.
+        String wantedVehicle = BUS_VEHICLES.contains(vehicleType) ? "BUS" : vehicleType;
         for (JsonNode t : terminals) {
-            if (!vehicleType.equalsIgnoreCase(t.path("vehicleType").asText(""))) {
+            if (!wantedVehicle.equalsIgnoreCase(t.path("vehicleType").asText(""))) {
                 continue;
             }
             String candidate = t.path("name").asText("").trim().toLowerCase(java.util.Locale.ROOT);
@@ -5662,6 +6647,27 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         long hangul = message.codePoints().filter(cp -> cp >= 0xAC00 && cp <= 0xD7A3).count();
         long latin = message.codePoints().filter(Character::isAlphabetic).count() - hangul;
         return hangul > 0 && hangul * 3 > latin;
+    }
+
+    /**
+     * The same judgement, but a SHORT answer never changes the language of the conversation.
+     * "USD", "KTX", "OK" carry no language at all, and letting them flip a Korean chat into
+     * English mid-receipt is jarring — a chip label did that on the currency question.
+     */
+    private boolean koreanConversation(String message, ObjectNode state) {
+        if (message.contains("Respond in Korean only")) {
+            return true;
+        }
+        if (message.contains("Respond in English only")) {
+            return false;
+        }
+        String stored = state == null ? null : state.path("lang").asText(null);
+        boolean hasHangul = message.codePoints().anyMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
+        long letters = message.codePoints().filter(Character::isAlphabetic).count();
+        if (stored != null && !hasHangul && letters <= 12) {
+            return "ko".equals(stored);   // too short to mean anything: keep the current language
+        }
+        return koreanConversation(message);
     }
 
     private static String t(boolean ko, String en, String kr) {

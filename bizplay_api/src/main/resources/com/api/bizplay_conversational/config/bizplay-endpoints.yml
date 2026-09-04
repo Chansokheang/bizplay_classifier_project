@@ -42,6 +42,21 @@ bizplay:
     issued-bulk: /api/v2/receipt/issued/bulk/{ids}
     # optional: additional receipt detail (travel info) — PATCH after etc-card create
     receipt-etc-detail: /api/v2/receipt-etc/{receiptId}
+    # Edit a registered 기타증빙 in place - the whole EtcReceiptSaveRequest, base + detail,
+    # so a correction in the chat preview reaches the receipt itself and not just our draft.
+    etc-card-update: /api/v2/receipt/etc-card/{receiptId}
+    # 외화/원화 (company feedback #5): the currency master, the day's rate, and the rate detail
+    # whose currencyName states the quote unit — "일본 JPY (100)" means 100 yen, not one.
+    currency-codes: /api/v2/currency-code/combo
+    exchange-rate: /api/v2/exchange-rate/cached
+    exchange-rate-detail: /api/v2/cardmis-api/exchange-rate/{currencyCode}
+    # 규정조회 (company feedback #9): the 용도 policy for THIS trip + expense - 한도 금액,
+    # 지급구분 (실비/한도/정액), and whether an 초과사유 is required. POST, body built in the gateway.
+    policy-limit: /api/v2/bstr/policy/limit
+    # Which 용도 carry a 출장비 규정 at all, per TranKind type (also carries each 용도's debit account).
+    policy-trankinds: /api/v2/bstr/policy/trankindlist/{tranKindType}
+    # 세금코드 master - the source for a line's taxCodeId/taxName (company feedback #8).
+    tax-code-list: /api/v2/basic/tax-code
     # TranKind master (id → name/type), to resolve the plan's allowed tranKinds
     trankind-list: /api/v2/trankind/list
     # who the bearer token belongs to - name, corporationUserId, department, corporations

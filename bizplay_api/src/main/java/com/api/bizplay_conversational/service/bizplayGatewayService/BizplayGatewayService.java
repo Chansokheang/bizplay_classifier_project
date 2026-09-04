@@ -177,4 +177,49 @@ public interface BizplayGatewayService {
 
     /** Server-side bypass to TMap: POST the bypass envelope, returns TMap's JSON verbatim. */
     JsonNode postBypass(JsonNode envelope, String token);
+
+    /**
+     * 규정조회 (company feedback #9). POST the trip + expense facts to /bstr/policy/limit and get
+     * the 용도's own policy back: 지급구분 (ACTUAL 실비 / LIMITED 한도 / FIXED 정액 / ACTUAL_FIXED),
+     * the 한도 금액 and its currency, per-day limits, and whether an 초과사유 is required. Returns
+     * null when the corp has no policy for that 용도 (the provider answers 200 with an EMPTY body -
+     * a real answer, not an error).
+     */
+    JsonNode getPolicyLimit(JsonNode request, String token);
+
+    /**
+     * 세금코드 master: id, taxCode ("V0"), taxName, taxRate, deductionStatus and the account subject
+     * each code is assigned to. Cached - it is corp master data.
+     */
+    JsonNode getTaxCodes(String token);
+
+    /**
+     * The 용도 that carry a 출장비 규정, for one TranKind type ("TRANSPORT", "ROOM", "FOOD"...).
+     * Each row also carries the 용도's debit account, which is what a settlement line's
+     * accountSubject fields are filled from. Cached.
+     */
+    JsonNode getPolicyTranKinds(String tranKindType, String token);
+
+    /**
+     * Edit a registered 기타증빙: PATCH /receipt/etc-card/{receiptId} with a whole
+     * EtcReceiptSaveRequest (base + detail). Used when the traveller corrects a value in the
+     * settlement preview — the receipt itself has to change, not just our draft.
+     */
+    String patchEtcCardReceipt(long receiptId, JsonNode body, String token);
+
+    /** 통화코드 목록: [{nation, currencyCodeName, name}] — 179 rows on cloud-dev. Cached. */
+    JsonNode getCurrencyCodes(String token);
+
+    /**
+     * The day's 환율 for one currency, as {@code {fromCurrencyCode, currencyCode, exchangeRate,
+     * standardDate, noticeTimes}}. Returns null when that day has no rate published — today's is
+     * typically not there yet, so the caller walks back to the last day that has one.
+     */
+    JsonNode getExchangeRate(String fromCurrencyCode, String standardDate, String token);
+
+    /**
+     * How many units the rate is quoted FOR: 1 for USD, 100 for JPY ("일본 JPY (100)"). Read from
+     * the rate detail's currencyName; 1 when the detail is unavailable.
+     */
+    int getCurrencyUnit(String fromCurrencyCode, String standardDate, String token);
 }

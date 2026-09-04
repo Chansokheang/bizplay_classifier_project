@@ -317,6 +317,39 @@ public class BizplayFormController {
                 bizplaySettlementAgentService.getSession(corpNo, sessionId)));
     }
 
+    @Operation(summary = "통화 목록 (외화/원화 구분, company feedback #5): the provider's own currency "
+            + "master — [{nation, currencyCodeName, name}] — for the manual-expense form's dropdown. "
+            + "KRW is first; the rest follow as the provider lists them.")
+    @GetMapping("/agents/settlement/currencies")
+    public ResponseEntity<ApiResponse<JsonNode>> settlementCurrencies(
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/agents/settlement/currencies");
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getCurrencyCodes(token)));
+    }
+
+
+    @Operation(summary = "Edit ONE field of an expense already on the settlement (the preview card's "
+            + "pencil). Applies the change to the RECEIPT in BizPlay (PATCH /receipt/etc-card/{id}), "
+            + "then rebuilds the settlement line from the server's copy with 규정조회 and the "
+            + "세금코드 re-resolved. Keys: merchant, amount, date, vehicleType, depart, arrival, "
+            + "seatClass, routeType, usedStartDate, usedEndDate, roomType, partnerHotel, starRating, "
+            + "personCount, foodDivisionType.")
+    @PatchMapping("/agents/settlement/{sessionId}/expense/{receiptId}/field")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> editSettlementExpenseField(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @org.springframework.web.bind.annotation.PathVariable("receiptId") long receiptId,
+            @RequestParam("corpNo") String corpNo,
+            @RequestBody JsonNode patch,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        String key = patch.path("key").asText("");
+        String value = patch.path("value").asText("");
+        log.info("PATCH /bizplay/agents/settlement/{}/expense/{}/field - {}={}",
+                sessionId, receiptId, key, value);
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.editExpenseField(
+                sessionId, corpNo, receiptId, key, value, token)));
+    }
+
+
     @Operation(summary = "Manual expense ⑧ STEP 1 — register the receipt with the base fields only "
             + "(POST /receipt/etc-card). Body {approvalDate, mestName, approvalAmount, …}. Returns the "
             + "created receipt (stashed) + the type-specific detail fields to collect in step 2.")
@@ -329,6 +362,26 @@ public class BizplayFormController {
         log.info("POST /bizplay/agents/settlement/{}/manual-expense/create - corpNo={}", sessionId, corpNo);
         return ResponseEntity.ok(ApiResponse.ok(
                 bizplaySettlementAgentService.createManualReceipt(sessionId, corpNo, expense, token)));
+    }
+
+    @Operation(summary = "Attach the receipt image to the expense the CHAT collected, and register "
+            + "it. Every 기타증빙 needs its image; a file cannot ride a chat turn, so the "
+            + "conversation holds the expense and this multipart call supplies the file.")
+    @PostMapping(value = "/agents/settlement/{sessionId}/manual-expense/attach",
+            consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> attachHeldExpenseImage(
+            @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
+            @RequestParam("corpNo") String corpNo,
+            @org.springframework.web.bind.annotation.RequestPart("image")
+                    org.springframework.web.multipart.MultipartFile image,
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token)
+            throws java.io.IOException {
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense/attach - corpNo={}", sessionId, corpNo);
+        if (image == null || image.isEmpty()) {
+            throw new IllegalArgumentException("A receipt image is required for a 기타증빙 expense.");
+        }
+        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.registerHeldExpense(
+                sessionId, corpNo, image.getBytes(), image.getOriginalFilename(), token)));
     }
 
     @Operation(summary = "Manual expense ⑧ COMPLETE — register the whole receipt in one etc-card POST "
@@ -345,8 +398,13 @@ public class BizplayFormController {
         log.info("POST /bizplay/agents/settlement/{}/manual-expense/complete - corpNo={}", sessionId, corpNo);
         JsonNode fields = objectMapper.readTree(expenseJson);
         JsonNode detail = (detailJson == null || detailJson.isBlank()) ? null : objectMapper.readTree(detailJson);
-        byte[] imageBytes = (image == null || image.isEmpty()) ? null : image.getBytes();
-        String imageName = image == null ? null : image.getOriginalFilename();
+        // Every 기타증빙 carries its 증빙: the API refuses an image-less create, so a curl client
+        // cannot do what the form no longer allows.
+        if (image == null || image.isEmpty()) {
+            throw new IllegalArgumentException("A receipt image is required for a 기타증빙 expense.");
+        }
+        byte[] imageBytes = image.getBytes();
+        String imageName = image.getOriginalFilename();
         return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.addManualExpense(
                 sessionId, corpNo, fields, detail, imageBytes, imageName, token)));
     }

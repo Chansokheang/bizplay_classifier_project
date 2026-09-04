@@ -2936,6 +2936,7 @@ function resetAgent() {
   planDestAskQuiet = false;
   prevCards = { info: null, details: null, extra: null, trav: null, route: null };
   wizAsked = null;
+  agent.attachForm = null;   // no picker from the old conversation can be submitted into the new one
   bzApproval.lines = [];
   bzApproval.pendingKindFor = null;
   bzApproval.awaitSaveConfirm = false;
@@ -3081,6 +3082,7 @@ function startPcEdit(cell) {
   const kind = cell.dataset.kind || "text";
   const was = cell.textContent.replace(/✎$/, "").trim();
   cell.classList.add("pc-editing");
+  if (kind === "people" || kind === "route") { startPcPicker(cell, kind, key, was); return; }
   cell.innerHTML = kind === "textarea"
     ? `<textarea class="pc-input" rows="2"></textarea>`
     : `<input class="pc-input" type="${kind === "date" ? "date" : "text"}">`;
@@ -3110,6 +3112,55 @@ function startPcEdit(cell) {
     if (ev.key === "Escape") { ev.preventDefault(); close(was); }
   });
   input.addEventListener("blur", commit);
+}
+
+/* Travellers and routes are chosen from LISTS, not typed: the roster for a person, the
+ * corporation's registered destinations for a route. Same commit path as any other
+ * inline edit - the server writes it, the card redraws from what came back. */
+async function startPcPicker(cell, kind, key, was) {
+  const close = (text) => {
+    cell.classList.remove("pc-editing");
+    cell.innerHTML = `${esc(text)}<span class="pc-pen">✎</span>`;
+  };
+  if (kind === "people") {
+    try { await bzLoadRoster(); } catch (e) { /* fall through to whatever we have */ }
+    const opts = (bzApproval.roster || []).map((u) =>
+      `<option value="${esc(u.name)}">${esc(u.name)}${u.dept ? " · " + esc(u.dept) : ""}</option>`).join("");
+    cell.innerHTML = `<select class="pc-input pc-pick">${opts}`
+      + `<option value="">${esc(T("— remove from the trip", "— 출장자에서 제외"))}</option></select>`;
+    const sel = cell.querySelector("select");
+    sel.value = was.split(" · ")[0];
+    sel.focus();
+    let done = false;
+    const commit = async () => {
+      if (done) return;
+      done = true;
+      const picked = sel.value;
+      if (picked === was.split(" · ")[0]) { close(was); return; }
+      close(picked || T("(removed)", "(제외됨)"));
+      if (!await planEditField(key, picked)) close(was);
+    };
+    sel.addEventListener("change", commit);
+    sel.addEventListener("blur", () => setTimeout(commit, 150));
+    return;
+  }
+  // route: departure / destination / return, from the registered-destination master
+  const sites = await planRouteOptions();
+  if (!sites.length) { close(was); return; }
+  const opt = (sel) => sites.map((x) =>
+    `<option value="${esc(x.name)}"${x.name === sel ? " selected" : ""}>${esc(x.name)}</option>`).join("");
+  cell.innerHTML = `<span class="pc-route">`
+    + `<select class="pc-input" data-k="from">${opt(sites[0].name)}</select>`
+    + `<select class="pc-input" data-k="to">${opt(sites[0].name)}</select>`
+    + `<button type="button" class="btn btn-primary pc-go">${esc(T("Set", "적용"))}</button>`
+    + `<button type="button" class="pc-cancel">✕</button></span>`;
+  cell.querySelector(".pc-cancel").addEventListener("click", () => close(was));
+  cell.querySelector(".pc-go").addEventListener("click", async () => {
+    const from = cell.querySelector('[data-k="from"]').value;
+    const to = cell.querySelector('[data-k="to"]').value;
+    close(`${from} → ${to} → ${from}`);
+    if (!await planEditField(key, `${from} > ${to}`)) close(was);
+  });
 }
 
 /* The edit goes to the SERVER, never only to the card: same draft, same writers, same
@@ -3296,8 +3347,7 @@ function travellerBlocks() {
     CORP_CAR: T("Company car", "법인차량"), PRIVATE: T("Private vehicle", "자차"),
     CARPOOL: T("Carpool", "카풀") };
   const place = (addr) => String(addr || "").split(" ").slice(0, 3).join(" ") || "—";
-  const row = (k, v) => v ? `<div class="pc-row"><span class="pc-k">${esc(k)}</span>`
-    + `<span class="pc-v">${esc(v)}</span></div>` : "";
+  const row = (k, v, edit) => (v ? pcRow(k, v, edit) : "");
   return travelers.filter((x) => x.name).map((t, i) => {
     const doc = docs[i] || {};
     const legs = doc.bstrRoutes || [];
@@ -3321,9 +3371,10 @@ function travellerBlocks() {
       : `<div class="rt-none">${esc(T("No travel route set yet.", "이동경로가 아직 없어요."))}</div>`;
     return `<div class="rt-block">
         <div class="rp-who"><span class="rp-num">${i + 1}</span>${esc(T("Traveller ", "출장자 ") + (i + 1))}</div>
-        ${row(T("Traveller", "출장자"), travellerIdentity(t))}
+        ${row(T("Traveller", "출장자"), travellerIdentity(t), `traveler:${i}|people`)}
         ${row(T("Cost centre", "코스트센터"), docCostCentre(doc))}
-        ${row(T("Travel route", "이동경로(출장)"), summary)}
+        ${row(T("Travel route", "이동경로(출장)"), summary || T("not set yet", "미설정"),
+              `route:${t.name}|route`)}
         ${table}
       </div>`;
   }).join("");
@@ -4020,7 +4071,7 @@ async function restoreSettleSession(sessionId) {
     const json = await res.json();
     const data = (json && (json.data || json.payload)) || {};
     const draft = data.draftJson || null;
-    const receipts = (draft && draft[0] && draft[0].etcReceiptSaveRequests) || [];
+    const receipts = settleDraftReceipts((draft && draft[0]) || {});
     if (!receipts.length) {                          // nothing worth restoring → fresh start
       localStorage.removeItem("bizplay.settle.session");
       openSettlementOnPlans();                       // the plan list, NOT the retired starter hero
@@ -4181,8 +4232,7 @@ function settlementPlanPeriodAsk() {
  * so the flow deliberately ends here with no save button. */
 function settlementSummaryCard(draft) {
   const doc = (Array.isArray(draft) && draft[0]) || {};
-  const receipts = (doc.etcReceiptSaveRequests && doc.etcReceiptSaveRequests.length)
-    ? doc.etcReceiptSaveRequests : (doc.bstrReceipts || []);   // manual expenses land in etcReceiptSaveRequests
+  const receipts = settleDraftReceipts(doc);
   const won = (v) => "₩" + Math.round(num(v)).toLocaleString();
   const rows = receipts.map((r) => pcRow(
     `${r.mestName || "?"} · ${r.approvalDate || ""}`,
@@ -4267,6 +4317,45 @@ const TP_ROUTE = [["One-way", "편도", "ONEWAY"], ["Round-trip", "왕복", "ROU
 const TP_AIR_SEATS = [["Economy", "일반석", "economyClass"], ["Premium economy", "프리미엄 일반석", "premiumEconomyClass"],
   ["Business", "비즈니스석", "businessClass"], ["First", "일등석", "firstClass"]];
 const TP_TRAIN_SEATS = [["Standard", "일반실", "standardRoom"], ["Deluxe", "특실", "deluxeRoom"]];
+// A bus has a real seat choice, and the provider's own 고속/시외버스 captures carry it. The chat
+// flow has always asked for it; the form left it null until now.
+/* 지급구분 as rcLabel wants it: [en, ko, code]. */
+/* The provider's own 통화 master (179 rows), fetched once and shaped the way rcLabel/選択 want it:
+ * [en, ko, code]. KRW leads — it is what most receipts are — and the rest follow in the provider's
+ * order. Until it arrives the picker still works with the handful people actually type. */
+/* The company asked to start with 원화/USD/JPY only; loadCurrencies() swaps in the provider's full
+ * master when the form needs it, so widening this is a one-line change. */
+let CURRENCY_OPTS = [["KRW · Korean won", "원화 (KRW)", "KRW"], ["USD · US dollar", "미국 달러 (USD)", "USD"],
+  ["JPY · Japanese yen", "일본 엔 (JPY)", "JPY"]];
+const CURRENCY_ALLOW = ["KRW", "USD", "JPY"];   // first round; the master has 179
+let currencyLoad = null;
+function loadCurrencies() {
+  if (currencyLoad) return currencyLoad;
+  currencyLoad = fetch(`${BZ_API_BASE()}/agents/settlement/currencies`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      const rows = (j && (j.data || j.payload)) || [];
+      if (!rows.length) return CURRENCY_OPTS;
+      const label = (c) => `${c.name}${c.nation ? " · " + c.nation : ""}`
+        + `${c.currencyCodeName ? " " + c.currencyCodeName : ""}`;
+      // The company asked to START with 원화/USD/JPY: the labels still come from the provider's
+      // master (nation + currency name), only the LIST is held short. Widening = edit CURRENCY_ALLOW.
+      const allowed = rows.filter((c) => CURRENCY_ALLOW.includes(c.name));
+      const use = allowed.length >= 2 ? allowed : rows;
+      const krw = use.filter((c) => c.name === "KRW").map((c) => [label(c), label(c), c.name]);
+      const rest = use.filter((c) => c.name !== "KRW").map((c) => [label(c), label(c), c.name]);
+      CURRENCY_OPTS = [...krw, ...rest];
+      return CURRENCY_OPTS;
+    })
+    .catch(() => CURRENCY_OPTS);
+  return currencyLoad;
+}
+
+const TP_PAY_CLASS = [["Actual cost", "실비", "ACTUAL"], ["Limit", "한도", "LIMITED"],
+  ["Fixed", "정액", "FIXED"], ["Actual + fixed", "실비＋정액", "ACTUAL_FIXED"],
+  ["None", "없음", "NONE"]];
+const TP_BUS_SEATS = [["Standard", "일반", "standard"], ["Superior", "우등", "Superior"],
+  ["Premium", "프리미엄", "Premium"]];
 const TP_TRAIN_TYPES = [["KTX", "KTX", "KTX"], ["SRT", "SRT", "SRT"], ["ITX", "ITX", "ITX"],
   ["Saemaeul", "새마을호", "SAEMAEUL"], ["Mugunghwa", "무궁화호", "MUGUNGHWA"]];
 const TP_VEH_DOMESTIC = [["Air", "항공", "AIR"], ["Train", "열차", "__TRAIN__"], ["Express bus", "고속버스", "BUS"],
@@ -4300,7 +4389,15 @@ async function renderTpSub(container, vehicleValue, oversea) {
   // because that answer IS the vehicle the receipt carries.
   const isTrainGroup = vehicleValue === "__TRAIN__" || vehicleValue === "TRAIN";
   const isTrain = isTrainGroup || ["KTX", "SRT", "ITX", "SAEMAEUL", "MUGUNGHWA"].includes(vehicleValue);
-  const useTerminals = !oversea && (isAir || isTrainGroup);   // domestic AIR/train → id dropdowns
+  // A bus stops at terminals too - the master holds 158 of them - and the provider's own
+  // 고속버스 capture carries departTerminalId/arrivalTerminalId. Typing the name by hand could
+  // never produce those ids, so buses get the same dropdown as flights and trains.
+  const isBus = ["BUS", "CBUS", "EXPRESS_BUS", "INTERCITY_BUS"].includes(vehicleValue);
+  // Buses run between the master's Korean terminals whatever the TRIP is: an overseas trip can
+  // still contain a 고속버스 leg to the airport, and chat resolves that leg's terminals either way.
+  // Flights and trains stay domestic-only - the Korean airport/station lists say nothing about
+  // a flight between two foreign cities.
+  const useTerminals = isBus || (!oversea && (isAir || isTrainGroup));
   // These four are driven wherever the traveller needs to go: no route, no seat, no terminal.
   // The provider's RENTAL, CORP_CAR, AIRPORT_LIMOUSINE and OTHER samples all keep routeType,
   // seatClass and the locator ids null and carry only the plain place names. Offering a
@@ -4326,7 +4423,9 @@ async function renderTpSub(container, vehicleValue, oversea) {
     parts.push(f(T("From", "출발지"), `<input type="text" data-tp="depart">`));
     parts.push(f(T("To", "도착지"), `<input type="text" data-tp="arrival">`));
   }
-  if (isAir || isTrain) parts.push(f(T("Seat class", "좌석등급"), `<select data-tp="seatClass">${optsL(isTrain ? TP_TRAIN_SEATS : TP_AIR_SEATS, T("Select", "선택"))}</select>`));
+  // Seat class, with the grades THIS vehicle actually offers - exactly what the chat flow asks.
+  const seatList = isTrain ? TP_TRAIN_SEATS : (isBus ? TP_BUS_SEATS : TP_AIR_SEATS);
+  if (isAir || isTrain || isBus) parts.push(f(T("Seat class", "좌석등급"), `<select data-tp="seatClass">${optsL(seatList, T("Select", "선택"))}</select>`));
   container.innerHTML = parts.join("");
   const routeSel = container.querySelector('[data-tp="routeType"]');
   const returnRow = container.querySelector(".mx-return");
@@ -4343,7 +4442,7 @@ async function renderTpSub(container, vehicleValue, oversea) {
     syncReturn();
   }
   if (useTerminals) {
-    const terms = await fetchTerminals(isAir ? "AIR" : "KTX");
+    const terms = await fetchTerminals(isAir ? "AIR" : (isBus ? "BUS" : "KTX"));
     const o = `<option value="">${esc(T("Select", "선택"))}</option>`
       + terms.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
     const ds = container.querySelector('[data-tp="departSel"]'); if (ds) ds.innerHTML = o;
@@ -4403,6 +4502,7 @@ function autoSupplyFromTotalVat(totalEl, vatEl, supplyEl) {
  * additional detail + image are a separate step (settlementManualDetailForm) so the receipt is
  * created first, then enriched — matching the etc-card → receipt-etc flow. */
 function settlementManualExpenseForm() {
+  loadCurrencies().then(fillCurrencyPickers);
   const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
@@ -4425,7 +4525,9 @@ function settlementManualExpenseForm() {
         <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
       ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
       ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
-      ${f(T("Currency", "통화"), `<input type="text" data-k="currencyCode" value="KRW">`)}
+      ${f(T("Currency", "통화"), `<select data-k="currencyCode">`
+        + CURRENCY_OPTS.map((c) => `<option value="${esc(c[2])}">${esc(c[0])}</option>`).join("")
+        + `</select>`)}
       <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed"${oversea ? " checked" : ""}>
         <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
       ${baseAmounts}
@@ -4537,8 +4639,8 @@ function settlementManualDetailForm() {
 
   const html = `<div class="mx-grid">
       ${detailSection}
-      <label class="mx-f mx-wide"><span>${esc(T("Receipt image (optional)", "영수증 이미지 (선택)"))}</span>
-        <input type="file" accept="image/*" data-k="image"></label>
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
+        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
     </div>
     <div class="mx-actions"><span class="mx-note"></span>
       <button type="button" class="btn btn-primary mx-add">${esc(T("Save details", "상세 저장"))}</button></div>`;
@@ -4561,6 +4663,7 @@ function settlementManualDetailForm() {
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = w.querySelector('[data-k="image"]').files[0];
+    if (!file) return warn(T("Attach the receipt image.", "영수증 이미지를 첨부해 주세요."));
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -4615,7 +4718,76 @@ async function submitManualDetail(detail, file) {
 }
 
 /* COMPLETE mode — base + detail + optional image in ONE form (POST …/manual-expense/complete). */
+/* The receipt image for an expense the CHAT already collected: one file, one button. The
+ * expense itself lives in the session, so nothing is re-typed and nothing can drift. */
+function settlementAttachImageForm() {
+  const T = (en, ko) => LANG === "ko" ? ko : en;
+  // One picker at a time. The agent re-asks for the file whenever the user types at it, and a
+  // fresh form each time would leave the file they already chose stranded in a dead widget.
+  if (agent.attachForm && document.body.contains(agent.attachForm.w)
+      && !agent.attachForm.w.classList.contains("guide-done")) {
+    return agent.attachForm.w;
+  }
+  const thread = $("agentThread");
+  const wrap = document.createElement("div");
+  wrap.className = "msg msg-assistant";
+  wrap.innerHTML = `<div class="guide-widget">
+      <div class="mx-grid">
+        <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
+          <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
+      </div>
+      <div class="mx-actions"><span class="mx-note"></span>
+        <button type="button" class="btn btn-primary mx-attach">${esc(T("Attach and register", "첨부하고 등록"))}</button></div>
+    </div>`;
+  const w = wrap.querySelector(".guide-widget");
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  const note = w.querySelector(".mx-note");
+  const warn = (m) => { note.textContent = m; note.classList.add("mx-warn"); };
+  const doAttach = async () => {
+    const file = w.querySelector('[data-k="image"]').files[0];
+    if (!file) return warn(T("Attach the receipt image or PDF.", "영수증 이미지나 PDF를 첨부해 주세요."));
+    w.classList.add("guide-done");
+    appendMsg("user", file.name, {});
+    const typing = appendTyping();
+    setAgentBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", file, file.name);
+      const res = await fetch(`${BZ_API_BASE()}/agents/settlement/`
+        + `${encodeURIComponent(agent.sessionId)}/manual-expense/attach`
+        + `?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "POST", body: fd });
+      const jsonBody = await res.json().catch(() => ({}));
+      typing.remove();
+      if (!res.ok) throw apiError(jsonBody, res);
+      const data = (jsonBody && (jsonBody.data || jsonBody.payload)) || {};
+      agent.status = data.status || agent.status;
+      agent.draft = data.draftJson || agent.draft;
+      agent.lastData = data;
+      agent.attachForm = null;   // this receipt is filed; the next one opens its own picker
+      appendMsg("assistant", data.reply || T("Registered.", "등록했어요."));
+      settlementReceiptsPreview();
+      if ((data.pendingChoices || []).length) {
+        appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
+      }
+    } catch (e) {
+      typing.remove();
+      w.classList.remove("guide-done");
+      appendMsg("assistant", "⚠ " + (e.message || T("Could not attach the image.",
+        "이미지를 첨부하지 못했어요.")), { error: true });
+    } finally {
+      setAgentBusy(false);
+    }
+  };
+  w.querySelector(".mx-attach").addEventListener("click", doAttach);
+  // Typing "register it" is the same instruction as clicking the button, so the agent's
+  // EXPENSE_IMAGE_SUBMIT verdict reaches the very same handler - the file never leaves the browser.
+  agent.attachForm = { w, doAttach, file: () => w.querySelector('[data-k="image"]').files[0], warn };
+  return w;
+}
+
 function settlementManualFullForm() {
+  loadCurrencies().then(fillCurrencyPickers);
   const T = (en, ko) => LANG === "ko" ? ko : en;   // form follows the WEBSITE language, not chat
   const today = new Date().toISOString().slice(0, 10);
   const f = (label, input) => `<label class="mx-f"><span>${esc(label)}</span>${input}</label>`;
@@ -4656,13 +4828,15 @@ function settlementManualFullForm() {
         <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
       ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
       ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
-      ${f(T("Currency", "통화"), `<input type="text" data-k="currencyCode" value="KRW">`)}
+      ${f(T("Currency", "통화"), `<select data-k="currencyCode">`
+        + CURRENCY_OPTS.map((c) => `<option value="${esc(c[2])}">${esc(c[0])}</option>`).join("")
+        + `</select>`)}
       <label class="mx-f mx-check"><input type="checkbox" data-k="overseasUsed"${oversea ? " checked" : ""}>
         <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
       ${baseAmounts}
       ${detailSection}
-      <label class="mx-f mx-wide"><span>${esc(T("Receipt image (optional)", "영수증 이미지 (선택)"))}</span>
-        <input type="file" accept="image/*" data-k="image"></label>
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
+        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
     </div>
     <div class="mx-actions"><span class="mx-note"></span>
       <button type="button" class="btn btn-primary mx-add">${esc(T("Register receipt", "영수증 등록"))}</button></div>`;
@@ -4687,6 +4861,9 @@ function settlementManualFullForm() {
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = el("image").files[0];
+    // Every 기타증빙 carries its 증빙 - the API refuses an image-less create, so the form
+    // asks for it here rather than after everything else is filled in.
+    if (!file) return warn(T("Attach the receipt image.", "영수증 이미지를 첨부해 주세요."));
     const mestName = el("mestName").value.trim();
     const approvalDate = el("approvalDate").value;
     const approvalAmount = num(el("approvalAmount").value);   // supply = total - VAT
@@ -4934,7 +5111,7 @@ function receiptDetailHtml(obj, id, status) {
   const time = (obj.approvalTime || "").slice(0, 5);
   const when = [pick(obj.approvalDate, issued && issued.approvalDate), time].filter(Boolean).join(" ");
   const veh = rcLabel(etc.vehicleType, TP_VEH_DOMESTIC, TP_VEH_OVERSEA, TP_TRAIN_TYPES);
-  const seat = rcLabel(etc.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS) || etc.seatClass;
+  const seat = rcLabel(etc.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS, TP_BUS_SEATS) || etc.seatClass;
   const route = (etc.depart || etc.arrival)
     ? `${etc.depart || "?"} → ${etc.arrival || "?"}` + (etc.routeType ? " · " + rcLabel(etc.routeType, TP_ROUTE) : "")
     : "";
@@ -5024,13 +5201,30 @@ function rcLabel(value, ...lists) {
 /* Running preview of every expense registered so far — a labeled card per receipt that rides down
  * after each add/update, sourced from the draft's etcReceiptSaveRequests (mirrors what issued/bulk
  * stores). Shows the full input, the ISSUED status + receipt #, and a running total. */
+/* Every expense on the draft, whichever array it lives in: the ones we registered are ATTACHED
+ * (bstrReceipts, so the 정산서 points at our receipt and keeps 교통수단/출발지/도착지/이용일), and a
+ * receipt that could not be attached still rides in etcReceiptSaveRequests. Deduped by receiptId. */
+function settleDraftReceipts(doc) {
+  const rows = [...(doc.etcReceiptSaveRequests || []), ...(doc.bstrReceipts || [])];
+  const seen = new Set();
+  return rows.filter((r) => {
+    const key = r.receiptId || r.id;
+    if (key == null) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /* One registered-expense (flat etcReceiptSaveRequests entry) as a labeled card — shared by the chat
  * preview and the saved-settlement detail modal. */
 function settleReceiptItemHtml(r, i) {
   const won = (n) => "₩" + Number(n || 0).toLocaleString();
   const fld = (label, value) => (value == null || value === "")
     ? "" : `<div class="rc-f"><span class="rc-k">${esc(label)}</span><span class="rc-v">${esc(value)}</span></div>`;
-  const status = r.expenseStatus || "";
+  // An attached (bstrReceipts) row has no expenseStatus field: being attachable at all means
+  // the receipt is ISSUED, which is what the badge is telling the user.
+  const status = r.expenseStatus || ((r.receiptId && r.id) ? "ISSUED" : "");
   const badge = status === "ISSUED"
     ? `<span class="rc-badge rc-ok">${esc(T("Issued", "발급"))}${r.receiptId ? " · #" + r.receiptId : ""}</span>`
     : status === "NOT_ISSUED"
@@ -5038,33 +5232,57 @@ function settleReceiptItemHtml(r, i) {
       : (r.receiptId ? `<span class="rc-badge">#${esc(r.receiptId)}</span>` : "");
   const time = (r.approvalTime || "").slice(0, 5).replace(/^(\d{2})(\d{2})$/, "$1:$2");
   const when = [r.approvalDate, time].filter(Boolean).join(" ");
-  const route = (r.depart || r.arrival)
-    ? `${r.depart || "?"} → ${r.arrival || "?"}` + (r.routeType ? " · " + rcLabel(r.routeType, TP_ROUTE) : "")
-    : "";
-  const period = (r.usedStartDate && r.usedEndDate && r.usedStartDate !== r.usedEndDate)
-    ? `${r.usedStartDate} ~ ${r.usedEndDate}` : (r.usedStartDate || "");
   const veh = rcLabel(r.vehicleType, TP_VEH_DOMESTIC, TP_VEH_OVERSEA, TP_TRAIN_TYPES);
-  const seat = rcLabel(r.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS) || r.seatClass;
+  const seat = rcLabel(r.seatClass, TP_AIR_SEATS, TP_TRAIN_SEATS, TP_BUS_SEATS) || r.seatClass;
   const typeLine = [r.tranKindName, r.tranKindType && r.tranKindType !== r.tranKindName ? "(" + r.tranKindType + ")" : ""]
     .filter(Boolean).join(" ");
   const imgs = (r.imageIds || []).length;
+  // Editable rows carry the receipt id and the server-side key; the pencil opens an inline editor
+  // that PATCHes the RECEIPT itself. Derived rows (규정금액, 지급구분, 세금코드, image) stay read-only.
+  const canEdit = !!r.receiptId;
+  const fldE = (label, value, key, kind, opts) => {
+    if (!canEdit) return fld(label, value);
+    const raw = (value == null ? "" : String(value));
+    return `<div class="rc-f rc-edit" data-rc-id="${esc(r.receiptId)}" data-rc-key="${esc(key)}"`
+      + ` data-rc-kind="${esc(kind || "text")}"${opts ? ` data-rc-opts="${esc(JSON.stringify(opts))}"` : ""}>`
+      + `<span class="rc-k">${esc(label)}</span>`
+      + `<span class="rc-v">${esc(raw || "—")}<button type="button" class="rc-pen" title="${esc(T("Edit", "수정"))}">✎</button></span></div>`;
+  };
+  const vehOpts = (String(r.vehicleType || "").length || veh)
+    ? [...TP_VEH_DOMESTIC, ...TP_VEH_OVERSEA, ...TP_TRAIN_TYPES] : null;
+  const seatOpts = [...TP_AIR_SEATS, ...TP_TRAIN_SEATS, ...TP_BUS_SEATS];
   const fields = [
     fld(T("Type", "경비 항목"), typeLine),
-    fld(T("When", "일시"), when),
-    fld(T("Amount", "승인금액"), won(r.approvalAmount) + (r.currencyCode && r.currencyCode !== "KRW" ? " " + r.currencyCode : "")),
+    fldE(T("When", "일시"), r.approvalDate, "date", "date"),
+    fldE(T("Amount (KRW)", "승인금액 (원화)"), r.approvalAmount, "amount", "number"),
+    // 외화/원화 (feedback #5). The settlement adds up the KRW figure above; these three say what was
+    // actually paid and how it was converted, so the two can always be checked against each other.
+    fldE(T("Currency", "통화"), r.currencyCode || "KRW", "currencyCode", "select", CURRENCY_OPTS),
+    (String(r.currencyCode || "KRW").toUpperCase() === "KRW" ? "" :
+      fldE(T("Foreign amount", "외화금액"), r.overseasApprovalAmount, "foreignAmount", "number")),
+    (r.exchangeRate ? fld(T("Exchange rate", "환율"),
+      Number(r.exchangeRate).toLocaleString() + " " + T("KRW", "원")) : ""),
     fld(T("Supply / VAT", "공급가액 / 부가세"), (r.supplyAmount != null || r.vatAmount != null)
       ? `${won(r.supplyAmount)} / ${won(r.vatAmount)}` : ""),
-    fld(T("Transport", "교통수단"), veh),
-    fld(T("Route", "구간"), route),
-    fld(T("Seat", "좌석"), seat),
-    fld(T("Used", "이용일"), period),
-    fld(T("Room", "객실"), r.roomType),
-    fld(T("Star", "성급"), r.starRating),
-    fld(T("Partner hotel", "제휴 호텔"), r.partnerHotel),
-    fld(T("Headcount", "인원수"), r.personCount),
-    fld(T("Meal", "식대 구분"), r.foodDivisionType),
+    fldE(T("Merchant", "가맹점"), r.mestName, "merchant", "text"),
+    fldE(T("Transport", "교통수단"), r.vehicleType, "vehicleType", "select", vehOpts),
+    fldE(T("Departure", "출발지"), r.depart, "depart", "text"),
+    fldE(T("Arrival", "도착지"), r.arrival, "arrival", "text"),
+    fldE(T("Seat", "좌석"), r.seatClass, "seatClass", "select", seatOpts),
+    fldE(T("Used from", "이용 시작일"), r.usedStartDate, "usedStartDate", "date"),
+    fldE(T("Used to", "이용 종료일"), r.usedEndDate, "usedEndDate", "date"),
+    fldE(T("Room", "객실"), r.roomType, "roomType", "text"),
+    fldE(T("Star", "성급"), r.starRating, "starRating", "number"),
+    fldE(T("Partner hotel", "제휴 호텔"), r.partnerHotel, "partnerHotel", "text"),
+    fldE(T("Headcount", "인원수"), r.personCount, "personCount", "number"),
+    fldE(T("Meal", "식대 구분"), r.foodDivisionType, "foodDivisionType", "text"),
     fld(T("Overseas", "해외"), r.overseasUsed ? T("Yes", "예") : ""),
     fld(T("Image", "이미지"), imgs ? imgs + T(" file(s)", "개") : ""),
+    // What 규정조회 returned for this line (feedback #8/#9). Always shown, even when it equals the
+    // approved amount — the company reads a hidden row as a missing field, not as a tidy one.
+    fld(T("Policy amount", "규정금액"), r.ruledAmount != null ? won(r.ruledAmount) : ""),
+    fld(T("Pay class", "지급구분"), rcLabel(r.bstrPayClassType, TP_PAY_CLASS) || r.bstrPayClassType),
+    fld(T("Tax code", "세금코드"), r.taxName ? (r.taxCode ? r.taxCode + " · " + r.taxName : r.taxName) : ""),
   ].join("");
   return `<div class="rc-item">
       <div class="rc-top"><span class="rc-idx">${i + 1}</span>
@@ -5073,15 +5291,99 @@ function settleReceiptItemHtml(r, i) {
       <div class="rc-grid">${fields}</div></div>`;
 }
 
+/* The preview card's inline editor. One delegated listener for the whole thread: the pencil turns a
+ * row into an input (or a dropdown for 교통수단/좌석), and saving PATCHes the RECEIPT in BizPlay —
+ * our draft is then rebuilt from the server's answer, so the two cannot drift apart. */
+/* Swap the short fallback list for the full 통화 master in any picker already on screen. */
+function fillCurrencyPickers() {
+  document.querySelectorAll('select[data-k="currencyCode"]').forEach((sel) => {
+    if (sel.options.length >= CURRENCY_OPTS.length) return;
+    const keep = sel.value || "KRW";
+    sel.innerHTML = CURRENCY_OPTS.map((c) =>
+      `<option value="${esc(c[2])}"${c[2] === keep ? " selected" : ""}>${esc(c[0])}</option>`).join("");
+  });
+}
+
+function settleEditorBind() {
+  const thread = $("agentThread");
+  if (!thread || thread.dataset.rcEditBound) return;
+  thread.dataset.rcEditBound = "1";
+  thread.addEventListener("click", async (ev) => {
+    const pen = ev.target.closest(".rc-pen");
+    if (!pen) return;
+    const cell = pen.closest(".rc-edit");
+    if (!cell || cell.querySelector(".rc-input, .rc-select")) return;
+    const kind = cell.getAttribute("data-rc-kind") || "text";
+    const key = cell.getAttribute("data-rc-key");
+    const id = cell.getAttribute("data-rc-id");
+    const vSpan = cell.querySelector(".rc-v");
+    const current = vSpan.textContent.replace(/✎$/, "").trim().replace(/^—$/, "");
+    let input;
+    if (kind === "select") {
+      const opts = JSON.parse(cell.getAttribute("data-rc-opts") || "[]");
+      input = document.createElement("select");
+      input.className = "rc-select";
+      input.innerHTML = opts.map((o) =>
+        `<option value="${esc(o[2])}"${o[2] === current ? " selected" : ""}>${esc(T(o[0], o[1]))}</option>`).join("");
+    } else {
+      input = document.createElement("input");
+      input.className = "rc-input";
+      input.type = kind === "number" ? "number" : (kind === "date" ? "date" : "text");
+      input.value = current;
+    }
+    vSpan.replaceChildren(input);
+    const save = document.createElement("button");
+    save.type = "button"; save.className = "rc-ok"; save.textContent = "✓";
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.className = "rc-cancel"; cancel.textContent = "✕";
+    vSpan.append(save, cancel);
+    input.focus();
+    const close = () => settlementReceiptsPreview();   // redraw from the draft as it stands
+    cancel.addEventListener("click", close);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") save.click();
+      if (e.key === "Escape") close();
+    });
+    save.addEventListener("click", async () => {
+      const value = input.value;
+      save.disabled = cancel.disabled = true;
+      const typing = appendTyping();
+      setAgentBusy(true);
+      try {
+        const res = await fetch(`${BZ_API_BASE()}/agents/settlement/`
+          + `${encodeURIComponent(agent.sessionId)}/expense/${encodeURIComponent(id)}/field`
+          + `?corpNo=${encodeURIComponent(CORP_NO)}`,
+          { method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, value }) });
+        const json = await res.json().catch(() => ({}));
+        typing.remove();
+        if (!res.ok) throw apiError(json, res);
+        const data = (json && (json.data || json.payload)) || {};
+        agent.draft = data.draftJson || agent.draft;
+        agent.lastData = data;
+        appendMsg("assistant", data.reply || T("Updated.", "수정했어요."));
+        settlementReceiptsPreview();                   // the corrected line, straight from the server
+      } catch (e) {
+        typing.remove();
+        appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
+        settlementReceiptsPreview();
+      } finally {
+        setAgentBusy(false);
+      }
+    });
+  });
+}
+
 function settlementReceiptsPreview() {
   const doc = (agent.draft && agent.draft[0]) || {};
-  const list = doc.etcReceiptSaveRequests || [];
+  const list = settleDraftReceipts(doc);
   if (!list.length) return;
   const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
   const body = list.map((r, i) => settleReceiptItemHtml(r, i)).join("")
     + `<div class="rc-total"><span>${esc(T("Total", "합계"))}</span>`
     + `<b>${esc("₩" + total.toLocaleString())} · ${list.length}${esc(T(" item(s)", "건"))}</b></div>`;
   previewCard("settleReceipts", T("Registered expenses", "등록한 경비"), "briefcase", body);
+  settleEditorBind();
 }
 
 /* Fetch this corp's saved settlements (our DB) and map them into report-table rows — settlements ARE
@@ -5154,7 +5456,7 @@ async function showSettlementDetail(sessionId) {
     if (!res.ok) throw apiError(json, res);
     const data = (json && (json.data || json.payload)) || {};
     const doc = (data.draftJson && data.draftJson[0]) || {};
-    const list = doc.etcReceiptSaveRequests || [];
+    const list = settleDraftReceipts(doc);
     const won = (n) => "₩" + Number(n || 0).toLocaleString();
     const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
     body.innerHTML = `<div class="ss-detail-meta">${esc(data.status || "")} · ${list.length} `
@@ -5546,10 +5848,16 @@ function nextWizardStep() {
     planDestDetail = null;   // fresh plan — the detail question comes again
     planDestCountry = null;
     planPeriodPlaces = null;
+    // The forms on offer are the CORPORATION'S OWN, read from the live catalogue: whatever
+    // /purposes returns is what the user can pick - 국내출장 when the company has it, and any
+    // template they add later, with no code change. The built-in list is only the fallback
+    // for when the catalogue cannot be reached.
+    const purposeNames = (bzCatalog && Object.keys(bzCatalog).length)
+      ? Object.keys(bzCatalog) : Object.keys(TRIP_TYPES);
     askOnce("purpose", () => guideChips(
-      T("To get us started — which trip form should we use? Overseas and domestic are the usual ones, and the rest are your company’s special templates.",
-        "먼저 어떤 출장 양식을 사용할까요? 해외출장과 국내출장이 일반적이고, 나머지는 회사 전용 템플릿이에요."),
-      Object.keys(TRIP_TYPES).map((k) => ({ label: k, value: k })),
+      T("To get us started — which trip form should we use? These are the forms set up for your company.",
+        "먼저 어떤 출장 양식을 사용할까요? 회사에 등록된 양식이에요."),
+      purposeNames.map((k) => ({ label: k, value: k })),
       (o) => {
         const sel = $("tripPurpose");
         sel.value = o.value;
@@ -6203,6 +6511,12 @@ async function sendAgent(opts) {
     } else if (agent.live) {
       url = `${BZ_API_BASE()}/agents/plan`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
+      // A title the user typed into the form is a VALUE, not context - send it so the agent
+      // writes it instead of composing one over it. Only when it DIFFERS from what the agent
+      // already has: a title the agent itself wrote back into the field is not a user edit.
+      const typedTitle = ($("tripTitle") && $("tripTitle").value || "").trim();
+      const agentTitle = (((agent.draft || [])[0] || {}).title || "").trim();
+      if (typedTitle && typedTitle !== agentTitle) body.title = typedTitle;
       if (fileIds.length) body.fileIds = fileIds;
       if (agent.sessionId) body.sessionId = agent.sessionId;
     } else {
@@ -6254,7 +6568,9 @@ async function sendAgent(opts) {
           if (w) { w.classList.add("guide-done"); w.classList.add("choice-stale"); }
         });
     }
-    if (data.periodPlaces && data.periodPlaces.length) planPeriodPlaces = data.periodPlaces;
+    // An EMPTY list is an answer too - the server sends the day rows it now has, and the
+    // card must not keep showing a day the trip no longer covers.
+    if (Array.isArray(data.periodPlaces)) planPeriodPlaces = data.periodPlaces;
     // The server owns the 출장지 상세 slot (asked there, editable there — "add destination
     // detail of 'floor 2'"); mirror it so the card shows it and the save posts it.
     if (typeof data.destinationDetail === "string" && data.destinationDetail.trim()) {
@@ -6335,6 +6651,23 @@ async function sendAgent(opts) {
         // then posted multipart (a file can't ride a chat turn).
         else if (data.intent === "MANUAL_EXPENSE_PROMPT") settlementManualExpenseForm();
         else if (data.intent === "MANUAL_EXPENSE_PROMPT_FULL") settlementManualFullForm();
+        // The expense is complete and waiting on its 증빙: a file cannot ride a chat turn, so
+        // the widget below carries it to .../manual-expense/attach, which registers exactly
+        // the expense the conversation collected.
+        else if (data.intent === "EXPENSE_IMAGE_REQUIRED") settlementAttachImageForm();
+        // The user TYPED the instruction to register it ("register", "올려줘", anything the agent
+        // judged as go-ahead) instead of clicking. The bytes are in the picker on screen, so the
+        // click handler runs for them; with no file chosen the picker just says so and waits.
+        else if (data.intent === "EXPENSE_IMAGE_SUBMIT") {
+          const form = settlementAttachImageForm();
+          const h = agent.attachForm;
+          if (h && h.file()) h.doAttach();
+          else if (h) h.warn(LANG === "ko" ? "먼저 파일을 선택해 주세요."
+            : "Choose the file first, then I'll register it.");
+        }
+        // An attached receipt belongs in the running list as much as a registered one — it is the
+        // same settlement line, and it now carries 교통수단/구간/이용일/규정금액/세금코드 to show.
+        else if (data.intent === "EVIDENCE_ATTACH") settlementReceiptsPreview();
         else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
         // "Show my receipts" — the SERVER's LLM judged the ask (no client word lists);
         // the UI just opens its browser widget with the judged filter.
@@ -7895,14 +8228,27 @@ function settleEvidenceHtml(d) {
     const amount = num(ir.issuedAmt) || num(r.approvalAmount);
     const vat = num(ir.vatAmt != null ? ir.vatAmt : r.vatAmount);
     const supply = num(ir.splAmt != null ? ir.splAmt : r.supplyAmount);
+    // The 기타증빙 detail the company asked for (#8). It rides on the line itself; a line written
+    // before that fix simply has none, and shows "—".
+    const veh = rcLabel(r.vehicleType, TP_VEH_DOMESTIC, TP_VEH_OVERSEA, TP_TRAIN_TYPES) || r.vehicleType;
+    const route = (r.depart || r.arrival) ? `${r.depart || "?"} → ${r.arrival || "?"}` : "";
+    const used = (r.usedStartDate && r.usedEndDate && r.usedStartDate !== r.usedEndDate)
+      ? `${r.usedStartDate} ~ ${r.usedEndDate}` : (r.usedStartDate || "");
+    const ruled = (r.ruledAmount != null) ? fmtMoney(num(r.ruledAmount)) : "";
+    const tax = r.taxName ? (r.taxCode ? `${r.taxCode} · ${r.taxName}` : r.taxName) : "";
     return `<tr>
       <td>${esc(r.approvalDate || "—")}</td>
       <td title="${esc(r.mestName || "")}">${esc(r.mestName || "—")}</td>
       <td>${esc(kind)}</td>
       <td>${esc(r.cardType || "—")}</td>
+      <td>${esc(veh || "—")}</td>
+      <td title="${esc(route)}">${esc(route || "—")}</td>
+      <td>${esc(used || "—")}</td>
       <td class="c-num">${esc(fmtMoney(supply))}</td>
       <td class="c-num">${esc(fmtMoney(vat))}</td>
       <td class="c-num">${esc(fmtMoney(amount))}</td>
+      <td class="c-num">${esc(ruled || "—")}</td>
+      <td>${esc(tax || "—")}</td>
       <td class="c-dim">${esc(String(r.id || "—"))}</td>
     </tr>`;
   }).join("");
@@ -7911,9 +8257,14 @@ function settleEvidenceHtml(d) {
       <thead><tr>
         <th>${esc(T("Date", "사용일"))}</th><th>${esc(T("Merchant", "가맹점"))}</th>
         <th>${esc(T("Type", "경비항목"))}</th><th>${esc(T("Card", "카드"))}</th>
+        <th>${esc(T("Transport", "교통수단"))}</th>
+        <th>${esc(T("Route", "출발지 → 도착지"))}</th>
+        <th>${esc(T("Used", "이용일"))}</th>
         <th class="c-num">${esc(T("Supply", "공급가액"))}</th>
         <th class="c-num">${esc(T("VAT", "부가세"))}</th>
         <th class="c-num">${esc(T("Total", "합계"))}</th>
+        <th class="c-num">${esc(T("Policy amount", "규정금액"))}</th>
+        <th>${esc(T("Tax code", "세금코드"))}</th>
         <th>${esc(T("Receipt id", "영수증 ID"))}</th>
       </tr></thead>
       <tbody>${body}</tbody>

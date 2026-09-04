@@ -86,13 +86,15 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private final BizplayProperties bizplayProperties;
     private final com.api.bizplay_conversational.service.turnVerifierAgentService.TurnVerifierAgentService turnVerifierAgentService;
     private final ObjectMapper objectMapper;
+    private final com.api.bizplay_conversational.service.corpProvisioningService.CorpProvisioningService corpProvisioningService;
 
     @Override
     @Transactional
     public BizplayPlanAgentResponse chat(BizplayPlanAgentRequest request, String bizplayToken) {
-        if (request.getCorpNo() == null || request.getCorpNo().isBlank()) {
-            throw new IllegalArgumentException("corpNo is required.");
-        }
+        // BizPlay sends the business number of whoever is logged in, and a session hangs off a
+        // corp row. Unknown-but-valid numbers are registered here on first use; unusable ones are
+        // refused with a reason instead of failing later as an unhandled FK violation (500).
+        request.setCorpNo(corpProvisioningService.requireUsableCorpNo(request.getCorpNo(), bizplayToken));
         if (request.getCorpUserId() == null || request.getCorpUserId().isBlank()) {
             // Demo/default drafter — the document's draftUserId and row 0 come from this user.
             request.setCorpUserId(bizplayProperties.getDefaultCorpUserId());
@@ -883,6 +885,39 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             // when the message says nothing about dates, and the clarify short-circuits the
             // readiness re-check. The change is concrete; the phantom question goes.
             clarify = null;
+        }
+        // A title typed into the FORM is the user's own value, not context. Applied here,
+        // after the form has loaded (on the first turn the document does not exist yet), so
+        // the composer below sees a real title and leaves it alone - it only fills blank or
+        // generic ones. Without this a typed title was replaced by a composed one.
+        if (request.getTitle() != null && !request.getTitle().isBlank()
+                && !documents.isEmpty() && documents.get(0).isObject()) {
+            String typed = request.getTitle().trim();
+            if (!typed.equals(documents.get(0).path("title").asText(""))) {
+                ((ObjectNode) documents.get(0)).put("title", typed);
+                state.remove("composedTitle");   // not ours to recompose any more
+                log.info("Title taken from the form as the user typed it: '{}'", typed);
+            }
+        }
+        // Whose title is on the draft? One the USER gave - typed into the form, or stated
+        // in words ("제목을 ...") - is remembered, because the field mapper re-maps every
+        // turn and happily replaced it on the NEXT message ("저 혼자 가요" turned
+        // "9월 협력사 공장 감사" into "오사카 출장").
+        if (!documents.isEmpty() && documents.get(0).isObject()) {
+            String titleNow = documents.get(0).path("title").asText("").trim();
+            boolean namedIt = turnText != null && TITLE_NAMED.matcher(turnText).find();
+            if ((request.getTitle() != null && !request.getTitle().isBlank()) || namedIt) {
+                if (!titleNow.isBlank()) {
+                    state.put("userTitle", titleNow);   // theirs from here on
+                }
+            } else {
+                String theirs = state.path("userTitle").asText("").trim();
+                if (!theirs.isBlank() && !theirs.equals(titleNow)) {
+                    ((ObjectNode) documents.get(0)).put("title", theirs);
+                    log.info("Title restored to the user's own '{}' (the mapper wrote '{}')",
+                            theirs, truncateForLog(titleNow));
+                }
+            }
         }
         ensureMeaningfulTitle(state, documents, turnText, ko);
         // The mapper parrots a short answer into EVERY text field it can reach — "japan" became
@@ -3129,6 +3164,107 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 state.put("transportType", v.toUpperCase(java.util.Locale.ROOT));
                 what = ko ? "교통수단" : "transport";
             }
+            default -> { }
+        }
+        // Handled above? Then nothing else may claim this key - the scalar cases used to
+        // fall through into the form-field branch below, which rejected "destination" as
+        // "not on this form" after having just written it.
+        boolean handled = java.util.Set.of("destination", "destinationDetail",
+                "transportType").contains(key);
+        // Travellers and routes are lists, not scalars, so they take a key with an index
+        // or a name: "traveler:1" (empty value removes), "route:김도하", or a bare "route"
+        // for the whole trip. Same deterministic write, same validation against the
+        // corporation's own registered destinations - a preview row can be corrected
+        // without composing a sentence.
+        if (handled) {
+            // written above
+        } else if (key.startsWith("traveler:")) {
+            int at = Integer.parseInt(key.substring("traveler:".length()).trim());
+            ArrayNode names = state.withArray("travelers");
+            ArrayNode ids = state.withArray("travelerIds");
+            if (at < 0 || at >= names.size()) {
+                throw new IllegalArgumentException("No traveller at position " + at + ".");
+            }
+            String gone = names.get(at).asText("");
+            if (v.isBlank()) {
+                names.remove(at);
+                if (at < ids.size()) {
+                    ids.remove(at);
+                }
+                if (state.path("routePointsByTraveller").isObject()) {
+                    ((ObjectNode) state.get("routePointsByTraveller")).remove(gone);
+                }
+                what = ko ? "출장자" : "travellers";
+            } else {
+                // The name must be someone the corporation actually has.
+                // corpNo is the BUSINESS number; the roster call wants the corporation id.
+                Long corporationId = corporationIdFromToken(bizplayToken);
+                if (corporationId == null) {
+                    throw new IllegalArgumentException(
+                            "Staff directory unavailable - cannot verify \"" + v + "\".");
+                }
+                JsonNode roster = bizplayGatewayService.getCorporationUsers(
+                        corporationId, bizplayToken);
+                JsonNode hit = null;
+                for (JsonNode u : roster.path("users")) {
+                    String name = u.path("userName").asText("");
+                    if (name.equalsIgnoreCase(v) || String.valueOf(
+                            u.path("corporationUserId").asLong(0)).equals(v)) {
+                        hit = u;
+                        break;
+                    }
+                }
+                if (hit == null) {
+                    throw new IllegalArgumentException("No employee found for \"" + v + "\".");
+                }
+                names.set(at, hit.path("userName").asText(v));
+                long id = hit.path("corporationUserId").asLong(0);
+                while (ids.size() <= at) {
+                    ids.add(0L);
+                }
+                ids.set(at, id);
+                if (state.path("routePointsByTraveller").isObject() && !gone.isBlank()) {
+                    ObjectNode byWho = (ObjectNode) state.get("routePointsByTraveller");
+                    if (byWho.has(gone)) {
+                        byWho.set(names.get(at).asText(""), byWho.remove(gone));
+                    }
+                }
+                what = ko ? "출장자" : "traveller";
+            }
+        } else if (key.equals("route") || key.startsWith("route:")) {
+            ArrayNode points = objectMapper.createArrayNode();
+            for (String part : v.split(">")) {
+                String want = part.trim();
+                if (want.isEmpty()) {
+                    continue;
+                }
+                for (JsonNode o : planEnrichmentService.routeOptions(bizplayToken)) {
+                    String site = o.path("name").asText("");
+                    if (site.equalsIgnoreCase(want) || site.contains(want)
+                            || want.contains(site)) {
+                        points.add(site);   // validated against the master, never invented
+                        break;
+                    }
+                }
+            }
+            if (points.size() < 2) {
+                throw new IllegalArgumentException(
+                        "A route needs at least two registered destinations.");
+            }
+            if (!points.get(points.size() - 1).asText("").equals(points.get(0).asText(""))) {
+                points.add(points.get(0).asText(""));   // the trip comes back
+            }
+            String who = key.startsWith("route:") ? key.substring("route:".length()).trim() : "";
+            if (who.isBlank()) {
+                state.set("routePoints", points);
+                state.remove("routePointsByTraveller");
+            } else {
+                state.with("routePointsByTraveller").set(who, points);
+            }
+            state.remove("pendingRouteAsk");
+            what = ko ? "이동경로" : "travel route";
+        } else {
+        switch (key) {
             case "startDate", "endDate" -> {
                 String iso = v.length() >= 10 ? v.substring(0, 10) : v;
                 doc.put("startDate".equals(key) ? "bstrStartDate" : "bstrEndDate",
@@ -3152,6 +3288,30 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         : wrote.get(0);
             }
         }
+        }
+        // The per-day rows are derived data: they must follow the period and the place they
+        // were derived from. Editing the start date left a row on the old first day, and
+        // changing the city left every day naming the old one.
+        if (java.util.Set.of("startDate", "endDate", "destination").contains(key)
+                && state.path("periodPlaces").isObject()) {
+            String from = isoDay(doc.path("bstrStartDate").asText(""));
+            String to = isoDay(doc.path("bstrEndDate").asText(""));
+            String placeNow = state.path("destination").asText("");
+            ObjectNode places = (ObjectNode) state.get("periodPlaces");
+            java.util.List<String> days = new ArrayList<>();
+            places.fieldNames().forEachRemaining(days::add);
+            for (String day : days) {
+                if (!from.isBlank() && (day.compareTo(from) < 0
+                        || (!to.isBlank() && day.compareTo(to) > 0))) {
+                    places.remove(day);   // outside the trip now
+                } else if ("destination".equals(key) && !placeNow.isBlank()
+                        && places.path(day).isObject()) {
+                    ((ObjectNode) places.get(day)).put("place", placeNow);
+                }
+            }
+            formValueWriterService.refreshPeriod(doc, state);
+        }
+
         // Every traveller's document carries the same trip-level values.
         // The drafter is already on the master document - keep it, do not invent one.
         syncTravelerDocuments(documents, state,
@@ -3165,7 +3325,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // The transcript keeps every change, however it was made - a later "그건 다시 바꿔줘"
         // has to see this edit even though no chat turn produced it.
         appendTurn(session, "user", "[UI] " + what + " = " + v);
-        String reply = t(ko, what + " updated: " + v + ".", what + "을(를) " + v + "(으)로 바꿨어요.");
+        // Clearing a field is not "changed to nothing" - say what actually happened.
+        String reply = v.isBlank()
+                ? t(ko, what + " cleared.", what + " 항목을 비웠어요.")
+                : t(ko, what + " updated: " + v + ".",
+                        what + "을(를) " + v + "(으)로 바꿔어요.");
         appendTurn(session, "assistant", reply);
         ConversationalAgentSession saved = sessionRepo.save(session);
         log.info("[EDIT] {} = '{}' on session {}", key, truncateForLog(v), sessionId);
@@ -3185,7 +3349,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .destinationCountry(state.path("destinationCountry").asText(null))
                 .destinationDetail(state.has("destinationDetail")
                         ? state.path("destinationDetail").asText("") : null)
-                .periodPlaces(periodPlacesForResponse(state))
+                // ALWAYS the current day rows on an edit, empty array included: the client
+                // mirrors what it is sent, and "nothing" used to mean "keep what you had" -
+                // so a day dropped by a shorter trip stayed on the card.
+                .periodPlaces(periodPlacesForResponse(state) == null
+                        ? objectMapper.createArrayNode() : periodPlacesForResponse(state))
                 .transportDefaulted(state.path("transportType").asText("").isBlank() ? true : null)
                 .draftJson(saved.getDraftJson())
                 .build();
@@ -4002,6 +4170,15 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (message != null && TITLE_NAMED.matcher(message).find()) {
             return;   // they said "제목" - whatever they wrote is the title they want
         }
+        // The user's own title is theirs, WHATEVER it says. It used to be second-guessed:
+        // a title equal to the purpose ("해외출장") was treated as a category label and
+        // replaced, so a plan did not carry the title that was typed. Only titles this
+        // method composed are still ours to revisit.
+        if (!state.path("userTitle").asText("").isBlank()
+                && state.path("userTitle").asText("")
+                        .equals(doc.path("title").asText("").trim())) {
+            return;
+        }
         String title = doc.path("title").asText("").trim();
         String dest = state.path("destination").asText("").trim();
         String purpose = state.path("purpose").path("purposeName").asText("").trim();
@@ -4032,12 +4209,83 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         } else {
             return;   // nothing to build one from yet - leave it for a later turn
         }
+        // Nobody named this trip, so the AGENT names it - from what the draft actually
+        // says (where, what for), not by gluing the destination to the word "출장".
+        // The composition above stays as the fallback: a title is never left blank
+        // because a model call failed or answered with a category.
+        // Regenerated only when the facts it is made of actually move. Re-asking every turn
+        // made the title wobble ("해외출장: 오사카 품질 감사" -> "오사카 협력사 품질 감사 출장")
+        // on a turn that said nothing about the trip - and cost a model call each time.
+        String facts = dest + "|" + purpose + "|" + segment + "|"
+                + isoDay(doc.path("bstrStartDate").asText("")) + "|"
+                + isoDay(doc.path("bstrEndDate").asText("")) + "|"
+                + truncate(doc.path("content").asText(""), 200);
+        String lastGenerated = state.path("generatedTitle").asText("");
+        if (!lastGenerated.isBlank() && facts.equals(state.path("titleFacts").asText(""))) {
+            composed = lastGenerated;   // same trip, same name
+        } else {
+            String written = generatedTitle(doc, state, dest, purpose, ko);
+            if (written != null && !written.isBlank()) {
+                composed = written;
+                state.put("generatedTitle", written);
+                state.put("titleFacts", facts);
+            }
+        }
         if (!composed.equals(title)) {
             doc.put("title", composed);
             log.info("Plan title composed as '{}' - the mapper had left it as '{}'.",
                     composed, title);
         }
         state.put("composedTitle", composed);
+    }
+
+    /**
+     * A title for a trip nobody named: composed by the follow-up agent from the draft's own
+     * facts. Null when it cannot produce a usable one - the caller keeps its deterministic
+     * composition, so this can only improve a title, never lose one.
+     */
+    private String generatedTitle(ObjectNode doc, ObjectNode state, String dest,
+                                  String purpose, boolean ko) {
+        if (!agentPromptService.isModuleEnabled("form-follow-up")) {
+            return null;
+        }
+        try {
+            String facts = "Destination: " + dest + ". Purpose: " + purpose
+                    + ". Classification: " + state.path("purpose").path("segmentName").asText("")
+                    + ". Dates: " + isoDay(doc.path("bstrStartDate").asText("")) + " ~ "
+                    + isoDay(doc.path("bstrEndDate").asText(""))
+                    + ". Travellers: " + state.path("travelers").toString()
+                    + ". What the user said this trip is for: "
+                    + truncate(doc.path("content").asText(""), 300);
+            String asked = "Name this business trip in ONE short title - what it is and "
+                    + "where, as a person would write it on the document (about 20 "
+                    + "characters, at most 30). No dates, no quotation marks, no "
+                    + "explanation: answer with the title alone. Do NOT answer with just "
+                    + "the trip category (\"해외출장\", \"장기\") - name THIS trip.";
+            String got = formFollowUpAgentService.answerDraftQuestion(facts, asked, ko);
+            if (got == null) {
+                return null;
+            }
+            String title = got.replaceAll("[\"“”'`]", "").trim();
+            int br = title.indexOf("\n");
+            if (br > 0) {
+                title = title.substring(0, br).trim();   // first line only
+            }
+            String squashed = title.replaceAll("[\\s·/,-]+", "");
+            String segment = state.path("purpose").path("segmentName").asText("");
+            boolean useless = title.isBlank() || title.length() > 40
+                    || title.equalsIgnoreCase(purpose) || title.equalsIgnoreCase(segment)
+                    || squashed.equalsIgnoreCase((purpose + segment).replaceAll("\s+", ""));
+            if (useless) {
+                log.info("Generated title '{}' rejected - falling back to the composition.",
+                        truncateForLog(title));
+                return null;
+            }
+            return title;
+        } catch (Exception e) {
+            log.info("Title generation failed ({}) - using the composed title.", e.getMessage());
+            return null;
+        }
     }
 
     /** "인천에서 출발", "출발지는 인천", "from Incheon" - the ways an origin gets stated on its own. */
@@ -4446,6 +4694,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         log.info("Answer-first: '{}' vs pending ask '{}' -> {}", truncateForLog(message),
                 truncateForLog(asked), answers ? "ANSWER (other judges skipped)" : "not an answer");
         return answers;
+    }
+
+    /** The day part of an ISO timestamp ("2026-09-09T00:00:00.000Z" -> "2026-09-09"). */
+    private static String isoDay(String iso) {
+        return iso == null || iso.length() < 10 ? "" : iso.substring(0, 10);
     }
 
     /** The last thing the agent said, in full. */
