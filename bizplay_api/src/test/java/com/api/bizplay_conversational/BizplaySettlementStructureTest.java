@@ -6,6 +6,7 @@ import com.api.bizplay_conversational.model.request.BizplayPlanAgentRequest;
 import com.api.bizplay_conversational.model.response.BizplayPlanAgentResponse;
 import com.api.bizplay_conversational.repository.ConversationalAgentSessionRepo;
 import com.api.bizplay_conversational.service.bizplayGatewayService.BizplayGatewayService;
+import com.api.bizplay_conversational.service.approvalLineService.ApprovalLineService;
 import com.api.bizplay_conversational.service.bizplaySettlementAgentService.BizplaySettlementAgentServiceImple;
 import com.api.bizplay_conversational.service.formFollowUpAgentService.FormFollowUpAgentService;
 import com.api.bizplay_conversational.service.formSkeletonService.FormSkeletonServiceImple;
@@ -94,7 +95,8 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("161");
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // --- drive the flow --------------------------------------------------------
@@ -185,7 +187,8 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("161");
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         String sessionId = null;
@@ -249,7 +252,8 @@ class BizplaySettlementStructureTest {
         BizplayProperties props = new BizplayProperties();
         props.setDefaultCorpUserId("161");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         BizplayPlanAgentRequest req = new BizplayPlanAgentRequest();
@@ -323,7 +327,8 @@ class BizplaySettlementStructureTest {
         props.setDefaultCorpUserId("30447");
 
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // --- turn 1: rich message fills slots, but LISTS the plans (no auto-pick) ----
@@ -405,7 +410,8 @@ class BizplaySettlementStructureTest {
         BizplayProperties props = new BizplayProperties();
         props.setDefaultCorpUserId("161");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // import a plan so a draft exists
@@ -488,7 +494,8 @@ class BizplaySettlementStructureTest {
         BizplayProperties props = new BizplayProperties();
         props.setDefaultCorpUserId("30447");
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
-                sessions, guardrail, gateway, new FormSkeletonServiceImple(mapper),
+                sessions, guardrail, gateway, mock(ApprovalLineService.class),
+                new FormSkeletonServiceImple(mapper),
                 planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
 
         // "submit" with no draft yet → NOT a submit (no provider call)
