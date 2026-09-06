@@ -26,6 +26,13 @@ public interface BizplayGatewayService {
      */
     JsonNode getPapers(long purposeId, Long segmentId, String token);
 
+    /**
+     * The same papers WITHOUT the trip-type filter {@link #getPapers} applies. Diagnostic only: it
+     * shows a form that exists but is registered for the other 국내/해외, which is invisible to the
+     * typed lookup the provider's own screen uses.
+     */
+    JsonNode getPapersAnyTripType(long purposeId, Long segmentId, String token);
+
     /** All staff of a corporation ({users:[...], count}). Cached briefly. */
     JsonNode getCorporationUsers(long corporationId, String token);
 
@@ -222,4 +229,7 @@ public interface BizplayGatewayService {
      * the rate detail's currencyName; 1 when the detail is unavailable.
      */
     int getCurrencyUnit(String fromCurrencyCode, String standardDate, String token);
+
+    /** 종사업장(활성화) 목록 — [{id, name, activated}]. Cached; corp master data. */
+    JsonNode getActiveBranchOffices(String token);
 }

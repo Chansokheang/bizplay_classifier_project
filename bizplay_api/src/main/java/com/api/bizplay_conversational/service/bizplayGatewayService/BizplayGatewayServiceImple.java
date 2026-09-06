@@ -84,6 +84,13 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getPapersAnyTripType(long purposeId, Long segmentId, String token) {
+        String query = segmentId != null ? "?segmentId=" + segmentId : "";
+        return getCached("papers:" + purposeId + ":" + segmentId,
+                buildUrl(endpoints.getPapers(), "purposeId", purposeId) + query, token);
+    }
+
+    @Override
     public JsonNode getPapers(long purposeId, Long segmentId, String token) {
         String query = segmentId != null ? "?segmentId=" + segmentId : "";
         // Discovery call: the untyped path returns the UNION of this purpose's papers, each
@@ -211,6 +218,10 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         String url = buildUrl(endpoints.getEtcCard());
         String bearer = resolveToken(token);
         try {
+            // The 기타증빙 body decides what the receipt DETAIL will hold (교통수단/출발지/도착지/
+            // 이용일): a field that never reaches the provider is a blank in the 정산서 상세, so the
+            // body is logged, the same way the settlement draft body is.
+            log.info("etc-card body -> {}: {}", url, objectMapper.writeValueAsString(expenses));
             String response = restClient.post()
                     .uri(url)
                     .header("accept", "*/*")
@@ -800,6 +811,12 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
             log.info("No rate detail for {} ({}) — treating the quote as per 1.", code, rootMessage(e));
             return 1;
         }
+    }
+
+
+    @Override
+    public JsonNode getActiveBranchOffices(String token) {
+        return getCached("branch-offices", buildUrl(endpoints.getBranchOfficesActive()), token);
     }
 
     /** Per-request token wins; the configured dev token is a local-testing fallback only. */

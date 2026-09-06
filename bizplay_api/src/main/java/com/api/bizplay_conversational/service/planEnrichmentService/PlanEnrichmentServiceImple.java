@@ -279,6 +279,29 @@ public class PlanEnrichmentServiceImple implements PlanEnrichmentService {
 
 
     @Override
+    public JsonNode routeAsk(ArrayNode documents, ObjectNode state, String token, boolean ko) {
+        if (documents == null || documents.isEmpty() || !documents.get(0).isObject()) {
+            return null;
+        }
+        JsonNode paper = planPaper((ObjectNode) documents.get(0), token);
+        JsonNode routeItem = paper == null ? null : paperItem(paper, "BSTR_ROUTE");
+        if (routeItem == null || !routeItem.path("used").asBoolean(true)
+                || routeOptions(token).isEmpty()) {
+            return null;
+        }
+        int party = state.path("travelers").size();
+        String perPerson = party > 1
+                ? t(ko, " Each traveller can have their own.", " 출장자별로 지정할 수 있어요.")
+                : "";
+        return ask("route", t(ko,
+                "Sure — what is the travel route? Pick the departure, destination and return "
+                        + "point below, or just tell me." + perPerson,
+                "네 — 이동경로를 어떻게 바꿀까요? 아래에서 출발지·목적지·복귀지를 고르시거나 "
+                        + "말씀해 주세요." + perPerson));
+    }
+
+
+    @Override
     public void previewRoutes(ArrayNode documents, ObjectNode state, String token) {
         if (documents == null || documents.isEmpty() || !documents.get(0).isObject()) {
             return;

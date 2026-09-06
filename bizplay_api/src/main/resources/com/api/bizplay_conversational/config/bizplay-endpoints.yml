@@ -50,6 +50,9 @@ bizplay:
     currency-codes: /api/v2/currency-code/combo
     exchange-rate: /api/v2/exchange-rate/cached
     exchange-rate-detail: /api/v2/cardmis-api/exchange-rate/{currencyCode}
+    # 종사업장(활성화): the slip's branchOfficeId must be an ACTIVE one, or the save is refused
+    # with "부가세사업장이 비활동 상태입니다" — a captured id goes stale the day it is deactivated.
+    branch-offices-active: /api/v2/corp/branch-office/activated
     # 규정조회 (company feedback #9): the 용도 policy for THIS trip + expense - 한도 금액,
     # 지급구분 (실비/한도/정액), and whether an 초과사유 is required. POST, body built in the gateway.
     policy-limit: /api/v2/bstr/policy/limit

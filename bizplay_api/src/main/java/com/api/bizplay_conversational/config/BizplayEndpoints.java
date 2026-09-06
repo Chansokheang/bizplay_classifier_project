@@ -91,6 +91,9 @@ public class BizplayEndpoints {
     /** 환율 상세 — its currencyName carries the QUOTE UNIT, e.g. "일본 JPY (100)". */
     private String exchangeRateDetail = "/api/v2/cardmis-api/exchange-rate/{currencyCode}";
 
+    /** 종사업장(활성화) — the VAT business places a slip may point at. GET, no params. */
+    private String branchOfficesActive = "/api/v2/corp/branch-office/activated";
+
     /** 규정조회: POST the trip + expense facts, get the 용도 policy back (한도/지급구분/초과사유 필요 여부). */
     private String policyLimit = "/api/v2/bstr/policy/limit";
 

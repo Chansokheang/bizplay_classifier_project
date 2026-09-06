@@ -67,4 +67,11 @@ public interface PlanEnrichmentService {
     com.fasterxml.jackson.databind.JsonNode resolveRoutePoints(String message,
             java.util.List<String> travellerNames, String token, boolean korean);
 
+    /**
+     * The 이동경로 question and its picker, regardless of whether a route is already set — for
+     * "change the travel route", where the readiness check would say nothing is missing.
+     * Returns null when this paper has no route item or the corporation has no registered sites.
+     */
+    com.fasterxml.jackson.databind.JsonNode routeAsk(ArrayNode documents, ObjectNode state,
+                                                     String token, boolean ko);
 }

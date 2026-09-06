@@ -77,6 +77,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private final FormValueWriterService formValueWriterService;
     private final FormFollowUpAgentService formFollowUpAgentService;
     private final TravelerResolverService travelerResolverService;
+    private final com.api.bizplay_conversational.service.approvalLineService.ApprovalLineService approvalLineService;
     private final AgentPromptService agentPromptService;
     private final CustomAgentService customAgentService;
     private final DatabaseLookupAgentService databaseLookupAgentService;
@@ -203,7 +204,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             ObjectNode rmState = loadState(rmSession);
             // The pending question comes first: a message that ANSWERS it is that answer,
             // whoever it happens to name.
-            String drop = answersPendingAsk(rmSession, rmState, bareMessage, ko) ? null
+            // …and while the approval-line question is open, "김비플 빼줘" is about the LINE.
+            String drop = (answersPendingAsk(rmSession, rmState, bareMessage, ko)
+                    || rmState.path("pendingApprovalAsk").asBoolean(false)) ? null
                     : travellerToRemove(bareMessage, rmState, ko, recentTurns(rmSession),
                             bizplayToken);
             if (drop != null && !rmDocs.isEmpty()) {
@@ -297,6 +300,66 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         String turnText = message.isBlank() ? fileFacts
                 : (fileFacts.isBlank() ? message : message + "\n" + fileFacts);
 
+        // "결재자는 김도하" / "Set 김도하 as the approver" — about who SIGNS, not who travels.
+        // Without this the name fell through to the traveller mapper and joined the trip.
+        boolean approverTurn = !documents.isEmpty()
+                && (state.path("pendingApprovalAsk").asBoolean(false)
+                    || namesAnApprover(stripChatContext(turnText), recentTurns(session), ko));
+        if (approverTurn) {
+            String added = approvalLineService.applyEdit(state, turnText, bizplayToken, ko, recentTurns(session));
+            if (added != null) {
+                // The line is being built: keep its question open so the NEXT person message is
+                // read as another edit to it, not as a change to the travellers.
+                state.put("pendingApprovalAsk", true);
+                saveState(session, state);
+                appendTurn(session, "user", turnText);
+                appendTurn(session, "assistant", added);
+                ConversationalAgentSession apprSaved = sessionRepo.save(session);
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(apprSaved.getId().toString())
+                        .status(apprSaved.getStatus() == null ? null : apprSaved.getStatus().name())
+                        .intent("APPROVAL_LINE_ASK")
+                        .subAgents(List.of("PLAN_AGENT"))
+                        .reply(added)
+                        .pendingChoices(approvalLineService.approverChoices(bizplayToken, ko))
+                        .travelers(travelerNames(state))
+                        .travelerIds(travelerIdList(state))
+                        .destination(state.path("destination").asText(null))
+                        .destinationCountry(state.path("destinationCountry").asText(null))
+                        .destinationDetail(state.has("destinationDetail")
+                                ? state.path("destinationDetail").asText("") : null)
+                        .periodPlaces(periodPlacesForResponse(state))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
+                        .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
+                        .draftJson(apprSaved.getDraftJson())
+                        .build();
+            }
+            // "그게 다예요, 상신해줘" is an answer to THIS question — the generic file-now check
+            // further down is guarded on the turn changing nothing, and a sentence like that
+            // usually writes a field on its way past, so it never got there.
+            if (wantsToFileNow(turnText, session, ko)) {
+                state.remove("pendingApprovalAsk");
+                saveState(session, state);
+                appendTurn(session, "user", turnText);
+                String filing = t(ko, "Filing the plan now.", "출장 계획을 상신할게요.");
+                appendTurn(session, "assistant", filing);
+                ConversationalAgentSession fileSaved = sessionRepo.save(session);
+                log.info("[APPR] approval line closed with {} approver(s) — filing.",
+                        state.path("approvalLines").size());
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(fileSaved.getId().toString())
+                        .status(fileSaved.getStatus() == null ? null : fileSaved.getStatus().name())
+                        .intent("SUBMIT_REQUESTED")
+                        .subAgents(List.of("PLAN_AGENT"))
+                        .reply(filing)
+                        .travelers(travelerNames(state))
+                        .travelerIds(travelerIdList(state))
+                        .destination(state.path("destination").asText(null))
+                        .draftJson(fileSaved.getDraftJson())
+                        .build();
+            }
+        }
+
         if (documents.isEmpty()) {
             // --- Sub-agent [A]: Purpose & Segment resolution -------------------------------------
             JsonNode catalog = bizplayGatewayService.getPurposeCatalog(request.getCorpUserId(), bizplayToken);
@@ -331,6 +394,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                             .subAgents(List.of("PURPOSE_SEGMENT_AGENT"))
                             .reply(ask)
                             .pendingChoices(List.of(segmentChoice(ofPurpose)))
+                            .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                             .draftJson(savedSeg.getDraftJson())
                             .build();
                 }
@@ -401,6 +465,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
 
+
         // A traveller CORRECTION, before the resolver runs. mergeTravelers can only append, so
         // "출장자를 김도하로 바꿔줘" mid-flow GREW the list (김충북, 김도하) instead of fixing it,
         // and nothing could ever remove a wrong name. Runs after fillFields on purpose: the mapper
@@ -428,6 +493,10 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // stops writing that field and a later "출발지는 인천이야" had nowhere to land - the user
         // said it twice and the draft still read origin=null. The place is sitting in the message
         // either way, so read it deterministically rather than re-asking.
+        // The previous turn ASKED "who is on the approval line?" — this message is its answer.
+        // Naming somebody adds them and keeps the question open (a line usually has more than one
+        // name); saying anything else falls through to the normal flow, so "이제 상신해줘" still files.
+
         // The previous turn ASKED "which country/city?" (DESTINATION_ASK). The reply to that
         // question IS the destination — bind it against the region master deterministically
         // instead of hoping the extractor notices the place ("일본 도쿄입니다" filled the
@@ -461,8 +530,10 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                                     + (sample.length() > 0 ? "(e.g. " + sample + ") " : ""),
                             cname + "(으)로 가시는군요 — 어느 도시인가요? "
                                     + (sample.length() > 0 ? "(예: " + sample + ") " : "")));
-                    // The ask stays pending; the next message binds the city.
+                    // The ask stays pending; the next message binds the city — and the cities
+                    // ride along, so a client that renders choices has them without a second call.
                     countryCityAsked = true;
+                    pendingChoices = cityChoices(cname, countryHit.path("cities"), ko);
                     log.info("Destination ask answered with a COUNTRY ({}) — asking its city.", cname);
                 }
             }
@@ -527,6 +598,33 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
         boolean routeStillOpen = state.path("routePoints").isMissingNode()
                 || tripTravellers.size() > 1 || namesASite;
+        // Asking to CHANGE the route re-opens the picker. The route is NOT cleared here: the
+        // widget opens on what is set, and cancelling it leaves the plan exactly as it was.
+        if (!documents.isEmpty() && !routeStillOpen && !turnText.isBlank()
+                && wantsRouteReopened(stripChatContext(turnText), state, namesASite,
+                        recentTurns(session), ko)) {
+            JsonNode again = planEnrichmentService.routeAsk(documents, state, bizplayToken, ko);
+            if (again != null) {
+                state.put("pendingRouteAsk", true);
+                state.remove("routeAskSkipped");
+                saveState(session, state);
+                appendTurn(session, "user", turnText);
+                appendTurn(session, "assistant", again.path("text").asText());
+                ConversationalAgentSession askSaved = sessionRepo.save(session);
+                log.info("[ROUTE] change requested — re-opening the route picker.");
+                return BizplayPlanAgentResponse.builder()
+                        .sessionId(askSaved.getId().toString())
+                        .status(askSaved.getStatus() == null ? null : askSaved.getStatus().name())
+                        .intent("ROUTE_ASK")
+                        .subAgents(List.of("PLAN_AGENT"))
+                        .reply(again.path("text").asText())
+                        .pendingChoices(routeChoices(bizplayToken, ko))
+                        .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
+                        .draftJson(askSaved.getDraftJson())
+                        .build();
+            }
+        }
+
         if (!documents.isEmpty() && routeStillOpen && !turnText.isBlank()) {
             boolean askedRoute = state.path("pendingRouteAsk").asBoolean(false);
             if (askedRoute || turnText.length() >= 8) {
@@ -1091,6 +1189,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     // approval-line step must NOT start while this is unanswered.
                     if ("region".equals(readyAsk.path("kind").asText())) {
                         intent = "DESTINATION_ASK";
+                        pendingChoices = destinationChoices(documents, state, bizplayToken, ko);
                         // Next turn's message is the answer to THIS question — flag it so
                         // the deterministic region-master binding picks it up.
                         state.put("pendingDestinationAsk", true);
@@ -1100,6 +1199,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                         state.remove("pendingDestinationAsk");
                     } else if ("route".equals(readyAsk.path("kind").asText())) {
                         intent = "ROUTE_ASK";
+                        pendingChoices = routeChoices(bizplayToken, ko);
                         state.put("pendingRouteAsk", true);
                         state.remove("pendingDestinationAsk");
                         state.remove("pendingTransportAsk");
@@ -1133,12 +1233,22 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                             .travelerIds(travelerIdList(state))
                             .destination(state.path("destination").asText(null))
                             .origin(state.path("origin").asText(null))
+                            .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                             .draftJson(savedNow.getDraftJson())
                             .build();
                 } else {
+                    // The last question of the flow, and the last one that used to arrive with
+                    // nothing to answer it: the approvers ride along, under an intent of its own.
                     reply.append(t(ko,
                             "The form is all filled in — the last step is the approval line.",
                             "양식은 모두 채워졌어요 — 마지막으로 결재선만 정하면 돼요."));
+                    List<TripPlanAgentResponse.PendingChoice> approvers =
+                            approvalLineService.approverChoices(bizplayToken, ko);
+                    if (approvers != null) {
+                        intent = "APPROVAL_LINE_ASK";
+                        pendingChoices = approvers;
+                        state.put("pendingApprovalAsk", true);
+                    }
                 }
             } else {
                 session.setStatus(ConversationalAgentSession.AgentStatus.COLLECTING);
@@ -1156,6 +1266,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 if (regionAsk != null && "region".equals(regionAsk.path("kind").asText())) {
                     reply.append(regionAsk.path("text").asText()).append(' ');
                     intent = "DESTINATION_ASK";
+                    pendingChoices = destinationChoices(documents, state, bizplayToken, ko);
                     state.put("pendingDestinationAsk", true);
                     state.remove("pendingTransportAsk");
                 } else {
@@ -1165,6 +1276,19 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 // WHICH field, so next turn's bare answer can be bound to it deterministically.
                 List<String> askNow = List.of(missing.get(0));
                 rememberPendingAsk(state, missing.get(0));
+                // "출장자는 누구신가요?" — the answer is a person's name, typed or picked from the
+                // corporation's user list. Without this the turn arrived with nothing to point at,
+                // and only a client that already knew the directory existed could offer a picker.
+                String askedField = missing.get(0);
+                if ((pendingChoices == null || pendingChoices.isEmpty())
+                        && (askedField.contains("출장자") || askedField.contains("여행자")
+                            || askedField.toLowerCase(java.util.Locale.ROOT).contains("travel"))) {
+                    pendingChoices = List.of(TripPlanAgentResponse.PendingChoice.builder()
+                            .kind("TRAVELER")
+                            .name(t(ko, "Traveller", "출장자"))
+                            .source("approvers")   // the corp's people; the controller adds the URLs
+                            .build());
+                }
                 // The 이동경로 question is also asking WHERE the trip starts — bind next
                 // turn's answer to the origin slot with a focused extraction.
                 boolean routeField = missing.get(0).contains("이동경로") || missing.get(0).contains("경로")
@@ -1186,6 +1310,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 if (routeFieldAsk != null && "route".equals(routeFieldAsk.path("kind").asText())) {
                     reply.append(routeFieldAsk.path("text").asText()).append(' ');
                     intent = "ROUTE_ASK";
+                    pendingChoices = routeChoices(bizplayToken, ko);
                     state.put("pendingRouteAsk", true);
                 } else if (routeField) {
                     // "What is the travel route?" told the user nothing about what to answer.
@@ -1410,6 +1535,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 // named one, say so, so the preview can mark it as the default it is.
                 .transportDefaulted(state.path("transportType").asText("").isBlank() ? true : null)
                 .reply(reply.toString().trim())
+                .ui(calendarAsk(state, missing))
                 .pendingChoices(pendingChoices)
                 .missingFields(missing.isEmpty() ? null : missing)
                 .destinationCountry(state.path("destinationCountry").asText(null))
@@ -1420,6 +1546,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
                 .origin(state.path("origin").asText(null))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(saved.getDraftJson())
                 .createdDate(saved.getCreatedDate())
                 .updatedDate(saved.getUpdatedDate())
@@ -1458,7 +1585,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             throw new IllegalArgumentException("Cannot create the plan — required fields are missing: "
                     + String.join(", ", missing) + ".");
         }
-        applyPickedApprovalLines((ObjectNode) documents.get(0), approvalLines);
+        // The request body wins (the demo UI builds the line in its own widget); when it carries
+        // none, the approvers recorded during the conversation are the line.
+        JsonNode picked = approvalLines != null && approvalLines.isArray() && !approvalLines.isEmpty()
+                ? approvalLines : state.path("approvalLines");
+        applyPickedApprovalLines((ObjectNode) documents.get(0), picked);
+        fillApprovalLineDepartments((ObjectNode) documents.get(0), bizplayToken);
 
         // Region (국가/도시 → selectionId), period times and 이동경로 — the values the provider's
         // own screen fills from lookup APIs, decided per paper (most forms need none of it).
@@ -1473,7 +1605,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         session.setStatus(ConversationalAgentSession.AgentStatus.POSTED);
         String reply = t(ko,
                 "All done — your trip plan has been saved to BizPlay.",
-                "완료됐어요 — 출장 계획이 BizPlay에 저장되었습니다.");
+                "완료됐어요 — 출장 계획이 BizPlay에 저장되었습니다.")
+                + filedPlanNote(documents, state, bizplayToken, ko);
         if (!enrichNotes.isEmpty()) {
             reply = reply + " " + String.join(" ", enrichNotes);
         }
@@ -1491,6 +1624,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
                 .origin(state.path("origin").asText(null))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(saved.getDraftJson())
                 .createdDate(saved.getCreatedDate())
                 .updatedDate(saved.getUpdatedDate())
@@ -1593,6 +1727,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .reply(reply)
                 .destination(state.path("destination").asText(null))
                 .origin(state.path("origin").asText(null))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(documents)
                 .build();
     }
@@ -1870,7 +2005,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     private boolean koreanConversation(String message, ObjectNode state) {
         // The misaligned-turn retry prepends an English note to the traveller's own message;
         // counting it made every retried Korean turn answer in English.
-        message = message.replaceFirst("(?s)^\\(Note for this attempt[^)]*\\)\\s*", "");
+        message = message.replaceFirst("(?s)^\\(Note for this attempt.*?\\R\\s*", "");
         if (message.contains("Respond in Korean only")) {
             return true;
         }
@@ -1896,6 +2031,18 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * optional, but a plan without dates makes no sense — treat the period as required so the
      * agent keeps asking (and the save flow refuses) until the dates are set.
      */
+    /**
+     * "calendar" when the field this turn asks for is the trip PERIOD, so a client knows to open a
+     * date picker instead of a text box. The test is the form's own field, not the wording of the
+     * question: {@link #requiredGaps} records the label it took from the BSTR_PERIOD field, and the
+     * agent asks for exactly one field per turn - {@code missing.get(0)}.
+     */
+    private String calendarAsk(ObjectNode state, List<String> missing) {
+        String periodLabel = state.path("periodFieldLabel").asText("");
+        return !missing.isEmpty() && !periodLabel.isBlank() && periodLabel.equals(missing.get(0))
+                ? "calendar" : null;
+    }
+
     private List<String> requiredGaps(JsonNode document, ObjectNode state) {
         List<String> missing = new ArrayList<>(
                 formValueWriterService.missingRequired(document, state.path("fields"), state));
@@ -1907,6 +2054,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     break;
                 }
             }
+            // Remembered so the turn that ASKS for this field can say it wants a date range.
+            state.put("periodFieldLabel", label);
             if (!missing.contains(label)) {
                 missing.add(label);
             }
@@ -2555,6 +2704,36 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
     }
 
     /**
+     * "이동경로 바꾸고 싶어" / "i want to change travel route" — a request to RE-OPEN the route
+     * question, with no new points named. Judged, never phrase-matched, and gated on data first:
+     * it only runs when a route already exists (otherwise the readiness check asks anyway) and
+     * when this turn named no registered site (then the route capture above already handled it).
+     */
+    private boolean wantsRouteReopened(String message, ObjectNode state, boolean namesASite,
+                                       java.util.List<String> turns, boolean ko) {
+        if (message == null || message.isBlank() || namesASite
+                || state.path("routePoints").isMissingNode()) {
+            return false;
+        }
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "reopenRoute", "Situation: the trip plan already HAS a travel route "
+                            + "(이동경로: departure, destination, return point). Judge THIS message: "
+                            + "EXACTLY \"yes\" if it asks to change, redo, re-enter or fix that "
+                            + "route WITHOUT saying the new places — any wording, any language. "
+                            + "EXACTLY \"no\" if it is about anything else (the approval line, "
+                            + "dates, the traveller, the transport, a question). Omit the field "
+                            + "when unsure"),
+                    ko, turns).path("reopenRoute").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+            return "yes".equals(verdict);
+        } catch (Exception e) {
+            log.warn("Route-change judge unavailable: {}", e.getMessage());
+            return false;
+        }
+    }
+
+
+    /**
      * Is this message the user saying "go ahead and file it"? Decided by the slot-filler LLM with
      * the recent turns as context — not a phrase list, which is exactly what kept failing here:
      * every list missed the next phrasing ("create plan", "그럼 올려", "ㄱㄱ"), and each miss looked
@@ -2895,6 +3074,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
                 .destinationCountry(state.path("destinationCountry").asText(null))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(saved.getDraftJson())
                 .build();
     }
@@ -2925,6 +3105,19 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return sb.toString().trim();
     }
 
+    /**
+     * Per-day rows are for a trip whose days DIFFER. Three identical rows for one city is noise
+     * where the card should simply read Country / City — so an all-same period sends none.
+     */
+    private boolean daysDiffer(JsonNode rows) {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (JsonNode r : rows == null ? objectMapper.createArrayNode() : rows) {
+            seen.add(r.path("country").asText("") + "|" + r.path("place").asText("")
+                    + "|" + r.path("detail").asText(""));
+        }
+        return seen.size() > 1;
+    }
+
     /** state.periodPlaces as a date-sorted array for clients: [{date, place, country, detail}]. */
     private ArrayNode periodPlacesForResponse(ObjectNode state) {
         JsonNode pp = state.path("periodPlaces");
@@ -2942,7 +3135,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             row.put("country", pp.path(d).path("country").asText(""));
             row.put("detail", pp.path(d).path("detail").asText(""));
         }
-        return out;
+        // One row per day is how BizPlay stores the period, but a card should not print the same
+        // city three times: an all-identical period is exactly the Country / City case.
+        return daysDiffer(out) ? out : null;
     }
 
     /**
@@ -3434,6 +3629,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .periodPlaces(periodPlacesForResponse(state) == null
                         ? objectMapper.createArrayNode() : periodPlacesForResponse(state))
                 .transportDefaulted(state.path("transportType").asText("").isBlank() ? true : null)
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(saved.getDraftJson())
                 .build();
     }
@@ -3801,6 +3997,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 .travelerIds(travelerIdList(state))
                 .destination(state.path("destination").asText(null))
                 .destinationCountry(state.path("destinationCountry").asText(null))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
                 .draftJson(saved.getDraftJson())
                 .build();
     }
@@ -3836,7 +4033,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         again.setDestinationDetail(request.getDestinationDetail());
         // Files were already consumed into the draft on the first pass; re-extracting them would
         // duplicate their facts, so the retry runs on the words alone.
-        again.setMessage("(Note for this attempt — the previous one missed this: " + issue + ") "
+        // The note ends at a LINE BREAK, and the issue is flattened onto one line: the strip that
+        // removes it again keyed on the closing ')' and the issue text often contains one, which
+        // left English in the message and flipped a Korean conversation into English mid-form.
+        again.setMessage("(Note for this attempt — the previous one missed this: "
+                + issue.replaceAll("\\s+", " ") + ")\n"
                 + (request.getMessage() == null ? "" : request.getMessage()));
         BizplayPlanAgentResponse second = chatTurn(again, bizplayToken, true);
         log.info("[VERIFY] gate: second attempt answered with intent {}",
@@ -4022,11 +4223,190 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             // be found ANYWHERE in the text — an anchored match never fired from the UI at all.
             java.util.regex.Pattern.compile("(?i).*purpose:(\\d+).*", java.util.regex.Pattern.DOTALL);
 
+
     /**
-     * Step one: one chip per Travel Purpose. Candidates come from the resolver (it may already have
-     * narrowed things), but the segments are looked up across the WHOLE catalog so a purpose whose
-     * trip types were filtered out still leads somewhere.
+     * Is this message about the APPROVAL LINE — who signs the plan — rather than who goes on the
+     * trip? Judged, never word-matched: "결재자는 김도하 님으로", "Set 김도하 as the approver",
+     * "김도하 팀장님 결재 넣어줘" all mean the same thing, and none of them adds a traveller.
      */
+    private boolean namesAnApprover(String message, java.util.List<String> turns, boolean ko) {
+        if (message == null || message.isBlank() || message.length() > 200) {
+            return false;
+        }
+        try {
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "aboutApprovalLine", "A business-trip plan has TRAVELLERS (the people going) "
+                            + "and an APPROVAL LINE (the people who sign it: 결재자 / 합의 / 참조 / "
+                            + "approver). Judge THIS message: EXACTLY \"yes\" when it says who "
+                            + "should APPROVE or sign the plan, EXACTLY \"no\" when it is about "
+                            + "who travels, the destination, the dates, or anything else. Any "
+                            + "language. Omit the field when unsure"),
+                    ko, turns).path("aboutApprovalLine").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+            if ("yes".equals(verdict)) {
+                log.info("[APPR] '{}' is about the approval line, not the travellers.",
+                        truncateForLog(message));
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("Approval-subject judge unavailable: {}", e.getMessage());
+        }
+        return false;
+    }
+
+
+
+
+    /**
+     * The 목적지 question's own options. An ASK that offers no choices forces every client to go
+     * looking for them somewhere else — which is what /agents/plan/destination-options was for.
+     * "regions" are terminal picks; "countries" are the first half of the country→city cascade,
+     * and answering with one gets that country's cities back the same way.
+     */
+    private List<TripPlanAgentResponse.PendingChoice> destinationChoices(ArrayNode documents,
+                                                                        ObjectNode state,
+                                                                        String token, boolean ko) {
+        JsonNode opts;
+        try {
+            long purposeId = documents.isEmpty() ? 0 : documents.get(0).path("bstrPurposeId").asLong(0);
+            Long segmentId = !documents.isEmpty() && documents.get(0).hasNonNull("bstrSegmentId")
+                    ? documents.get(0).path("bstrSegmentId").asLong() : null;
+            opts = destinationResolverAgentService.destinationOptions(
+                    state.path("paperName").asText(null), null,
+                    purposeId > 0 ? purposeId : null, segmentId, token);
+        } catch (RuntimeException e) {
+            log.warn("Destination options unavailable for the ask: {}", e.getMessage());
+            return null;
+        }
+        List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+        for (JsonNode r : opts == null ? objectMapper.createArrayNode() : opts.path("regions")) {
+            String label = r.asText("");
+            if (!label.isBlank()) {
+                options.add(TripPlanAgentResponse.Option.builder()
+                        .label(label).sendText(label).build());
+            }
+        }
+        for (JsonNode c : opts == null ? objectMapper.createArrayNode() : opts.path("countries")) {
+            String label = c.path("name").asText("");
+            if (label.isBlank()) {
+                continue;
+            }
+            java.util.Map<String, String> meta = new java.util.LinkedHashMap<>();
+            meta.put("countryCode", c.path("countryCode").asText(""));
+            meta.put("nameEn", c.path("nameEn").asText(""));
+            meta.put("step", "country");   // answering with it asks for the city next
+            options.add(TripPlanAgentResponse.Option.builder()
+                    .label(label).sendText(label).meta(meta).build());
+        }
+        if (options.isEmpty()) {
+            return null;   // a form with no registered list: any place goes, so nothing to offer
+        }
+        return List.of(TripPlanAgentResponse.PendingChoice.builder()
+                .kind("DESTINATION")
+                .name(t(ko, "Destination", "목적지"))
+                .options(options)
+                .build());
+    }
+
+    /** The city half of the cascade — the country was just named, these are its cities. */
+    private List<TripPlanAgentResponse.PendingChoice> cityChoices(String country, JsonNode cities,
+                                                                 boolean ko) {
+        List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+        for (JsonNode city : cities == null ? objectMapper.createArrayNode() : cities) {
+            String name = city.asText("");
+            if (!name.isBlank()) {
+                options.add(TripPlanAgentResponse.Option.builder()
+                        .label(name).sendText(name).build());
+            }
+        }
+        if (options.isEmpty()) {
+            return null;
+        }
+        return List.of(TripPlanAgentResponse.PendingChoice.builder()
+                .kind("DESTINATION")
+                .name(t(ko, "City in " + country, country + " 도시"))
+                .options(options)
+                .build());
+    }
+
+    /**
+     * The 이동경로 question's options: the corporation's registered destinations, the same list
+     * /agents/plan/route-options serves. One pick is one POINT — the picker asks for departure,
+     * destination and return point, so the meta says which id each label carries.
+     */
+    private List<TripPlanAgentResponse.PendingChoice> routeChoices(String token, boolean ko) {
+        JsonNode points;
+        try {
+            points = planEnrichmentService.routeOptions(token);
+        } catch (RuntimeException e) {
+            log.warn("Route options unavailable for the ask: {}", e.getMessage());
+            return null;
+        }
+        List<TripPlanAgentResponse.Option> options = new ArrayList<>();
+        for (JsonNode p : points == null ? objectMapper.createArrayNode() : points) {
+            String name = p.path("name").asText("");
+            if (name.isBlank()) {
+                continue;
+            }
+            java.util.Map<String, String> meta = new java.util.LinkedHashMap<>();
+            meta.put("id", p.path("id").asText(""));
+            meta.put("address", p.path("address").asText(""));
+            meta.put("sido", p.path("sido").asText(""));
+            options.add(TripPlanAgentResponse.Option.builder()
+                    .label(name).sendText(name).meta(meta).build());
+        }
+        if (options.isEmpty()) {
+            return null;
+        }
+        return List.of(TripPlanAgentResponse.PendingChoice.builder()
+                .kind("ROUTE")
+                .name(t(ko, "Travel route", "이동경로"))
+                .options(options)
+                .build());
+    }
+
+    /**
+     * Who the filed plan is waiting on. BizPlay answers the save with "작성되었습니다." alone, so
+     * the approval line on the document we just sent is what tells the traveller whether anyone
+     * will ever see it — a plan with only its own DRAFT line reaches nobody.
+     */
+    private String filedPlanNote(ArrayNode documents, ObjectNode state, String token, boolean ko) {
+        try {
+            JsonNode lines = documents.isEmpty() ? null : documents.get(0).path("approvalLines");
+            List<String> approvers = new ArrayList<>();
+            for (JsonNode l : (lines != null && lines.isArray()) ? lines : objectMapper.createArrayNode()) {
+                if (!"DRAFT".equals(l.path("approvalKindType").asText(""))) {
+                    long id = l.path("corporationUserId").asLong(0);
+                    String name = l.path("name").asText("");
+                    if (name.isBlank()) {
+                        for (JsonNode picked : state.path("approvalLines")) {
+                            if (picked.path("corporationUserId").asLong(0) == id) {
+                                name = picked.path("name").asText("");
+                            }
+                        }
+                    }
+                    if (name.isBlank()) {
+                        // The line can arrive by id alone (inherited, or set by a client that only
+                        // knows ids). "30192 님의 결재를 기다립니다" is nobody's name — look it up.
+                        name = rosterName(id, token);
+                    }
+                    approvers.add(name.isBlank() ? String.valueOf(id) : name);
+                }
+            }
+            if (approvers.isEmpty()) {
+                return t(ko,
+                        " No approver is on it yet, so it stays in your drafted documents —"
+                                + " tell me who should approve it and I'll add them.",
+                        " 아직 결재자가 없어서 기안 문서함에 남아 있어요 —"
+                                + " 결재자를 말씀해 주시면 추가해 드릴게요.");
+            }
+            return t(ko, " It is now waiting for " + String.join(", ", approvers) + ".",
+                    " 이제 " + String.join(", ", approvers) + " 님의 결재를 기다립니다.");
+        } catch (RuntimeException e) {
+            log.warn("Filed-plan note failed — the plan is saved regardless: {}", e.getMessage());
+            return "";
+        }
+    }
+
     private TripPlanAgentResponse.PendingChoice purposeChoice(List<PurposeOption> candidates,
                                                              List<PurposeOption> all) {
         java.util.LinkedHashMap<Long, String> byPurpose = new java.util.LinkedHashMap<>();
@@ -4454,7 +4834,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // The alignment gate prepends what the first attempt missed. It is guidance for the
         // FILL, never part of what the user asked — every intent judge sees the words alone.
         if (out != null && out.startsWith("(Note for this attempt")) {
-            out = out.replaceFirst("(?s)^\\(Note for this attempt[^)]*\\)\\s*", "").trim();
+            out = out.replaceFirst("(?s)^\\(Note for this attempt.*?\\R\\s*", "").trim();
         }
         return out;
     }
@@ -4593,6 +4973,66 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * line the working capture carries (EMPLOYEE, no department); only the ids and kinds come
      * from the user's picks — nothing is invented.
      */
+    /**
+     * Each approval line's 부서 — BizPlay keeps it on the line, and a null there is a line with no
+     * department behind it. Taken from the corporation's roster (the person's main department).
+     */
+    /** The person's name as the corporation lists it, for an approval line that carries only an id. */
+    private String rosterName(long corporationUserId, String token) {
+        if (corporationUserId <= 0) {
+            return "";
+        }
+        try {
+            Long corpId = corporationIdFromToken(token);
+            JsonNode roster = corpId == null ? objectMapper.createObjectNode()
+                    : bizplayGatewayService.getCorporationUsers(corpId, token);
+            JsonNode people = roster.isArray() ? roster : roster.path("users");
+            for (JsonNode u : people.isArray() ? people : objectMapper.createArrayNode()) {
+                if (u.path("corporationUserId").asLong() == corporationUserId) {
+                    // the roster calls it userName; `name` is what the approval line uses
+                    return u.path("userName").asText(u.path("name").asText(""));
+                }
+            }
+        } catch (RuntimeException e) {
+            log.debug("Roster name lookup failed for {} — showing the id: {}",
+                    corporationUserId, e.getMessage());
+        }
+        return "";
+    }
+
+    private void fillApprovalLineDepartments(ObjectNode document, String token) {
+        JsonNode roster = null;
+        for (JsonNode l : document.withArray("approvalLines")) {
+            if (!(l instanceof ObjectNode line) || line.hasNonNull("departmentId")) {
+                continue;
+            }
+            long uid = line.path("corporationUserId").asLong(0);
+            if (uid <= 0) {
+                continue;
+            }
+            if (roster == null) {
+                try {
+                    Long corpId = corporationIdFromToken(token);
+                    roster = corpId == null ? objectMapper.createObjectNode()
+                            : bizplayGatewayService.getCorporationUsers(corpId, token);
+                } catch (RuntimeException e) {
+                    roster = objectMapper.createObjectNode();
+                }
+            }
+            JsonNode people = roster.isArray() ? roster : roster.path("users");
+            for (JsonNode u : people.isArray() ? people : objectMapper.createArrayNode()) {
+                if (u.path("corporationUserId").asLong() != uid) {
+                    continue;
+                }
+                for (JsonNode dep : u.path("departments")) {
+                    if (dep.path("mainDepartment").asBoolean(false) || !line.hasNonNull("departmentId")) {
+                        line.put("departmentId", dep.path("departmentId").asLong());
+                    }
+                }
+            }
+        }
+    }
+
     private void applyPickedApprovalLines(ObjectNode master, JsonNode approvalLines) {
         if (approvalLines == null || !approvalLines.isArray() || approvalLines.isEmpty()) {
             return;
@@ -4605,6 +5045,14 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             if (!pick.path("corporationUserId").canConvertToLong()) {
                 continue;
             }
+            // A client that echoes the line the way BizPlay's screen shows it sends the drafter
+            // too. The DRAFT line is already there — adding it again files the plan with the
+            // drafter twice, which is what the provider then displays.
+            long who = pick.path("corporationUserId").asLong();
+            if ("DRAFT".equals(pick.path("approvalKindType").asText("APPROVAL"))
+                    || alreadyOnLine(lines, who)) {
+                continue;
+            }
             ObjectNode line = lines.addObject();
             line.put("approvalKindType", pick.path("approvalKindType").asText("APPROVAL"));
             line.put("approvalOrder", order++);
@@ -4613,6 +5061,16 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             line.put("departmentApproval", false);
             line.put("paperApprovalLineType1", "EMPLOYEE");
         }
+    }
+
+    /** Is this person already on the approval line we are building? */
+    private boolean alreadyOnLine(ArrayNode lines, long corporationUserId) {
+        for (JsonNode l : lines) {
+            if (l.path("corporationUserId").asLong(0) == corporationUserId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

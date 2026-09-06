@@ -59,6 +59,7 @@ public class BizplayFormController {
     private final com.api.bizplay_conversational.service.bizplaySettlementAgentService.BizplaySettlementAgentService bizplaySettlementAgentService;
     private final AgentPromptService agentPromptService;
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
+    private final com.api.bizplay_conversational.config.BizplayEndpoints bizplayEndpoints;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** Read currentCorpId from the (unverified) JWT payload — a lookup key, not authentication. */
@@ -81,6 +82,480 @@ public class BizplayFormController {
         }
     }
 
+    /** Endpoint paths as this API serves them — one place, so a rename cannot leave a stale hint. */
+    private static final String BASE = "/api/v1/agent-conversations/bizplay";
+
+    /** One call, as data: {"method": "GET", "path": "/api/v2/..."}. */
+    private static java.util.Map<String, String> call(String method, String path) {
+        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+        m.put("method", method);
+        m.put("path", path);
+        return m;
+    }
+
+    /** A capability that takes more than one call, in the order they are made. */
+    @SafeVarargs
+    private static java.util.List<java.util.Map<String, String>> calls(
+            java.util.Map<String, String>... c) {
+        return java.util.List.of(c);
+    }
+
+    /**
+     * Which widget answers which intent. A map rather than a switch so the contract endpoint can
+     * publish it — a client should be able to read the whole rule, not infer it turn by turn.
+     */
+    private static final java.util.Map<String, String> INTENT_UI = java.util.Map.ofEntries(
+            java.util.Map.entry("MANUAL_EXPENSE_PROMPT", "expense-form"),
+            java.util.Map.entry("MANUAL_EXPENSE_PROMPT_FULL", "expense-form"),
+            java.util.Map.entry("EXPENSE_IMAGE_REQUIRED", "file-upload"),
+            java.util.Map.entry("AWAIT_PERIOD", "calendar"),
+            java.util.Map.entry("AWAIT_PLAN_PERIOD", "calendar"),
+            java.util.Map.entry("EVIDENCE_PERIOD_PENDING", "calendar"),
+            java.util.Map.entry("EXPENSE_PREVIEW", "expense-preview"),
+            java.util.Map.entry("SETTLEMENT_READY", "settlement-preview"),
+            java.util.Map.entry("RECEIPT_BROWSE", "receipt-table"),
+            java.util.Map.entry("RECEIPT_BROWSE_NOT_ISSUED", "receipt-table"),
+            java.util.Map.entry("SUBMIT_REQUESTED", "confirm-submit"));
+
+    /**
+     * Every intent each agent can put on a turn, with what it means and which choice kinds ride
+     * with it. The widget and the endpoints an intent implies are NOT repeated here - they are
+     * derived from the same maps the turns use (INTENT_UI, keysForIntent, keysForKind), so the
+     * catalogue cannot disagree with a live response.
+     *
+     * <p>Entries are {intent, means, choice kinds}. An empty kinds string means the question is
+     * answered in free text (a name, an amount, yes/no) - those turns carry no pendingChoices.
+     */
+    private static final java.util.Map<String, java.util.List<String[]>> INTENT_CATALOG =
+            java.util.Map.of(
+                    "plan", java.util.List.of(
+                            new String[]{"PURPOSE_SELECTION", "Choosing the trip purpose", "PURPOSE"},
+                            new String[]{"SEGMENT_SELECTION", "Choosing the purpose's segment", "SEGMENT"},
+                            new String[]{"FORM_LOAD", "The trip form was loaded", ""},
+                            new String[]{"DESTINATION_ASK", "Asking country and city", "DESTINATION"},
+                            new String[]{"TRAVELER_PICK", "Confirming which person the traveller is", "TRAVELER"},
+                            new String[]{"TRAVELER_MORE_ASK", "Asking whether anyone else travels", ""},
+                            new String[]{"TRAVELER_REMOVED", "A traveller was taken off the plan", ""},
+                            new String[]{"ROUTE_ASK", "Asking the travel route", "ROUTE"},
+                            new String[]{"FIELD_COMPLETION", "Asking for a remaining form field", ""},
+                            new String[]{"FIELD_EDITED", "A value was changed on the draft", ""},
+                            new String[]{"APPROVAL_LINE_ASK", "Asking who approves the plan", "APPROVAL_LINE"},
+                            new String[]{"SUBMIT_REQUESTED", "The user asked to file the plan", ""},
+                            new String[]{"CREATE_PLAN", "FILED in BizPlay (the reply carries the document number)", ""},
+                            new String[]{"CREATE_PLAN_MANUAL", "Filed from a document the client supplied", ""},
+                            new String[]{"DATA_QUERY", "Answered a question from BizPlay data", ""},
+                            new String[]{"DRAFT_QUERY", "Answered a question about the draft", ""},
+                            new String[]{"GUARDRAIL_BLOCKED", "Off-topic request; nothing changed", ""}),
+                    "settlement", java.util.List.of(
+                            new String[]{"AWAIT_PERIOD", "Asking the period to search", "EVIDENCE_PERIOD"},
+                            new String[]{"AWAIT_PLAN_PERIOD", "Asking another period to look for plans", "EVIDENCE_PERIOD"},
+                            new String[]{"PLAN_SEARCH", "Listing the trips that can be settled", "PLAN"},
+                            new String[]{"PLAN_PICK_PENDING", "Waiting for one of those trips to be picked", "PLAN"},
+                            new String[]{"PLAN_IMPORT", "A plan was imported into a settlement", "TRANKIND"},
+                            new String[]{"PENDING_PLANS", "Plans still awaiting approval (not settleable)", "PLAN_PENDING"},
+                            new String[]{"TRANKIND_PENDING", "Asking which expense type to add", "TRANKIND"},
+                            new String[]{"TRANKIND_PICKED", "An expense type was picked", "CARD_TYPE"},
+                            new String[]{"CARD_TYPES_PENDING", "Asking which card types to search", "CARD_TYPE"},
+                            new String[]{"EVIDENCE_PERIOD_PENDING", "Asking the evidence period", "EVIDENCE_PERIOD"},
+                            new String[]{"EVIDENCE_LOAD", "Listing unattached receipts", "RECEIPT"},
+                            new String[]{"EVIDENCE_PICK_PENDING", "Waiting for a receipt to be picked", "RECEIPT"},
+                            new String[]{"EVIDENCE_ATTACH", "A receipt was attached to the settlement", ""},
+                            new String[]{"MANUAL_EXPENSE_CHOOSE", "Asking how to enter an expense by hand", "MANUAL_EXPENSE_MODE"},
+                            new String[]{"MANUAL_EXPENSE_PROMPT", "Asking for the expense (basic fields)", ""},
+                            new String[]{"MANUAL_EXPENSE_PROMPT_FULL", "Asking for the expense and its details", ""},
+                            new String[]{"EXPENSE_SLOT_PENDING", "Asking one detail of the expense", "EXPENSE_SLOT"},
+                            new String[]{"EXPENSE_PREVIEW", "Showing the receipt before registering it", "EXPENSE_CONFIRM"},
+                            new String[]{"EXPENSE_IMAGE_REQUIRED", "The receipt image is still missing", ""},
+                            new String[]{"EXPENSE_IMAGE_SUBMIT", "Asked to upload the file already chosen", ""},
+                            new String[]{"MANUAL_EXPENSE_CREATED", "The expense was registered in BizPlay", ""},
+                            new String[]{"MANUAL_EXPENSE_ADDED", "The expense and its image were registered", ""},
+                            new String[]{"EXPENSE_UPDATED", "A registered expense was corrected", ""},
+                            new String[]{"EXPENSE_CANCELLED", "The expense being entered was abandoned", ""},
+                            new String[]{"TITLE_SET", "The document title was set", ""},
+                            new String[]{"RECEIPT_BROWSE", "Browsing receipts not yet on a document", "RECEIPT"},
+                            new String[]{"RECEIPT_BROWSE_NOT_ISSUED", "Browsing receipts that are not ISSUED", "RECEIPT"},
+                            new String[]{"SETTLEMENT_READY", "Everything is on the settlement; ready to file", "SUBMIT"},
+                            new String[]{"APPROVAL_LINE_ASK", "Confirming the approval line before filing", "APPROVAL_LINE"},
+                            new String[]{"APPROVER_PICKED", "An approver was set", ""},
+                            new String[]{"CREATE_SETTLEMENT", "FILED in BizPlay (the reply carries the document number)", ""},
+                            new String[]{"SETTLEMENT_SAVED", "Saved on our side, not filed", ""},
+                            new String[]{"SESSION", "The session was read back", ""},
+                            new String[]{"DRAFT_QUERY", "Answered a question about the settlement", ""},
+                            new String[]{"STOP_PICK_PENDING", "Asking whether to stop", "STOP"},
+                            new String[]{"GUARDRAIL_BLOCKED", "Off-topic request; nothing changed", ""}));
+
+    /** The shapes {@code pendingChoices[].render} can take, for the contract endpoint. */
+    private static final java.util.List<String> RENDER_SHAPES =
+            java.util.List.of("chips", "dropdown", "table", "route-picker", "approval-line", "lookup");
+
+    private static final java.util.Map<String, List<java.util.Map<String, String>>> EMPTY_CALLS =
+            java.util.Map.of();
+
+    /**
+     * OUR endpoints for one agent, with corpNo already filled in. Keyed by capability, and every
+     * key here has the same key in {@link #upstreamFor} — the same capability seen from our side
+     * and from BizPlay's.
+     */
+    private java.util.Map<String, java.util.List<java.util.Map<String, String>>> resourcesFor(
+            String agent, String q) {
+        java.util.Map<String, java.util.List<java.util.Map<String, String>>> res =
+                new java.util.LinkedHashMap<>();
+        if ("plan".equals(agent)) {
+            res.put("purposes", calls(call("GET", BASE + "/purposes" + q)));
+            res.put("destinationOptions", calls(call("GET", BASE + "/agents/plan/destination-options" + q)));
+            res.put("destinationPick", calls(call("POST", BASE + "/agents/plan/destination-pick" + q)));
+            res.put("routeOptions", calls(call("GET", BASE + "/agents/plan/route-options" + q)));
+            res.put("approvers", calls(call("GET", BASE + "/corporation-users" + q)));
+            res.put("plansByStatus", calls(call("GET", BASE + "/plans/by-status" + q)));
+            res.put("editPlanField", calls(call("PATCH", BASE + "/agents/plan/{sessionId}/field" + q)));
+            res.put("planSession", calls(call("GET", BASE + "/agents/plan/{sessionId}" + q)));
+            res.put("filePlan", calls(call("POST", BASE + "/agents/plan/{sessionId}/create" + q)));
+            res.put("whoami", calls(call("GET", BASE + "/whoami" + q)));
+        } else {
+            res.put("plans", calls(call("GET", BASE + "/plans" + q)));
+            res.put("tranKinds", calls(call("GET", BASE + "/agents/settlement/{sessionId}" + q)));
+            res.put("currencies", calls(call("GET", BASE + "/agents/settlement/currencies" + q)));
+            res.put("taxCodes", calls(call("GET", BASE + "/agents/settlement/tax-codes" + q)));
+            res.put("terminals", calls(call("GET", BASE + "/agents/settlement/terminals" + q
+                    + "&vehicleType={vehicleType}")));
+            res.put("receipts", calls(call("GET", BASE + "/agents/settlement/receipts" + q)));
+            res.put("receiptDetail", calls(call("GET", BASE + "/agents/settlement/receipts/{receiptId}" + q)));
+            res.put("uploadReceiptImage", calls(call("POST", BASE + "/agents/settlement/receipts/{receiptId}/image" + q)));
+            res.put("registerExpense", calls(call("POST", BASE + "/agents/settlement/{sessionId}/manual-expense/create" + q)));
+            res.put("attachExpenseImage", calls(call("POST", BASE + "/agents/settlement/{sessionId}/manual-expense/attach" + q)));
+            res.put("editExpenseField", calls(call("PATCH", BASE + "/agents/settlement/{sessionId}/expense/{receiptId}/field" + q)));
+            res.put("settlementSession", calls(call("GET", BASE + "/agents/settlement/{sessionId}" + q)));
+            res.put("saveSettlementDraft", calls(call("POST", BASE + "/agents/settlement/{sessionId}/save" + q)));
+            res.put("fileSettlement", calls(call("POST", BASE + "/agents/settlement/{sessionId}/create" + q)));
+            res.put("filedSettlements", calls(call("GET", BASE + "/settlements" + q)));
+            res.put("settlementDetail", calls(call("GET", BASE + "/settlements/{approvalId}" + q)));
+            res.put("savedSettlements", calls(call("GET", BASE + "/agents/settlement/saved" + q)));
+            // The settlement asks for its approval line before filing, so it needs the directory too.
+            res.put("approvers", calls(call("GET", BASE + "/corporation-users" + q)));
+            res.put("whoami", calls(call("GET", BASE + "/whoami" + q)));
+        }
+        return res;
+    }
+
+    /**
+     * The BizPlay endpoints behind those, for a client holding its own bearer. Paths only — the
+     * caller prefixes its own host. Taken from the catalogue the gateway itself calls, so a rename
+     * moves both at once.
+     */
+    private java.util.Map<String, java.util.List<java.util.Map<String, String>>> upstreamFor(String agent) {
+        java.util.Map<String, java.util.List<java.util.Map<String, String>>> up =
+                new java.util.LinkedHashMap<>();
+        String planQuery = "?travelerId={travelerId}&searchPeriodType=BSTR_START_DATE"
+                + "&startDate={from}&endDate={to}";
+        if ("plan".equals(agent)) {
+            // The paper definition answers on the UNTYPED path with its segment; the typed variant
+            // (/paper/purpose/{bstrType}/{purposeId}) returns 400 on this tenant, so it is not
+            // advertised — the gateway still falls back to it internally.
+            up.put("purposes", calls(call("GET", bizplayEndpoints.getPurposeCatalog()),
+                    call("GET", bizplayEndpoints.getPapers() + "?segmentId={segmentId}")));
+            up.put("destinationOptions", calls(call("GET", bizplayEndpoints.getRegionList()),
+                    call("GET", bizplayEndpoints.getRegionCities()),
+                    call("GET", bizplayEndpoints.getRegionUsedList()),
+                    call("GET", bizplayEndpoints.getRegionUsedCities())));
+            up.put("routeOptions", calls(call("GET", bizplayEndpoints.getDestinationList())));
+            up.put("approvers", calls(call("GET", bizplayEndpoints.getCorporationUsers())));
+            up.put("plansByStatus", calls(call("GET", bizplayEndpoints.getPlanList() + planQuery),
+                    call("GET", bizplayEndpoints.getPendingPlanList() + planQuery)));
+            up.put("filePlan", calls(call("POST", bizplayEndpoints.getPlanDraft())));
+            up.put("whoami", calls(call("GET", bizplayEndpoints.getUserProfile())));
+        } else {
+            up.put("plans", calls(call("GET", bizplayEndpoints.getPlanList() + planQuery),
+                    call("GET", bizplayEndpoints.getPendingPlanList() + planQuery)));
+            up.put("tranKinds", calls(call("GET", bizplayEndpoints.getTrankindList())));
+            up.put("currencies", calls(call("GET", bizplayEndpoints.getCurrencyCodes())));
+            up.put("taxCodes", calls(call("GET", bizplayEndpoints.getTaxCodeList())));
+            up.put("terminals", calls(call("GET", bizplayEndpoints.getEtcCardTerminal()),
+                    call("GET", bizplayEndpoints.getVehicleNodes())));
+            up.put("receipts", calls(call("POST", bizplayEndpoints.getGeneralExpense())));
+            up.put("receiptDetail", calls(call("GET", bizplayEndpoints.getReceiptById()),
+                    call("GET", bizplayEndpoints.getIssuedBulk())));
+            up.put("uploadReceiptImage", calls(call("POST", bizplayEndpoints.getFileboxUpload()),
+                    call("PATCH", bizplayEndpoints.getReceiptImage())));
+            up.put("registerExpense", calls(call("POST", bizplayEndpoints.getEtcCard()),
+                    call("POST", bizplayEndpoints.getFileboxUpload()),
+                    call("GET", bizplayEndpoints.getIssuedBulk()),
+                    call("POST", bizplayEndpoints.getPolicyLimit())));
+            up.put("attachExpenseImage", calls(call("POST", bizplayEndpoints.getFileboxUpload()),
+                    call("PATCH", bizplayEndpoints.getReceiptImage())));
+            up.put("editExpenseField", calls(call("PATCH", bizplayEndpoints.getEtcCardUpdate())));
+            up.put("fileSettlement", calls(call("POST", bizplayEndpoints.getSettlementDraft()),
+                    call("GET", bizplayEndpoints.getBranchOfficesActive())));
+            up.put("filedSettlements", calls(call("POST", bizplayEndpoints.getSettlementList())));
+            up.put("settlementDetail", calls(call("GET", bizplayEndpoints.getPlanDetail())));
+            up.put("approvers", calls(call("GET", bizplayEndpoints.getCorporationUsers())));
+            up.put("whoami", calls(call("GET", bizplayEndpoints.getUserProfile())));
+        }
+        return up;
+    }
+
+    /** The first path of a capability — for the single-call fields ({@code action}, {@code optionsUrl}). */
+    private String firstPath(java.util.Map<String, java.util.List<java.util.Map<String, String>>> map,
+                             String key) {
+        java.util.List<java.util.Map<String, String>> c = key == null ? null : map.get(key);
+        return (c == null || c.isEmpty()) ? null : c.get(0).get("path");
+    }
+
+    /**
+     * The capabilities THIS turn is about — the lists behind its questions, the sources of its form
+     * fields, and whatever its widget submits to. A turn that asks which trip type names the purpose
+     * endpoints and nothing else; a turn that reports a saved document names nothing.
+     */
+    private java.util.Set<String> keysForTurn(BizplayPlanAgentResponse response) {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        String intent = response.getIntent() == null ? "" : response.getIntent();
+        java.util.List<com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice> choices =
+                response.getPendingChoices() == null ? java.util.List.of() : response.getPendingChoices();
+        for (com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c : choices) {
+            if (c.getSource() != null) {
+                keys.add(c.getSource().startsWith("terminals:") ? "terminals" : c.getSource());
+            }
+            keys.addAll(keysForKind(c.getKind()));
+        }
+        if (response.getFormFields() != null) {
+            for (java.util.Map<String, Object> f : response.getFormFields()) {
+                Object src = f.get("source");
+                if (src != null) {
+                    keys.add(String.valueOf(src));
+                }
+            }
+        }
+        keys.addAll(keysForIntent(intent));
+        return keys;
+    }
+
+    /** The capability a choice of this kind is answered from. */
+    private java.util.Set<String> keysForKind(String kind) {
+        return switch (kind == null ? "" : kind) {
+            case "PURPOSE", "SEGMENT" -> java.util.Set.of("purposes");
+            case "DESTINATION" -> java.util.Set.of("destinationOptions");
+            case "ROUTE" -> java.util.Set.of("routeOptions");
+            case "APPROVAL_LINE", "TRAVELER", "STAFF", "APPROVER" -> java.util.Set.of("approvers");
+            case "PLAN", "PLAN_PENDING" -> java.util.Set.of("plans");
+            case "TRANKIND" -> java.util.Set.of("tranKinds");
+            case "RECEIPT" -> java.util.Set.of("receipts");
+            case "EXPENSE_SLOT" -> java.util.Set.of("terminals");
+            default -> java.util.Set.of();
+        };
+    }
+
+    /** What this intent needs regardless of its choices (a widget's target, a list it just showed). */
+    private java.util.Set<String> keysForIntent(String intent) {
+        return switch (intent == null ? "" : intent) {
+            case "MANUAL_EXPENSE_PROMPT", "MANUAL_EXPENSE_PROMPT_FULL", "EXPENSE_PREVIEW" ->
+                    java.util.Set.of("registerExpense");
+            case "EXPENSE_IMAGE_REQUIRED" -> java.util.Set.of("attachExpenseImage");
+            case "RECEIPT_BROWSE", "RECEIPT_BROWSE_NOT_ISSUED" ->
+                    java.util.Set.of("receipts", "receiptDetail");
+            case "SUBMIT_REQUESTED" -> java.util.Set.of("filePlan");
+            case "SETTLEMENT_READY" -> java.util.Set.of("fileSettlement");
+            case "PURPOSE_SELECTION", "SEGMENT_SELECTION" -> java.util.Set.of("purposes");
+            case "PLAN_SEARCH", "PENDING_PLANS" -> java.util.Set.of("plans");
+            default -> java.util.Set.of();
+        };
+    }
+
+    /** A map cut down to those keys. Empty -> null, so the field is omitted from the JSON. */
+    private java.util.Map<String, java.util.List<java.util.Map<String, String>>> scoped(
+            java.util.Map<String, java.util.List<java.util.Map<String, String>>> all,
+            java.util.Set<String> keys) {
+        java.util.Map<String, java.util.List<java.util.Map<String, String>>> out =
+                new java.util.LinkedHashMap<>();
+        for (String k : keys) {
+            java.util.List<java.util.Map<String, String>> v = all.get(k);
+            if (v != null) {
+                out.put(k, v);
+            }
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /** One agent's intent catalogue, with the widget and endpoint keys each intent implies. */
+    private java.util.List<java.util.Map<String, Object>> intentCatalog(String agent) {
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        for (String[] row : INTENT_CATALOG.getOrDefault(agent, java.util.List.of())) {
+            java.util.List<String> kinds = row[2].isBlank() ? java.util.List.of()
+                    : java.util.List.of(row[2].split(","));
+            java.util.Set<String> keys = new java.util.LinkedHashSet<>(keysForIntent(row[0]));
+            for (String kind : kinds) {
+                keys.addAll(keysForKind(kind));
+            }
+            java.util.Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("intent", row[0]);
+            entry.put("means", row[1]);
+            entry.put("choices", kinds);
+            entry.put("ui", INTENT_UI.get(row[0]));
+            entry.put("resourceKeys", java.util.List.copyOf(keys));
+            out.add(entry);
+        }
+        return out;
+    }
+
+    /** Which widget answers this turn; null when the reply and its choices are the whole turn. */
+    private String uiFor(String intent) {
+        return intent == null ? null : INTENT_UI.get(intent);
+    }
+
+    /** The endpoint that widget posts to, when it posts anywhere. */
+    private String actionFor(String ui, java.util.Map<String, java.util.List<java.util.Map<String, String>>> res) {
+        if (ui == null) {
+            return null;
+        }
+        return switch (ui) {
+            case "expense-form" -> firstPath(res, "registerExpense");
+            case "file-upload" -> firstPath(res, "attachExpenseImage");
+            case "confirm-submit" -> res.containsKey("filePlan")
+                    ? firstPath(res, "filePlan") : firstPath(res, "fileSettlement");
+            default -> null;
+        };
+    }
+
+    /**
+     * How one choice list is meant to be drawn. The rule is the one this project's own UI had to
+     * learn the hard way: options with columns are a table, a list too long for buttons is a
+     * dropdown, a question with no options but an endpoint is a lookup, and the two flows with a
+     * purpose-built widget say so by name.
+     */
+    private String renderFor(com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c) {
+        String kind = c.getKind() == null ? "" : c.getKind();
+        int size = c.getOptions() == null ? 0 : c.getOptions().size();
+        boolean columns = c.getOptions() != null
+                && c.getOptions().stream().anyMatch(o -> o.getMeta() != null && o.getMeta().size() > 1);
+        if (size == 0 && (c.getSource() != null || c.getOptionsUrl() != null)) {
+            return "lookup";
+        }
+        return switch (kind) {
+            case "ROUTE" -> "route-picker";
+            case "APPROVAL_LINE" -> "approval-line";
+            case "PLAN", "PLAN_PENDING", "RECEIPT" -> columns ? "table" : "chips";
+            default -> size > 24 ? "dropdown" : "chips";
+        };
+    }
+
+    /**
+     * Answer the company's question — "어떤 intent에서 어떤 API를 호출해야 하는지" — in the response
+     * itself rather than in documentation.
+     *
+     * <p>Every question the agent asks already carries its own {@code pendingChoices}, so a client
+     * never has to call anything to hold a conversation. What it cannot know without being told is
+     * where the lists behind its OWN widgets live. So each turn names only the capabilities that
+     * turn is about, from both sides: {@code resources} (ours) and {@code upstream} (BizPlay's),
+     * keyed identically. {@code GET /agents/contract} publishes the whole surface for a developer
+     * reading it once.
+     */
+    private BizplayPlanAgentResponse withContract(BizplayPlanAgentResponse response, String agent,
+                                                  String corpNo) {
+        if (response == null) {
+            return null;
+        }
+        String q = "?corpNo=" + java.net.URLEncoder.encode(corpNo == null ? "" : corpNo,
+                java.nio.charset.StandardCharsets.UTF_8);
+        java.util.Map<String, java.util.List<java.util.Map<String, String>>> allRes = resourcesFor(agent, q);
+        java.util.Map<String, java.util.List<java.util.Map<String, String>>> allUp = upstreamFor(agent);
+
+        java.util.List<java.util.Map<String, Object>> fields = response.getFormFields();
+        if (fields != null) {
+            for (java.util.Map<String, Object> f : fields) {
+                String src = f.get("source") == null ? null : String.valueOf(f.get("source"));
+                if (src == null) {
+                    continue;
+                }
+                String url = firstPath(allRes, src);
+                if (url != null) {
+                    f.put("optionsUrl", url);
+                }
+                if (allUp.containsKey(src)) {
+                    f.put("upstream", allUp.get(src));
+                }
+            }
+        }
+
+        // An agent that knows its own question wins: it can tell a period ask from an ordinary
+        // one, which the intent alone cannot. Everything else is still keyed on the intent.
+        String ui = response.getUi() != null ? response.getUi() : uiFor(response.getIntent());
+        java.util.List<com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice> choices =
+                response.getPendingChoices();
+        BizplayPlanAgentResponse withChoices = response;
+        if (choices != null && !choices.isEmpty()) {
+            java.util.List<com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice> decorated =
+                    new java.util.ArrayList<>();
+            for (com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c : choices) {
+                // A choice that names a source has a fuller list behind an endpoint (the 통화 chips
+                // are 5 of 179); otherwise the inline options ARE the whole list.
+                String source = c.getSource();
+                String filter = null;
+                if (source != null && source.startsWith("terminals:")) {
+                    filter = source.substring("terminals:".length());
+                    source = "terminals";
+                }
+                if (source == null) {
+                    source = switch (c.getKind() == null ? "" : c.getKind()) {
+                        case "DESTINATION" -> "destinationOptions";
+                        case "ROUTE" -> "routeOptions";
+                        case "APPROVAL_LINE" -> "approvers";
+                        default -> null;
+                    };
+                }
+                String url = firstPath(allRes, source);
+                if (url != null && filter != null) {
+                    url = url.replace("{vehicleType}", java.net.URLEncoder.encode(
+                            filter, java.nio.charset.StandardCharsets.UTF_8));
+                }
+                decorated.add(c.toBuilder()
+                        .render(c.getRender() != null ? c.getRender() : renderFor(c))
+                        .optionsUrl(c.getOptionsUrl() != null ? c.getOptionsUrl() : url)
+                        .upstream(c.getUpstream() != null ? c.getUpstream()
+                                : (source == null ? null : allUp.get(source)))
+                        .build());
+            }
+            withChoices = response.toBuilder().pendingChoices(decorated).build();
+        }
+        java.util.Set<String> keys = keysForTurn(withChoices);
+        return withChoices.toBuilder()
+                .resources(scoped(allRes, keys))
+                .upstream(scoped(allUp, keys))
+                .ui(ui)
+                .action(actionFor(ui, allRes))
+                .build();
+    }
+
+    @Operation(summary = "The contract a client codes against: every endpoint of ours and of "
+            + "BizPlay for both agents, the widget each intent asks for, and the shapes a choice "
+            + "list can take. Per-turn responses carry only what that turn is about; this is the "
+            + "whole surface, for reading once while building.")
+    @GetMapping("/agents/contract")
+    public ResponseEntity<ApiResponse<java.util.Map<String, Object>>> agentContract(
+            @RequestParam("corpNo") String corpNo) {
+        String q = "?corpNo=" + java.net.URLEncoder.encode(corpNo, java.nio.charset.StandardCharsets.UTF_8);
+        java.util.Map<String, Object> plan = new java.util.LinkedHashMap<>();
+        plan.put("endpoint", call("POST", BASE + "/agents/plan"));
+        plan.put("intents", intentCatalog("plan"));
+        plan.put("resources", resourcesFor("plan", q));
+        plan.put("upstream", upstreamFor("plan"));
+        java.util.Map<String, Object> settlement = new java.util.LinkedHashMap<>();
+        settlement.put("endpoint", call("POST", BASE + "/agents/settlement"));
+        settlement.put("intents", intentCatalog("settlement"));
+        settlement.put("resources", resourcesFor("settlement", q));
+        settlement.put("upstream", upstreamFor("settlement"));
+
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("answering", "POST the chosen option's sendText — or whatever the user typed — back "
+                + "to the same agent endpoint with the same sessionId.");
+        out.put("agents", java.util.Map.of("plan", plan, "settlement", settlement));
+        out.put("ui", INTENT_UI);
+        out.put("render", RENDER_SHAPES);
+        out.put("intentNote", "agents[*].intents is the whole catalogue an agent can emit. "
+                + "choices[] names the pendingChoices kinds that ride with that intent - an empty "
+                + "list means the question is answered in free text, so the turn carries no "
+                + "pendingChoices. Values may be added over time: render an unknown intent from "
+                + "reply + pendingChoices.");
+        return ResponseEntity.ok(ApiResponse.ok(out));
+    }
+
     @Operation(summary = "Chat turn of the form-driven plan agent (purpose chips -> dynamic form -> field filling -> follow-ups)")
     @PostMapping("/agents/plan")
     public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> planChat(
@@ -88,7 +563,8 @@ public class BizplayFormController {
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
         log.info("POST /bizplay/agents/plan - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
-        return ResponseEntity.ok(ApiResponse.ok(bizplayPlanAgentService.chat(request, token)));
+        return ResponseEntity.ok(ApiResponse.ok(withContract(
+                bizplayPlanAgentService.chat(request, token), "plan", request.getCorpNo())));
     }
 
     @Operation(summary = "⑨-b One settlement document by approvalId (GET /api/v2/approval/bstr/{id}). "
@@ -192,7 +668,8 @@ public class BizplayFormController {
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
         log.info("POST /bizplay/agents/settlement - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
-        return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.chat(request, token)));
+        return ResponseEntity.ok(ApiResponse.ok(withContract(
+                bizplaySettlementAgentService.chat(request, token), "settlement", request.getCorpNo())));
     }
 
     @Operation(summary = "LLM intent judge for the approval-line step: what does the user's "
@@ -316,6 +793,16 @@ public class BizplayFormController {
         return ResponseEntity.ok(ApiResponse.ok(
                 bizplaySettlementAgentService.getSession(corpNo, sessionId)));
     }
+
+    @Operation(summary = "세금코드 목록 — the corporation's own tax-code master (id, taxCode, "
+            + "taxName, deductionStatus). The expense card's 세금코드 row is picked from this list.")
+    @GetMapping("/agents/settlement/tax-codes")
+    public ResponseEntity<ApiResponse<JsonNode>> settlementTaxCodes(
+            @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
+        log.info("GET /bizplay/agents/settlement/tax-codes");
+        return ResponseEntity.ok(ApiResponse.ok(bizplayGatewayService.getTaxCodes(token)));
+    }
+
 
     @Operation(summary = "통화 목록 (외화/원화 구분, company feedback #5): the provider's own currency "
             + "master — [{nation, currencyCodeName, name}] — for the manual-expense form's dropdown. "

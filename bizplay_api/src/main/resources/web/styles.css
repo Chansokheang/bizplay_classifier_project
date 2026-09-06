@@ -1653,3 +1653,27 @@ select.rc-select { cursor: pointer; }
 .rc-cancel { color: var(--muted, #667); }
 .prev-card.pc-past .rc-pen { display: none; }
 .prev-card.pc-past .rc-f.rc-edit .rc-v { border-bottom-color: transparent; }
+
+/* The route editor's two dropdowns say which end they are — unlabelled, they read as one control
+   repeated twice (and both used to open on the same site). */
+.pc-route-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--muted, #667); }
+.pc-route-lbl .pc-input { min-width: 120px; }
+
+/* The attach button when the file is picked and the chat is still waiting on it. */
+.btn-nudge { animation: nudge 1.2s ease-in-out 2; }
+@keyframes nudge { 0%, 100% { transform: none; } 50% { transform: translateX(3px); } }
+@media (prefers-reduced-motion: reduce) { .btn-nudge { animation: none; outline: 2px solid var(--primary); } }
+
+
+/* A choice list too long for chips (the 국가 master is 248 rows) rides in one control instead. */
+.asst-choice-select {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--line, #d7dbe3);
+  border-radius: 8px;
+  background: var(--card, #fff);
+  color: inherit;
+  max-width: 320px;
+}
+.asst-choice-select:disabled { opacity: .6; }

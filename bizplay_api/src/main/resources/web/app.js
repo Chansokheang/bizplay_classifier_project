@@ -3178,11 +3178,26 @@ async function startPcPicker(cell, kind, key, was) {
   // route: departure / destination / return, from the registered-destination master
   const sites = await planRouteOptions();
   if (!sites.length) { close(was); return; }
+  // Open on the route that IS set, not on the first site in the master: the card shows shortened
+  // ADDRESSES ("서울 영등포구 영신로"), so each end is matched back to its site by address or name.
+  const siteFor = (text) => {
+    const t = String(text || "").trim();
+    if (!t) return null;
+    return sites.find((x) => x.name === t)
+      || sites.find((x) => (x.address || "").startsWith(t))
+      || sites.find((x) => t.startsWith(x.address || " "))
+      || null;
+  };
+  const firstLeg = String(was).split(",")[0].split("→");
+  const fromSite = siteFor(firstLeg[0]) || sites[0];
+  const toSite = siteFor(firstLeg[1]) || sites[0];
   const opt = (sel) => sites.map((x) =>
     `<option value="${esc(x.name)}"${x.name === sel ? " selected" : ""}>${esc(x.name)}</option>`).join("");
   cell.innerHTML = `<span class="pc-route">`
-    + `<select class="pc-input" data-k="from">${opt(sites[0].name)}</select>`
-    + `<select class="pc-input" data-k="to">${opt(sites[0].name)}</select>`
+    + `<label class="pc-route-lbl">${esc(T("From", "출발지"))}`
+    + `<select class="pc-input" data-k="from">${opt(fromSite.name)}</select></label>`
+    + `<label class="pc-route-lbl">${esc(T("To", "목적지"))}`
+    + `<select class="pc-input" data-k="to">${opt(toSite.name)}</select></label>`
     + `<button type="button" class="btn btn-primary pc-go">${esc(T("Set", "적용"))}</button>`
     + `<button type="button" class="pc-cancel">✕</button></span>`;
   cell.querySelector(".pc-cancel").addEventListener("click", () => close(was));
@@ -3457,13 +3472,37 @@ async function planRoutePicker() {
   const stopRow = (sel) => `<div class="rp-stoprow"><select data-k="stop">${opts(sel)}</select></div>`;
   const field = (label, inner) => `<label class="mx-f mx-wide"><span>${esc(label)}</span>${inner}</label>`;
   const first = sites[0] && sites[0].name;
-  const block = (t, i) => `<div class="rp-trav" data-who="${esc(t.name)}">
+  // Open on the route this traveller HAS, when there is one: re-opening the picker to change a
+  // route used to show the first site in three identical boxes. The legs carry addresses, so each
+  // point is matched back to its site.
+  const siteByAddress = (address) => {
+    const a = String(address || "").trim();
+    if (!a) return null;
+    const hit = sites.find((x) => (x.address || "") === a)
+      || sites.find((x) => a.startsWith(x.address || " "))
+      || sites.find((x) => (x.address || "").startsWith(a));
+    return hit ? hit.name : null;
+  };
+  const currentRoute = (i) => {
+    const legs = ((agent.draft && agent.draft[i]) || {}).bstrRoutes || [];
+    if (!legs.length) return { from: first, stops: [null], back: first };
+    return {
+      from: siteByAddress(legs[0].departureAddress) || first,
+      stops: legs.map((l) => siteByAddress(l.arrivalAddress)).slice(0, -1).filter(Boolean),
+      back: siteByAddress(legs[legs.length - 1].arrivalAddress) || first,
+    };
+  };
+  const block = (t, i) => {
+    const now = currentRoute(i);
+    const stops = now.stops.length ? now.stops : [null];
+    return `<div class="rp-trav" data-who="${esc(t.name)}">
       <div class="rp-who"><span class="rp-num">${i + 1}</span>${esc(t.name)}</div>
-      ${field(T("Departure", "출발지"), `<select data-k="from">${opts(first)}</select>`)}
-      ${field(T("Destination", "목적지"), `<div class="rp-stops">${stopRow(null)}</div>
+      ${field(T("Departure", "출발지"), `<select data-k="from">${opts(now.from)}</select>`)}
+      ${field(T("Destination", "목적지"), `<div class="rp-stops">${stops.map(stopRow).join("")}</div>
         <button type="button" class="rp-add" title="${esc(T("Add a stop", "경유지 추가"))}">＋</button>`)}
-      ${field(T("Return to", "복귀지"), `<select data-k="back">${opts(first)}</select>`)}
+      ${field(T("Return to", "복귀지"), `<select data-k="back">${opts(now.back)}</select>`)}
     </div>`;
+  };
 
   const thread = $("agentThread");
   const wrap = document.createElement("div");
@@ -3601,9 +3640,18 @@ function asstAppend(role, text, byAgent) {
 
 /* Chips are the same contract as everywhere else: the label is what the user reads, sendText is
  * what the agent receives. A tap and a typed sentence travel the identical path. */
+/* These arrive in every turn so that a client with no widgets of its own can answer, but THIS
+ * client has a picker for each: the destination cascade, the route setup, the approval card. Drawn
+ * as chips too, they were a wall — 248 countries as buttons. */
+const ASST_CHIPS_HANDLED_ELSEWHERE = ["DESTINATION", "ROUTE", "APPROVAL_LINE"];
+const ASST_CHIP_LIMIT = 24;          // beyond a screenful, a list is a dropdown, not a chip row
+
 function asstChips(groups) {
   const thread = $("asstThread");
   (groups || []).forEach((g) => {
+    if (ASST_CHIPS_HANDLED_ELSEWHERE.includes(g.kind)) return;
+    const options = g.options || [];
+    if (!options.length) return;
     const wrap = document.createElement("div");
     wrap.className = "msg msg-assistant";
     if (g.name) {
@@ -3614,18 +3662,33 @@ function asstChips(groups) {
     }
     const row = document.createElement("div");
     row.className = "choice-row";
-    (g.options || []).forEach((o) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "choice-chip";
-      b.textContent = o.label || o.sendText;
-      b.addEventListener("click", () => {
-        if (asstBusy) return;
-        b.classList.add("choice-picked");
+    if (options.length > ASST_CHIP_LIMIT) {
+      // One control, scrollable, with the same contract: the label is read, sendText is sent.
+      const sel = document.createElement("select");
+      sel.className = "asst-choice-select";
+      sel.innerHTML = `<option value="">${T("Pick one…", "선택해 주세요…")}</option>`
+        + options.map((o, i) => `<option value="${i}">${esc(o.label || o.sendText)}</option>`).join("");
+      sel.addEventListener("change", () => {
+        if (asstBusy || sel.value === "") return;
+        const o = options[Number(sel.value)];
+        sel.disabled = true;
         asstSend(o.sendText, o.label || o.sendText);
       });
-      row.appendChild(b);
-    });
+      row.appendChild(sel);
+    } else {
+      options.forEach((o) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "choice-chip";
+        b.textContent = o.label || o.sendText;
+        b.addEventListener("click", () => {
+          if (asstBusy) return;
+          b.classList.add("choice-picked");
+          asstSend(o.sendText, o.label || o.sendText);
+        });
+        row.appendChild(b);
+      });
+    }
     wrap.appendChild(row);
     thread.appendChild(wrap);
   });
@@ -3743,8 +3806,10 @@ function asstApprovalCard(data) {
   // "No missing fields" is NOT enough: FORM_LOAD reports none simply because the form has only
   // just been retrieved, which put the approval line on screen before the plan had a date or a
   // traveller. Require the things a filed plan cannot be without.
-  const complete = isPlan && !(data.missingFields || []).length
-    && !(data.pendingChoices || []).length
+  // APPROVAL_LINE chips ARE this card's own question — a client without this widget renders
+  // them as chips, so they must not read as "another question is outstanding".
+  const outstanding = (data.pendingChoices || []).filter((c) => c.kind !== "APPROVAL_LINE");
+  const complete = isPlan && !(data.missingFields || []).length && !outstanding.length
     && !!doc.title && !!doc.bstrStartDate && (data.travelerIds || []).length > 0;
   if (!complete) {
     if (old) old.remove();
@@ -4314,6 +4379,16 @@ async function submitSettlementToBizplay(btn, note) {
   const prev = btn.textContent;
   btn.textContent = T("Submitting…", "제출 중…");
   note.textContent = "";
+  // BizPlay's own screen confirms the 결재선 before a 정산서 is filed, and so does the agent when
+  // the traveller types "제출해줘". The button must ask the same question rather than file behind
+  // it — so it sends that turn, and the conversation files the document once the line is agreed.
+  if (agent.live && agent.settle) {
+    $("agentInput").value = T("File it as it is.", "이대로 제출해줘");
+    sendAgent({ keepLang: true });
+    btn.textContent = prev;
+    btn.closest(".prev-card").querySelector(".pc-foot").style.display = "none";
+    return;
+  }
   try {
     const res = await fetch(`${BZ_API_BASE()}/agents/settlement/${encodeURIComponent(agent.sessionId)}/create`
       + `?corpNo=${encodeURIComponent(CORP_NO)}`, {
@@ -4365,11 +4440,10 @@ const TP_TRAIN_SEATS = [["Standard", "일반실", "standardRoom"], ["Deluxe", "�
 /* The provider's own 통화 master (179 rows), fetched once and shaped the way rcLabel/選択 want it:
  * [en, ko, code]. KRW leads — it is what most receipts are — and the rest follow in the provider's
  * order. Until it arrives the picker still works with the handful people actually type. */
-/* The company asked to start with 원화/USD/JPY only; loadCurrencies() swaps in the provider's full
- * master when the form needs it, so widening this is a one-line change. */
+/* What the picker shows until the master arrives — the three that cover almost every receipt.
+ * loadCurrencies() replaces them with all 179 the provider carries. */
 let CURRENCY_OPTS = [["KRW · Korean won", "원화 (KRW)", "KRW"], ["USD · US dollar", "미국 달러 (USD)", "USD"],
   ["JPY · Japanese yen", "일본 엔 (JPY)", "JPY"]];
-const CURRENCY_ALLOW = ["KRW", "USD", "JPY"];   // first round; the master has 179
 let currencyLoad = null;
 function loadCurrencies() {
   if (currencyLoad) return currencyLoad;
@@ -4380,10 +4454,10 @@ function loadCurrencies() {
       if (!rows.length) return CURRENCY_OPTS;
       const label = (c) => `${c.name}${c.nation ? " · " + c.nation : ""}`
         + `${c.currencyCodeName ? " " + c.currencyCodeName : ""}`;
-      // The company asked to START with 원화/USD/JPY: the labels still come from the provider's
-      // master (nation + currency name), only the LIST is held short. Widening = edit CURRENCY_ALLOW.
-      const allowed = rows.filter((c) => CURRENCY_ALLOW.includes(c.name));
-      const use = allowed.length >= 2 ? allowed : rows;
+      // All 179 the provider carries, in the provider's own order — the same list the company's
+      // site shows (USD, JPY, CNY, EUR … ZWL), with 원화 lifted to the top because it is what most
+      // receipts are.
+      const use = rows;
       const krw = use.filter((c) => c.name === "KRW").map((c) => [label(c), label(c), c.name]);
       const rest = use.filter((c) => c.name !== "KRW").map((c) => [label(c), label(c), c.name]);
       CURRENCY_OPTS = [...krw, ...rest];
@@ -4391,6 +4465,33 @@ function loadCurrencies() {
     })
     .catch(() => CURRENCY_OPTS);
   return currencyLoad;
+}
+
+/* 세금코드 master — [{id, taxCode, taxName, deductionStatus, activated}]. Only the ACTIVE codes are
+ * offered: an inactive one is refused at save time. Fetched lazily, the first time the row is
+ * opened, so a card that is only read costs nothing. */
+let TAXCODE_OPTS = [];
+let taxCodeLoad = null;
+function loadTaxCodes() {
+  if (taxCodeLoad) return taxCodeLoad;
+  taxCodeLoad = fetch(`${BZ_API_BASE()}/agents/settlement/tax-codes?corpNo=${encodeURIComponent(CORP_NO)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      const rows = (j && (j.data || j.payload)) || [];
+      // Several codes share a name (this corp has three 매입(증빙무관)); what separates them is the
+      // 공제 status, so it rides in the label.
+      const DEDUCT = { DEDUCTABLE: T("deductible", "공제"), NON_DEDUCTABLE: T("non-deductible", "불공제"),
+        NON_TAX: T("non-taxable", "불과세") };
+      TAXCODE_OPTS = rows.filter((c) => c.activated !== false).map((c) => {
+        const status = DEDUCT[c.deductionStatus];
+        const label = [c.taxCode, c.taxName].filter(Boolean).join(" · ")
+          + (status ? ` (${status})` : "") || String(c.id);
+        return [label, label, String(c.id)];
+      });
+      return TAXCODE_OPTS;
+    })
+    .catch(() => TAXCODE_OPTS);
+  return taxCodeLoad;
 }
 
 const TP_PAY_CLASS = [["Actual cost", "실비", "ACTUAL"], ["Limit", "한도", "LIMITED"],
@@ -5282,11 +5383,14 @@ function settleReceiptItemHtml(r, i) {
   // Editable rows carry the receipt id and the server-side key; the pencil opens an inline editor
   // that PATCHes the RECEIPT itself. Derived rows (규정금액, 지급구분, 세금코드, image) stay read-only.
   const canEdit = !!r.receiptId;
-  const fldE = (label, value, key, kind, opts) => {
+  // `cur` is for rows whose VALUE is an id but whose text is a label (세금코드): the dropdown
+  // preselects on the id, the row still reads "T02 · 불공제".
+  const fldE = (label, value, key, kind, opts, cur) => {
     if (!canEdit) return fld(label, value);
     const raw = (value == null ? "" : String(value));
     return `<div class="rc-f rc-edit" data-rc-id="${esc(r.receiptId)}" data-rc-key="${esc(key)}"`
-      + ` data-rc-kind="${esc(kind || "text")}"${opts ? ` data-rc-opts="${esc(JSON.stringify(opts))}"` : ""}>`
+      + ` data-rc-kind="${esc(kind || "text")}"${cur == null ? "" : ` data-rc-cur="${esc(cur)}"`}`
+      + `${opts ? ` data-rc-opts="${esc(JSON.stringify(opts))}"` : ""}>`
       + `<span class="rc-k">${esc(label)}</span>`
       + `<span class="rc-v">${esc(raw || "—")}<button type="button" class="rc-pen" title="${esc(T("Edit", "수정"))}">✎</button></span></div>`;
   };
@@ -5324,7 +5428,11 @@ function settleReceiptItemHtml(r, i) {
     // approved amount — the company reads a hidden row as a missing field, not as a tidy one.
     fld(T("Policy amount", "규정금액"), r.ruledAmount != null ? won(r.ruledAmount) : ""),
     fld(T("Pay class", "지급구분"), rcLabel(r.bstrPayClassType, TP_PAY_CLASS) || r.bstrPayClassType),
-    fld(T("Tax code", "세금코드"), r.taxName ? (r.taxCode ? r.taxCode + " · " + r.taxName : r.taxName) : ""),
+    // 세금코드 is picked from the corp's master, never typed — and the row stays visible when it is
+    // unset, because "not resolved" is precisely the case the approver needs to correct.
+    fldE(T("Tax code", "세금코드"),
+         r.taxName ? (r.taxCode ? r.taxCode + " · " + r.taxName : r.taxName) : "",
+         "taxCodeId", "select", null, r.taxCodeId == null ? "" : String(r.taxCodeId)),
   ].join("");
   return `<div class="rc-item">
       <div class="rc-top"><span class="rc-idx">${i + 1}</span>
@@ -5362,11 +5470,17 @@ function settleEditorBind() {
     const current = vSpan.textContent.replace(/✎$/, "").trim().replace(/^—$/, "");
     let input;
     if (kind === "select") {
-      const opts = JSON.parse(cell.getAttribute("data-rc-opts") || "[]");
+      let opts = JSON.parse(cell.getAttribute("data-rc-opts") || "[]");
+      if (!opts.length && key === "taxCodeId") {
+        pen.textContent = "…";
+        opts = await loadTaxCodes();
+      }
+      const cur = cell.getAttribute("data-rc-cur");
+      const sel = cur == null ? current : cur;   // 세금코드 matches on the id, others on the label
       input = document.createElement("select");
       input.className = "rc-select";
       input.innerHTML = opts.map((o) =>
-        `<option value="${esc(o[2])}"${o[2] === current ? " selected" : ""}>${esc(T(o[0], o[1]))}</option>`).join("");
+        `<option value="${esc(o[2])}"${o[2] === sel ? " selected" : ""}>${esc(T(o[0], o[1]))}</option>`).join("");
     } else {
       input = document.createElement("input");
       input.className = "rc-input";
@@ -6361,7 +6475,11 @@ async function sendAgent(opts) {
   // verdict — pick a person, assign a role, finish, save, decline, remove, or hand anything
   // else to the main agent. The only deterministic shortcut is an exact/unique roster-name
   // match, which is matching against DATA, not phrasing.
-  const apprStage = chatOnly && agent.live && !(opts && opts.__skipApprIntent)
+  // The SETTLEMENT never enters this stage: its 결재선 question belongs to the server, which
+  // answers it in the same turn ("이대로 제출해줘" files the document). Letting the plan's
+  // client-side judge intercept here sent the answer to the PLAN's save instead, and the
+  // settlement hung on "Saving to BizPlay…".
+  const apprStage = chatOnly && agent.live && !agent.settle && !(opts && opts.__skipApprIntent)
     && (document.querySelector("#agentThread .choice-row.appr-row:not(.choice-done)")
         || bzApproval.awaitSaveConfirm
         || (bzApproval.lines.length && document.querySelector("#agentThread .chat-appr-card")));
@@ -6613,6 +6731,18 @@ async function sendAgent(opts) {
     // An EMPTY list is an answer too - the server sends the day rows it now has, and the
     // card must not keep showing a day the trip no longer covers.
     if (Array.isArray(data.periodPlaces)) planPeriodPlaces = data.periodPlaces;
+    // An approver named in the conversation ("결재자는 김도하") arrives as data, not prose — the
+    // card that shows the line is the same one the picker fills, so it renders from either.
+    if (Array.isArray(data.approvalLines) && data.approvalLines.length) {
+      const known = (id) => bzApproval.roster.find((u) => String(u.id) === String(id)) || {};
+      bzApproval.lines = data.approvalLines.map((l) => {
+        const u = known(l.corporationUserId);
+        return { id: l.corporationUserId, name: l.name || u.name || String(l.corporationUserId),
+                 dept: u.dept || "", empNo: u.empNo || "", position: u.position || "",
+                 kind: l.approvalKindType || "APPROVAL" };
+      });
+      bzChatApprovalCard();
+    }
     // The server owns the 출장지 상세 slot (asked there, editable there — "add destination
     // detail of 'floor 2'"); mirror it so the card shows it and the save posts it.
     if (typeof data.destinationDetail === "string" && data.destinationDetail.trim()) {
@@ -6648,7 +6778,11 @@ async function sendAgent(opts) {
       // chat mode detaches the chips from the reply so they can land BELOW the preview
       choiceGroups: chatOnly ? null : data.pendingChoices,
     });
-    const hasChoices = !!(data.pendingChoices && data.pendingChoices.length);
+    // APPROVAL_LINE rides in the turn for clients with no widgets of their own; the PLAN view has
+    // the approval card and its role questions, so it is not an outstanding choice there. The
+    // SETTLEMENT asks the question once, before filing, and draws it with settleApproverPicker.
+    const hasChoices = (data.pendingChoices || [])
+      .some((g) => g && (g.kind === "APPROVAL_LINE" ? agent.settle : g.kind !== "ROUTE"));
     if (chatOnly) {
       // Dynamic draft-QA answered a view-style request: put the preview cards (and the
       // approval card, if the flow reached it) right below the text answer.
@@ -6696,7 +6830,17 @@ async function sendAgent(opts) {
         // The expense is complete and waiting on its 증빙: a file cannot ride a chat turn, so
         // the widget below carries it to .../manual-expense/attach, which registers exactly
         // the expense the conversation collected.
-        else if (data.intent === "EXPENSE_IMAGE_REQUIRED") settlementAttachImageForm();
+        else if (data.intent === "EXPENSE_IMAGE_REQUIRED") {
+          settlementAttachImageForm();
+          // Still waiting, but the file is already picked: repeating "attach the file" reads as
+          // the chat ignoring you. Point at the button that finishes it.
+          const h = agent.attachForm;
+          if (h && h.file()) {
+            h.warn(T("Your file is ready — press “Attach and register”.",
+                     "파일이 준비됐어요 — “첨부하고 등록”을 눌러 주세요."));
+            h.w.querySelector(".mx-attach").classList.add("btn-nudge");
+          }
+        }
         // The user TYPED the instruction to register it ("register", "올려줘", anything the agent
         // judged as go-ahead) instead of clicking. The bytes are in the picker on screen, so the
         // click handler runs for them; with no file chosen the picker just says so and waits.
@@ -6711,6 +6855,13 @@ async function sendAgent(opts) {
         // same settlement line, and it now carries 교통수단/구간/이용일/규정금액/세금코드 to show.
         else if (data.intent === "EVIDENCE_ATTACH") settlementReceiptsPreview();
         else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
+        // Filed. The conversation already said so with the document number; close the chat and
+        // show the new row, the way the summary card's own submit used to.
+        else if (data.intent === "CREATE_SETTLEMENT") {
+          agent.status = data.status || "POSTED";
+          localStorage.removeItem("bizplay.settle.session");
+          setTimeout(() => { closeCreate(); loadBizplaySettlements(); }, 1200);
+        }
         // "Show my receipts" — the SERVER's LLM judged the ask (no client word lists);
         // the UI just opens its browser widget with the judged filter.
         else if (data.intent === "RECEIPT_BROWSE") settlementReceiptBrowser("NOT_DRAFTED");
@@ -7074,6 +7225,46 @@ function receiptPickTable(group) {
  * test, not a hardcoded list that would drift from the backend: one lowercase word (dashes
  * ok), optionally ":value". Anything with a space or Hangul is a composed sentence
  * ("Trip type: 국내출장 / 일반") and is echoed as-is. */
+/* The settlement's 결재선 question: a directory dropdown (too many people for chips) and the
+ * two answers that need no name — file it unchanged, or say who to drop. Everything here is
+ * also sayable in words; this is the widget half of the same question. */
+function settleApproverPicker(g) {
+  const box = document.createElement("div");
+  box.className = "choice-row";
+  const cap = document.createElement("span");
+  cap.className = "choice-cap";
+  cap.textContent = `“${g.name || T("Approval line", "결재선")}”:`;
+  box.appendChild(cap);
+
+  const sel = document.createElement("select");
+  sel.className = "asst-choice-select";
+  sel.innerHTML = `<option value="">${T("Add an approver…", "결재자 추가…")}</option>`
+    + (g.options || []).map((o, i) => `<option value="${i}">${esc(o.label || o.sendText)}</option>`).join("");
+  sel.addEventListener("change", () => {
+    if (agent.busy || sel.value === "") return;
+    const o = g.options[Number(sel.value)];
+    sel.disabled = true;
+    box.classList.add("choice-done");
+    $("agentInput").value = T(`Add ${o.sendText} to the approval line.`, `${o.sendText} 님을 결재선에 추가해줘`);
+    sendAgent({ keepLang: true, echoAs: o.label || o.sendText });
+  });
+  box.appendChild(sel);
+
+  const asIs = document.createElement("button");
+  asIs.type = "button";
+  asIs.className = "choice-chip";
+  asIs.textContent = T("File it as it is", "이대로 제출");
+  asIs.addEventListener("click", () => {
+    if (agent.busy || box.classList.contains("choice-done")) return;
+    box.classList.add("choice-done");
+    asIs.classList.add("choice-picked");
+    $("agentInput").value = T("File it as it is.", "이대로 제출해줘");
+    sendAgent({ keepLang: true });
+  });
+  box.appendChild(asIs);
+  return box;
+}
+
 function isMachineToken(s) {
   return /^[a-z][a-z-]*(:[\w.,-]+)?$/.test(String(s || "").trim());
 }
@@ -7096,6 +7287,7 @@ function appendMsg(role, text, meta = {}) {
     : `<div class="bubble ${meta.error ? "bubble-error" : ""}">${text ? esc(text) : "<i>(file only)</i>"}${metaHtml}</div>${foot}`;
   // Interactive disambiguation chips (pendingChoices from the agent): one row per
   // ambiguous name; clicking a chip sends its sendText as the next chat turn.
+  const chipsBefore = wrap.childElementCount;
   if (meta.choiceGroups && meta.choiceGroups.length) {
     meta.choiceGroups.forEach((g) => {
       // Trip plans carry too many columns for a chip — they get a table of their own.
@@ -7112,6 +7304,28 @@ function appendMsg(role, text, meta = {}) {
       // Found receipts → a table (one row + Attach per receipt), action options as chips below.
       if (g.kind === "RECEIPT" && (g.options || []).some((o) => o.meta)) {
         wrap.appendChild(receiptPickTable(g));
+        return;
+      }
+      // 결재선 and 이동경로 have widgets of their own in this view — the approval card with its
+      // roles, and the Route Setup picker (departure / destination / return, per traveller). Chips
+      // would draw on top of them. Destination has no such widget here, so it stays: long lists
+      // fall into the dropdown branch below rather than a wall of buttons.
+      if (g.kind === "ROUTE") {
+        return;
+      }
+      // 결재선: the PLAN chat drives its own approval widget (pick person → pick role), so the
+      // turn's chips would draw on top of it. The SETTLEMENT chat has no such widget — it asks
+      // once, before filing — so there the same choices become a picker: everyone in the
+      // corporation, plus "file it as it is" for the line inherited from the plan.
+      if (g.kind === "APPROVAL_LINE") {
+        if (!agent.settle) return;
+        wrap.appendChild(settleApproverPicker(g));
+        return;
+      }
+      // A "lookup" question carries an endpoint instead of options — this UI answers it with the
+      // composer (and the manual-expense form has the terminal dropdowns), so there is nothing to
+      // draw here; an empty chip row would just show a caption over blank space.
+      if (!(g.options || []).length) {
         return;
       }
       const row = document.createElement("div");
@@ -7142,6 +7356,24 @@ function appendMsg(role, text, meta = {}) {
       if (CURRENT_USER_NAME && g.name && /^(i|me|myself|나|저|본인)$/i.test(String(g.name).trim())) {
         addChip(`${CURRENT_USER_NAME} · that’s me`, `The traveler is ${CURRENT_USER_NAME}.`);
       }
+      if ((g.options || []).length > 24) {
+        // A list this long is a control, not a row of buttons — same contract, one widget.
+        const sel = document.createElement("select");
+        sel.className = "asst-choice-select";
+        sel.innerHTML = `<option value="">${T("Pick one…", "선택해 주세요…")}</option>`
+          + g.options.map((o, i) => `<option value="${i}">${esc(o.label || o.sendText)}</option>`).join("");
+        sel.addEventListener("change", () => {
+          if (agent.busy || sel.value === "") return;
+          const o = g.options[Number(sel.value)];
+          sel.disabled = true;
+          row.classList.add("choice-done");
+          $("agentInput").value = o.sendText;
+          sendAgent({ keepLang: true, echoAs: isMachineToken(o.sendText) ? (o.label || o.sendText) : null });
+        });
+        row.appendChild(sel);
+        wrap.appendChild(row);
+        return;
+      }
       (g.options || []).forEach((opt) => {
         const isSkip = !opt.staffId && /^skip$/i.test(opt.label || "");
         addChip(opt.label || opt.sendText || "?", opt.sendText || opt.label || "", isSkip ? "choice-skip" : "");
@@ -7156,6 +7388,11 @@ function appendMsg(role, text, meta = {}) {
       }
       wrap.appendChild(row);
     });
+  }
+  // A chips-only message whose every group was handled by a widget elsewhere would otherwise
+  // leave an empty bubble in the thread.
+  if (chipsOnly && wrap.childElementCount === chipsBefore) {
+    return;
   }
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;

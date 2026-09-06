@@ -32,11 +32,35 @@ public class TripPlanAgentResponse {
 
     /** One ambiguous mention the user must resolve. */
     @Getter
-    @Builder
+    @Builder(toBuilder = true)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class PendingChoice {
         /** What kind of entity is ambiguous. Currently only "STAFF". */
         private String kind;
+        /**
+         * The entry in the response's `resources` that serves the FULL list behind these options —
+         * set when the chips are a shortlist. The controller resolves it to {@link #optionsUrl}.
+         */
+        private String source;
+        /**
+         * The BIZPLAY endpoint that serves this same list, for a client holding its own bearer.
+         * A path, not a URL — prefix your own host. Several paths separated by " · " when the
+         * list is assembled from more than one call.
+         */
+        private java.util.List<java.util.Map<String, String>> upstream;
+        /**
+         * How this list is meant to be drawn: "chips" (a short row of buttons), "dropdown" (too
+         * long for chips), "table" (the options carry columns in meta), "route-picker" (departure /
+         * destination / return per traveller) or "approval-line" (people plus their role). A hint,
+         * not a rule — the options answer the question whatever the client draws.
+         */
+        private String render;
+        /**
+         * Where this same list is served, when an endpoint serves it — corpNo already filled in.
+         * The options above are complete enough to answer the question; this is for a client that
+         * wants to search, page or refresh the list on its own. Null when no endpoint backs it.
+         */
+        private String optionsUrl;
         /** The ambiguous input as the user typed/extracted it (e.g. "sokheang"). */
         private String name;
         /** The candidate options to choose from. */
