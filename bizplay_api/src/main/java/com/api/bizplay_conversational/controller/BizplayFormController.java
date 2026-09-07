@@ -859,16 +859,18 @@ public class BizplayFormController {
     public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> attachHeldExpenseImage(
             @org.springframework.web.bind.annotation.PathVariable("sessionId") String sessionId,
             @RequestParam("corpNo") String corpNo,
-            @org.springframework.web.bind.annotation.RequestPart("image")
+            @org.springframework.web.bind.annotation.RequestPart(value = "image", required = false)
                     org.springframework.web.multipart.MultipartFile image,
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token)
             throws java.io.IOException {
-        log.info("POST /bizplay/agents/settlement/{}/manual-expense/attach - corpNo={}", sessionId, corpNo);
-        if (image == null || image.isEmpty()) {
-            throw new IllegalArgumentException("A receipt image is required for a 기타증빙 expense.");
-        }
+        log.info("POST /bizplay/agents/settlement/{}/manual-expense/attach - corpNo={} image={}",
+                sessionId, corpNo, image == null || image.isEmpty() ? "none" : image.getOriginalFilename());
+        // Company feedback ⑦: the image is optional. Posting this endpoint with no file
+        // registers the waiting expense without one.
+        boolean noFile = image == null || image.isEmpty();
         return ResponseEntity.ok(ApiResponse.ok(bizplaySettlementAgentService.registerHeldExpense(
-                sessionId, corpNo, image.getBytes(), image.getOriginalFilename(), token)));
+                sessionId, corpNo, noFile ? null : image.getBytes(),
+                noFile ? null : image.getOriginalFilename(), token)));
     }
 
     @Operation(summary = "Manual expense ⑧ COMPLETE — register the whole receipt in one etc-card POST "

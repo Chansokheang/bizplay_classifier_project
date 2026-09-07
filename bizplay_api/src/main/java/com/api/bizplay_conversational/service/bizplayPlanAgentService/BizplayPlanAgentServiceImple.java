@@ -126,7 +126,21 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // Guardrail BEFORE any session write or LLM call: refuse DB-mutation requests aimed at
         // the NL->SQL lookup agent, prompt-injection phrasing, and oversized input. It also
         // ROUTES: a read-only data question goes to the NL->SQL lookup agent instead of the form.
-        GuardrailAgentService.GuardrailResult guard = guardrailAgentService.check(message);
+        // A RETRY carries the user's words plus our own "(Note for this attempt - the previous
+        // one missed this: …)" prefix. The words already passed this check on the first attempt,
+        // and the prefix - which talks about changing an earlier answer - reads to the guardrail
+        // as an override attempt: "테스트(유성린)" ended in GUARDRAIL_BLOCKED on its retry.
+        GuardrailAgentService.GuardrailResult guard = retryOfMisalignedTurn
+                ? GuardrailAgentService.GuardrailResult.ok()
+                : guardrailAgentService.check(message);
+        // A message that IS one of this corporation's purpose names is an answer to our own chip
+        // row, whatever the name looks like - "테스트(유성린)" read to the guardrail as an attempt
+        // to override the assistant. The catalogue is the corp's data; matching it whole is safe.
+        if (!guard.allowed() && namesAPurpose(message, request.getCorpUserId(), bizplayToken)) {
+            log.info("[GUARD] '{}' is a purpose name of this corporation - not a policy violation.",
+                    truncate(message, 40));
+            guard = GuardrailAgentService.GuardrailResult.ok();
+        }
         if (!guard.allowed()) {
             return BizplayPlanAgentResponse.builder()
                     .sessionId(request.getSessionId())
@@ -363,13 +377,20 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         if (documents.isEmpty()) {
             // --- Sub-agent [A]: Purpose & Segment resolution -------------------------------------
             JsonNode catalog = bizplayGatewayService.getPurposeCatalog(request.getCorpUserId(), bizplayToken);
-            List<PurposeOption> options = purposeSegmentAgentService.flattenCatalog(catalog);
+            List<PurposeOption> options = withTripTypes(
+                    purposeSegmentAgentService.flattenCatalog(catalog), bizplayToken);
 
             // The form asks these as two fields - Travel Purpose, then Trip Type - so the chat does
             // too. A flat row of "purpose · segment" chips forced the user to read every
             // combination at once; picking the purpose first narrows it to that purpose's own
             // trip types, and a purpose with none skips the second question entirely.
-            java.util.regex.Matcher purposePick = PURPOSE_PICK.matcher(message);
+            // A message that IS a purpose's name ("해외출장", "선급금") is the same answer as
+            // clicking that purpose's chip: the catalogue name, compared whole, not a phrase read
+            // out of a sentence. Without this a typed "해외출장" fell to the judge, which on its
+            // own had no reason to prefer 해외출장 over asking the question again.
+            String namedPurpose = purposeNamedExactly(message, options);
+            java.util.regex.Matcher purposePick = PURPOSE_PICK.matcher(
+                    namedPurpose != null ? namedPurpose : message);
             if (purposePick.matches()) {
                 long purposeId = Long.parseLong(purposePick.group(1));
                 List<PurposeOption> ofPurpose = new ArrayList<>();
@@ -383,6 +404,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     turnText = ofPurpose.get(0).getSendText();
                 } else if (!ofPurpose.isEmpty()) {
                     appendTurn(session, "user", message);
+                    // The answer to this question is one of THESE trip types - remembered so a
+                    // typed "일반" is read against them and not against the whole catalogue.
+                    state.put("pendingSegmentPurposeId", purposeId);
                     String ask = t(ko, "Which trip type? ", "출장 유형을 선택해 주세요. ");
                     appendTurn(session, "assistant", ask);
                     saveState(session, state);
@@ -400,8 +424,16 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 }
             }
 
+            // A trip-type question is open: read this turn as its answer first.
+            String segmentAnswer = segmentOfPendingPurpose(state, turnText, options);
+            if (segmentAnswer != null) {
+                turnText = segmentAnswer;
+            }
             PurposeResolutionResult res = purposeSegmentAgentService.resolve(turnText, options);
             subAgents.add("PURPOSE_SEGMENT_AGENT");
+            if (res.isResolved()) {
+                state.remove("pendingSegmentPurposeId");   // answered; the question is closed
+            }
 
             if (res.isResolved()) {
                 intent = "FORM_LOAD";
@@ -2919,7 +2951,8 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         String lower = bare.toLowerCase(java.util.Locale.ROOT);
         boolean chip = lower.startsWith("trip type:");
         JsonNode catalog = bizplayGatewayService.getPurposeCatalog(request.getCorpUserId(), bizplayToken);
-        List<PurposeOption> options = purposeSegmentAgentService.flattenCatalog(catalog);
+        List<PurposeOption> options = withTripTypes(
+                purposeSegmentAgentService.flattenCatalog(catalog), bizplayToken);
         // The cheap gate is DATA, not vocabulary: does the message name one of the corp's own
         // form labels (\ud574\uc678\ucd9c\uc7a5, \uc7a5\uae30, \uc77c\ubc18 \u2026)? A word list for "classification" missed \ubd84\ub958 \u2014
         // the very word this UI prints \u2014 and the switch silently never happened. Whether the
@@ -4407,6 +4440,128 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
     }
 
+    /**
+     * Each purpose option, told which kind of trip its form is for. The type is on the paper, so a
+     * cached paper lookup per option answers it; an option whose papers cannot be read keeps a null
+     * type and is simply offered without one.
+     */
+    private List<PurposeOption> withTripTypes(List<PurposeOption> options, String token) {
+        for (PurposeOption o : options) {
+            try {
+                JsonNode papers = bizplayGatewayService.getPapersAnyTripType(
+                        o.getPurposeId(), o.getSegmentId(), token);
+                for (JsonNode paper : papers) {
+                    if ("BSTR_PLAN".equals(paper.path("paperKind").path("paperKindType").asText(""))
+                            && paper.hasNonNull("bstrType")) {
+                        o.setTripType(paper.path("bstrType").asText());
+                        break;
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.debug("Trip type unknown for purpose {}/{}: {}",
+                        o.getPurposeId(), o.getSegmentId(), e.getMessage());
+            }
+        }
+        return options;
+    }
+
+    /**
+     * The answer to "Which trip type?", read against the options that question offered.
+     *
+     * <p>Two passes, both over that purpose's own segments: the segment NAME as the corporation
+     * spells it (an exact or contained match - comparing against data we were just given, not
+     * against phrasing), then a judge that is shown those names and nothing else. Null when the
+     * message answers something else entirely, so the normal flow still handles it.
+     *
+     * @return the full "Trip type: 목적 / 구분" sentence the resolver understands, or null
+     */
+    private String segmentOfPendingPurpose(ObjectNode state, String message, List<PurposeOption> options) {
+        long purposeId = state.path("pendingSegmentPurposeId").asLong(0);
+        if (purposeId <= 0 || message == null || message.isBlank()) {
+            return null;
+        }
+        List<PurposeOption> ofPurpose = new ArrayList<>();
+        for (PurposeOption o : options) {
+            if (o.getPurposeId() == purposeId && o.getSegmentName() != null) {
+                ofPurpose.add(o);
+            }
+        }
+        if (ofPurpose.isEmpty()) {
+            return null;
+        }
+        String said = message.trim().toLowerCase(java.util.Locale.ROOT);
+        for (PurposeOption o : ofPurpose) {
+            String seg = o.getSegmentName().trim().toLowerCase(java.util.Locale.ROOT);
+            if (!seg.isBlank() && (said.equals(seg) || said.contains(seg))) {
+                log.info("[SEGMENT] '{}' read as the trip type '{}' of purpose {}.",
+                        truncate(message, 30), o.getSegmentName(), purposeId);
+                return o.getSendText();
+            }
+        }
+        try {
+            StringBuilder names = new StringBuilder();
+            for (PurposeOption o : ofPurpose) {
+                names.append(names.isEmpty() ? "" : ", ").append(o.getSegmentName());
+            }
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "segment", "THE OPEN QUESTION, asked one message ago: which 출장 유형 (trip "
+                            + "type) of \"" + ofPurpose.get(0).getPurposeName() + "\" is this trip? "
+                            + "The only allowed answers are: " + names + ". Read THIS message and "
+                            + "reply with EXACTLY one of those names, or \"none\" if it answers "
+                            + "something else. Any language: 장기 = long-term/long stay, 일반 = "
+                            + "regular/normal/general/standard"),
+                    "ko".equals(state.path("lang").asText(null)))
+                    .path("segment").asText("").trim();
+            for (PurposeOption o : ofPurpose) {
+                if (o.getSegmentName().equalsIgnoreCase(verdict)) {
+                    log.info("[SEGMENT] judged '{}' to be the trip type '{}'.",
+                            truncate(message, 30), o.getSegmentName());
+                    return o.getSendText();
+                }
+            }
+        } catch (RuntimeException e) {
+            log.debug("Trip-type judge unavailable: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * "purpose:&lt;id&gt;" when the whole message is one purpose's name as the corporation spells it
+     * (case- and space-insensitive), else null. Equality against catalogue data, so a corp that
+     * names a purpose "R&amp;D 출장" gets the same treatment as one that names it 해외출장.
+     */
+    private String purposeNamedExactly(String message, List<PurposeOption> options) {
+        if (message == null) {
+            return null;
+        }
+        String said = message.replaceAll("\s+", "").toLowerCase(java.util.Locale.ROOT);
+        if (said.isBlank()) {
+            return null;
+        }
+        Long hit = null;
+        for (PurposeOption o : options) {
+            String name = o.getPurposeName() == null ? "" : o.getPurposeName();
+            if (!name.isBlank() && said.equals(name.replaceAll("\s+", "").toLowerCase(java.util.Locale.ROOT))) {
+                if (hit != null && hit != o.getPurposeId()) {
+                    return null;                     // two purposes share the name - let the judge ask
+                }
+                hit = o.getPurposeId();
+            }
+        }
+        return hit == null ? null : "purpose:" + hit;
+    }
+
+    /** Is the whole message one of the corporation's purpose names? (Catalogue data, cached.) */
+    private boolean namesAPurpose(String message, String corpUserId, String token) {
+        try {
+            JsonNode catalog = bizplayGatewayService.getPurposeCatalog(corpUserId, token);
+            return purposeNamedExactly(message,
+                    purposeSegmentAgentService.flattenCatalog(catalog)) != null;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private TripPlanAgentResponse.PendingChoice purposeChoice(List<PurposeOption> candidates,
                                                              List<PurposeOption> all) {
         java.util.LinkedHashMap<Long, String> byPurpose = new java.util.LinkedHashMap<>();
@@ -4424,6 +4579,12 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
             java.util.Map<String, String> meta = new java.util.LinkedHashMap<>();
             meta.put("segments", String.valueOf(segments));
+            for (PurposeOption o : all) {
+                if (o.getPurposeId() == id && o.getTripType() != null) {
+                    meta.put("tripType", o.getTripType());   // DOMESTIC | OVERSEA, from the form
+                    break;
+                }
+            }
             options.add(TripPlanAgentResponse.Option.builder()
                     .label(e.getValue())
                     .sendText("purpose:" + id)
@@ -4650,7 +4811,11 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         String squashed = title.replaceAll("[\\s·/,-]+", "");
         boolean genericTitle = title.equalsIgnoreCase(purpose) || title.equalsIgnoreCase(segment)
                 || squashed.equalsIgnoreCase((purpose + segment).replaceAll("\\s+", ""))
-                || squashed.equalsIgnoreCase((segment + purpose).replaceAll("\\s+", ""));
+                || squashed.equalsIgnoreCase((segment + purpose).replaceAll("\\s+", ""))
+                // Our own chip sentence ("Trip type: 선급금") is what the turn text becomes when a
+                // purpose is picked, and the mapper lifted it straight into the title. It is
+                // machine text we generate (flattenCatalog), so it is ours to replace, not theirs.
+                || title.regionMatches(true, 0, "Trip type:", 0, "Trip type:".length());
         // Provenance, not pattern-guessing: a title THIS method composed earlier is ours to
         // recompose when the destination moves — "도쿄 출장" going to 부산 is stale the moment the
         // change lands. A title the user wrote never matches composedTitle and is never touched.

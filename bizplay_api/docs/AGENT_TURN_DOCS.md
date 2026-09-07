@@ -242,13 +242,13 @@ intent, when deciding to open a date picker. The range goes back as an ordinary 
 (`"2026-09-03 ~ 2026-09-05"`) or natural language, both are read.
 
 `formFields` describes each input of the `expense-form`, so the form can be generated rather than
-hard-coded. A transport expense currently returns 15 fields.
+hard-coded, and it lists only fields the provider's own receipt carries. A transport expense currently returns 14 fields.
 
 | Key of a field | Meaning |
 |---|---|
 | `key` | The field name to send back in the create call (`mestName`, `approvalAmount` …). |
 | `label` | The caption, in the conversation's language. |
-| `type` | `text`, `number`, `date`, `time`, `select`, `file`. |
+| `type` | `text`, `number`, `date`, `select`, `file`. |
 | `required` | `true` blocks the call; `false` may be left empty. |
 | `options` | Inline `{label, value}` list — present on a `select` with a fixed enum. |
 | `optionsUrl` | Where the full list lives, when it is too long to inline (통화 179 rows, 터미널 415). |
@@ -265,6 +265,8 @@ hard-coded. A transport expense currently returns 15 fields.
   "optionsUrl": ".../agents/settlement/currencies?corpNo=…",
   "upstream": [ { "method": "GET", "path": "/api/v2/currency-code/combo" } ] }   // 179 rows
 { "key": "image",        "label": "영수증", "type": "file",   "required": false }
+// the image is OPTIONAL: post the attach endpoint with no file, or say so in the chat,
+// and the expense registers without one — it can be attached afterwards.
 ```
 
 **The form is optional.** The same content typed as a sentence — `"고속버스로 센트럴시티에서 강릉

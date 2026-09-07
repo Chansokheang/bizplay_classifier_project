@@ -242,13 +242,13 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 모두 인식합니다.
 
 `formFields`는 `expense-form`의 각 입력 항목을 스스로 설명하므로, 폼을 하드코딩하지 않고 생성할 수
-있습니다. 교통비 경비의 경우 현재 15개 항목이 내려갑니다.
+있고, 제공되는 항목은 모두 BizPlay 영수증이 실제로 가지고 있는 필드입니다. 교통비 경비의 경우 현재 14개 항목이 내려갑니다.
 
 | 항목의 키 | 의미 |
 |---|---|
 | `key` | 등록 호출에 그대로 실어 보낼 필드명(`mestName`, `approvalAmount` …). |
 | `label` | 대화 언어로 된 화면 캡션. |
-| `type` | `text`, `number`, `date`, `time`, `select`, `file`. |
+| `type` | `text`, `number`, `date`, `select`, `file`. |
 | `required` | `true`면 필수(없으면 호출 불가), `false`면 비워 둘 수 있음. |
 | `options` | 인라인 `{label, value}` 목록 — 고정 enum인 `select`에 붙습니다. |
 | `optionsUrl` | 인라인으로 담기엔 긴 목록의 위치(통화 179건, 터미널 415건). |
@@ -265,6 +265,8 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
   "optionsUrl": ".../agents/settlement/currencies?corpNo=…",
   "upstream": [ { "method": "GET", "path": "/api/v2/currency-code/combo" } ] }   // 179건
 { "key": "image",        "label": "영수증", "type": "file",   "required": false }
+// 이미지는 선택 사항입니다: 첨부 엔드포인트를 파일 없이 호출하거나 대화에서 없다고 말씀하시면
+// 이미지 없이 등록되며, 나중에 첨부할 수 있습니다.
 ```
 
 **폼은 선택 사항입니다.** 같은 내용을 문장으로 입력해도(`"고속버스로 센트럴시티에서 강릉 9월 4일

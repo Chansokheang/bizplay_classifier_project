@@ -26,4 +26,10 @@ public class PurposeOption {
     private String label;
     /** Text the UI sends as the next chat message to pick this option. */
     private String sendText;
+    /**
+     * DOMESTIC | OVERSEA — the trip type of this option's own 출장계획서 form. Filled from the
+     * paper definition, so "국내 출장" can pick a domestic purpose even when no purpose is NAMED
+     * 국내출장 (company feedback ①).
+     */
+    private String tripType;
 }

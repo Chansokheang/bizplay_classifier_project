@@ -457,7 +457,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // never registers anything itself; it tells the client what to do with the picker.
         if (state.path("heldExpense").isObject()
                 && (!machineToken || message.matches("(?i)\\s*expense-(confirm|cancel).*"))) {
-            return heldExpenseTurn(session, state, message, recentTurns(session), koTurn);
+            return heldExpenseTurn(session, state, message, recentTurns(session), koTurn,
+                    bizplayToken);
         }
 
         // Sub-agent: Follow-up (draft Q&A) — free-form questions about the in-progress
@@ -2698,8 +2699,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 .set("fields", fields));
         ((ObjectNode) state.get("heldExpense")).set("detail", detail);
         state.remove("pendingExpense");
-        String ask = t("ko".equals(state.path("lang").asText(null)), "One last thing — attach the receipt image and I'll register it.",
-                "마지막으로 영수증 이미지를 첨부해 주세요 — 바로 등록해 드릴게요.");
+        String ask = t("ko".equals(state.path("lang").asText(null)),
+                "One last thing — attach the receipt image and I'll register it. "
+                        + "No image? Say so and I'll register it without one.",
+                "마지막으로 영수증 이미지를 첨부해 주세요 — 바로 등록해 드릴게요. "
+                        + "이미지가 없으면 없다고 말씀해 주시면 그대로 등록할게요.");
         return simpleTurn(session, state, message, ask, "EXPENSE_IMAGE_REQUIRED", null);
     }
 
@@ -2709,7 +2713,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
     private BizplayPlanAgentResponse heldExpenseTurn(ConversationalAgentSession session,
                                                      ObjectNode state, String message,
-                                                     java.util.List<String> turns, boolean ko) {
+                                                     java.util.List<String> turns, boolean ko,
+                                                     String bizplayToken) {
         // The extractor upstream may already have judged these words a confirm or a cancel and
         // rewritten them into our own echo token, "expense-confirm (what the user typed)". That
         // verdict stands - and only the raw words go to the judge below, never the token, whose
@@ -2723,9 +2728,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         } else if (message.matches("(?i)\\s*expense-(confirm|cancel)\\s*")) {
             action = message.trim().toLowerCase(java.util.Locale.ROOT);
         }
-        String decision = "expense-confirm".equals(action) ? "attach"
+        // The judge reads the traveller's own words FIRST. The echo token stays as the fallback
+        // for a bare "등록" the judge has no opinion on — but it must not outrank "영수증이 없어요,
+        // 그냥 등록해줘", which the upstream extractor had already rewritten as a plain confirm.
+        String judged = heldExpenseDecision(words, ko, turns);
+        String decision = !judged.isEmpty() ? judged
+                : "expense-confirm".equals(action) ? "attach"
                 : "expense-cancel".equals(action) ? "cancel"
-                : heldExpenseDecision(words, ko, turns);
+                : "";
         log.info("[IMAGE] held-expense turn on '{}': '{}'", truncate(message, 60),
                 decision.isEmpty() ? "waiting" : decision);
         if ("cancel".equals(decision)) {
@@ -2734,6 +2744,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     t(ko, "Dropped that receipt — nothing was registered.",
                             "해당 영수증 입력을 취소했어요 — 등록된 내용은 없습니다."),
                     "EXPENSE_CANCELLED", null);
+        }
+        if ("skip".equals(decision)) {
+            // Said plainly: register it with no file. The same registration the attach endpoint
+            // performs, minus the bytes.
+            log.info("[IMAGE] the traveller asked to register without an image.");
+            return registerHeldExpense(session.getId().toString(), session.getCorpNo(),
+                    null, null, bizplayToken);
         }
         if ("attach".equals(decision)) {
             // The user said go ahead. If a file is already picked the client submits it against the
@@ -2744,9 +2761,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             "첨부하신 파일로 바로 등록할게요."),
                     "EXPENSE_IMAGE_SUBMIT", null);
         }
-        String ask = t(ko, "The receipt is ready — attach the image or PDF and I'll register it, "
-                        + "or tell me to cancel it.",
-                "영수증이 준비됐어요 — 이미지나 PDF를 첨부해 주세요. 취소하시려면 말씀해 주세요.");
+        String ask = t(ko, "The receipt is ready — attach the image or PDF and I'll register it. "
+                        + "Say so if you have no image and I'll register it without one, or tell me "
+                        + "to cancel it.",
+                "영수증이 준비됐어요 — 이미지나 PDF를 첨부해 주세요. 이미지가 없으면 없다고 "
+                        + "말씀해 주시면 그대로 등록하고, 취소를 원하시면 말씀해 주세요.");
         // Neither. A question still deserves its answer - but answered HERE, against the
         // parked receipt, because the draft Q&A above sees the settlement and not the file
         // we are waiting on ("what format do you need?" got a lecture about structured data).
@@ -2780,10 +2799,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                             + "is on screen and the assistant asked the traveller to attach the "
                             + "file. Read THIS message as the answer to THAT question and choose "
                             + "exactly one word: "
-                            + "\"proceed\" - it tells the assistant to go ahead now, or says the "
-                            + "file is attached/chosen/ready (a bare command counts: register, "
-                            + "attach, upload, go, ok, next, 등록, 올려줘, 첨부했어); "
-                            + "\"cancel\" - it abandons this receipt or refuses to attach anything; "
+                            + "\"skip\" - it says there is NO image, or asks to register without "
+                            + "one. Whenever the message mentions the absence of a file, this wins "
+                            + "over \"proceed\", even if it also says register "
+                            + "(영수증 없어요 그냥 등록해줘, 이미지 없이 등록, 파일 없이 진행, "
+                            + "no receipt image, I don't have one, register without a file); "
+                            + "\"proceed\" - it says the file IS attached/chosen/ready, or tells "
+                            + "the assistant to go ahead with it, mentioning no absence "
+                            + "(등록, 올려줘, 첨부했어, register it, upload it, go ahead); "
+                            + "\"cancel\" - it abandons this receipt entirely - nothing is registered; "
                             + "\"correct\" - it changes a value of the receipt (amount, date, "
                             + "place, merchant); "
                             + "\"question\" - it asks something (file format, what happens next); "
@@ -2792,6 +2816,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             log.info("[IMAGE] answer to the attach question judged '{}'", verdict);
             return switch (verdict) {
                 case "proceed" -> "attach";
+                case "skip" -> "skip";          // register it with no image (company feedback ⑦)
                 case "cancel" -> "cancel";
                 default -> "";   // correct / question / other - the turn answers, the receipt waits
             };
@@ -3058,13 +3083,17 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (!held.isObject() || !held.path("fields").isObject()) {
             throw new IllegalArgumentException("No expense is waiting for a receipt image.");
         }
+        // Company feedback ⑦: an image is no longer required. Registering without one leaves the
+        // receipt without its 증빙 file, which BizPlay accepts; it can be attached later.
         if (image == null || image.length == 0) {
-            throw new IllegalArgumentException("A receipt image is required for a 기타증빙 expense.");
+            log.info("[IMAGE] registering the held expense WITHOUT a receipt image (feedback ⑦).");
         }
         state.remove("heldExpense");
         saveState(session, state);
         sessionRepo.save(session);
-        log.info("[IMAGE] registering the held expense with '{}' ({} bytes)", filename, image.length);
+        log.info("[IMAGE] registering the held expense {}",
+                image == null || image.length == 0 ? "with no receipt image"
+                        : "with '" + filename + "' (" + image.length + " bytes)");
         return addManualExpense(sessionId, corpNo, held.path("fields"),
                 held.path("detail").isObject() ? held.path("detail") : null,
                 image, filename, bizplayToken);
@@ -3518,8 +3547,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                     "total amount paid, digits only, no currency symbol or separators", true),
             // RETIRED (kept for reference, do not delete): the tax slot. The etc-receipt body
             // carries supplyAmount/vatAmount as null, so neither is collected any more.
-            new Slot("approvalTime", "time", "시각",
-                    "time of the expense as HH:mm:ss, only if the user said one", false),
+            // RETIRED (kept for reference, do not delete) - company feedback ④: "'시각' 선택
+            // 제외. 레거시에는 사용안함." The provider's body still carries approvalTime, so it is
+            // written as 12:00:00 (what an unanswered slot produced anyway); the traveller is
+            // never asked for a time and no form field offers one.
+            //     new Slot("approvalTime", "time", "시각",
+            //             "time of the expense as HH:mm:ss, only if the user said one", false),
             // ASKED, not assumed (company feedback #5): 원화인지 외화인지 확인한 뒤 등록합니다.
             // "원화"/"won"/"KRW" -> KRW, "달러"/"dollar"/"USD" -> USD, "엔"/"yen"/"JPY" -> JPY.
             new Slot("currencyCode", "currency", "통화",
@@ -6453,7 +6486,6 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
         out.add(field("mestName", "Merchant", "가맹점", ko, "text", true, null, null));
         out.add(field("approvalDate", "Date", "일자", ko, "date", true, null, null));
-        out.add(field("approvalTime", "Time", "시각", ko, "time", false, null, null));
         out.add(field("approvalAmount", "Amount", "금액", ko, "number", true, null, null));
         out.add(field("currencyCode", "Currency", "통화", ko, "select", true, "currencies", null));
         for (String key : detailFieldsForType(tranKindType)) {

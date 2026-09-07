@@ -4667,7 +4667,6 @@ function settlementManualExpenseForm() {
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
         <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
       ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
-      ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
       ${f(T("Currency", "통화"), `<select data-k="currencyCode">`
         + CURRENCY_OPTS.map((c) => `<option value="${esc(c[2])}">${esc(c[0])}</option>`).join("")
         + `</select>`)}
@@ -4698,10 +4697,12 @@ function settlementManualExpenseForm() {
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
     if (approvalAmount <= 0) return warn(T("Enter the total amount.", "승인금액을 입력해 주세요."));
-    const time = el("approvalTime").value || "00:00:00";
+    // 시각 is not asked any more (company feedback ④); the body still carries the neutral
+    // 12:00:00 the field always defaulted to.
+    const time = "12:00:00";
     const expense = {
       approvalDate,
-      approvalTime: time.length === 5 ? time + ":00" : time,   // <input type=time> drops seconds
+      approvalTime: time,
       currencyCode: el("currencyCode").value.trim() || "KRW",
       mestName,
       overseasUsed: el("overseasUsed").checked,
@@ -4782,8 +4783,8 @@ function settlementManualDetailForm() {
 
   const html = `<div class="mx-grid">
       ${detailSection}
-      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
-        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))}</span>
+        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image"></label>
     </div>
     <div class="mx-actions"><span class="mx-note"></span>
       <button type="button" class="btn btn-primary mx-add">${esc(T("Save details", "상세 저장"))}</button></div>`;
@@ -4806,7 +4807,7 @@ function settlementManualDetailForm() {
 
   w.querySelector(".mx-add").addEventListener("click", async () => {
     const file = w.querySelector('[data-k="image"]').files[0];
-    if (!file) return warn(T("Attach the receipt image.", "영수증 이미지를 첨부해 주세요."));
+    // Company feedback ⑦: the image is optional — the detail saves with or without it.
     let detail = null;
     if (isTransport) {
       detail = readTransportDetail(w);
@@ -4876,10 +4877,11 @@ function settlementAttachImageForm() {
   wrap.className = "msg msg-assistant";
   wrap.innerHTML = `<div class="guide-widget">
       <div class="mx-grid">
-        <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
-          <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
+        <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))}</span>
+          <input type="file" accept="image/*,application/pdf,.pdf" data-k="image"></label>
       </div>
       <div class="mx-actions"><span class="mx-note"></span>
+        <button type="button" class="btn btn-quiet mx-skip">${esc(T("Register without an image", "이미지 없이 등록"))}</button>
         <button type="button" class="btn btn-primary mx-attach">${esc(T("Attach and register", "첨부하고 등록"))}</button></div>
     </div>`;
   const w = wrap.querySelector(".guide-widget");
@@ -4887,16 +4889,21 @@ function settlementAttachImageForm() {
   thread.scrollTop = thread.scrollHeight;
   const note = w.querySelector(".mx-note");
   const warn = (m) => { note.textContent = m; note.classList.add("mx-warn"); };
-  const doAttach = async () => {
+  // Company feedback ⑦: the image is optional. `skipImage` posts the same endpoint with no
+  // file part, which registers the expense as it stands; the image can be attached later.
+  const doAttach = async (skipImage) => {
     const file = w.querySelector('[data-k="image"]').files[0];
-    if (!file) return warn(T("Attach the receipt image or PDF.", "영수증 이미지나 PDF를 첨부해 주세요."));
+    if (!file && !skipImage) {
+      return warn(T("Attach the receipt image or PDF — or choose “Register without an image”.",
+        "영수증 이미지나 PDF를 첨부해 주세요 — 또는 “이미지 없이 등록”을 선택해 주세요."));
+    }
     w.classList.add("guide-done");
-    appendMsg("user", file.name, {});
+    appendMsg("user", file ? file.name : T("Register without an image", "이미지 없이 등록"), {});
     const typing = appendTyping();
     setAgentBusy(true);
     try {
       const fd = new FormData();
-      fd.append("image", file, file.name);
+      if (file) fd.append("image", file, file.name);
       const res = await fetch(`${BZ_API_BASE()}/agents/settlement/`
         + `${encodeURIComponent(agent.sessionId)}/manual-expense/attach`
         + `?corpNo=${encodeURIComponent(CORP_NO)}`, { method: "POST", body: fd });
@@ -4922,7 +4929,10 @@ function settlementAttachImageForm() {
       setAgentBusy(false);
     }
   };
-  w.querySelector(".mx-attach").addEventListener("click", doAttach);
+  // Wrapped, not passed directly: addEventListener hands the click event to the listener,
+  // and doAttach's first argument is now "register without an image".
+  w.querySelector(".mx-attach").addEventListener("click", () => doAttach(false));
+  w.querySelector(".mx-skip").addEventListener("click", () => doAttach(true));
   // Typing "register it" is the same instruction as clicking the button, so the agent's
   // EXPENSE_IMAGE_SUBMIT verdict reaches the very same handler - the file never leaves the browser.
   agent.attachForm = { w, doAttach, file: () => w.querySelector('[data-k="image"]').files[0], warn };
@@ -4970,7 +4980,6 @@ function settlementManualFullForm() {
       <label class="mx-f mx-wide"><span>${esc(T("Merchant", "가맹점"))}</span>
         <input type="text" data-k="mestName" placeholder="${esc(T("e.g. Seoul Station Cafe", "예: 서울역 카페"))}"></label>
       ${f(T("Date", "일자"), `<input type="date" data-k="approvalDate" value="${today}">`)}
-      ${f(T("Time", "시각"), `<input type="time" step="1" data-k="approvalTime" value="12:00:00">`)}
       ${f(T("Currency", "통화"), `<select data-k="currencyCode">`
         + CURRENCY_OPTS.map((c) => `<option value="${esc(c[2])}">${esc(c[0])}</option>`).join("")
         + `</select>`)}
@@ -4978,8 +4987,8 @@ function settlementManualFullForm() {
         <span>${esc(T("Overseas use", "해외 사용"))}</span></label>
       ${baseAmounts}
       ${detailSection}
-      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))} *</span>
-        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image" required></label>
+      <label class="mx-f mx-wide"><span>${esc(T("Receipt (image or PDF)", "영수증 (이미지 또는 PDF)"))}</span>
+        <input type="file" accept="image/*,application/pdf,.pdf" data-k="image"></label>
     </div>
     <div class="mx-actions"><span class="mx-note"></span>
       <button type="button" class="btn btn-primary mx-add">${esc(T("Register receipt", "영수증 등록"))}</button></div>`;
@@ -5013,10 +5022,12 @@ function settlementManualFullForm() {
     if (!mestName) return warn(T("Merchant is required.", "가맹점을 입력해 주세요."));
     if (!approvalDate) return warn(T("Date is required.", "일자를 입력해 주세요."));
     if (approvalAmount <= 0) return warn(T("Enter the total amount.", "승인금액을 입력해 주세요."));
-    const time = el("approvalTime").value || "00:00:00";
+    // 시각 is not asked any more (company feedback ④); the body still carries the neutral
+    // 12:00:00 the field always defaulted to.
+    const time = "12:00:00";
     const expense = {
       approvalDate,
-      approvalTime: time.length === 5 ? time + ":00" : time,
+      approvalTime: time,
       currencyCode: el("currencyCode").value.trim() || "KRW",
       mestName,
       overseasUsed: el("overseasUsed").checked,
