@@ -125,10 +125,16 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 }
 ```
 
-`options`는 **인라인으로 담을 수 있는 길이면 항상 인라인으로** 내려갑니다 — `lookup`을 제외한 모든
-질문이 그렇습니다. `lookup`(터미널 415건, 역 목록 등)은 `options` 없이 `optionsUrl`만 내려갑니다:
-사용자가 입력하는 대로 조회하시거나, 그냥 직접 입력하게 두셔도 에이전트가 해석합니다. 그 외
-질문에서 `optionsUrl`은 "더 보기 / 검색"용 선택 사항이며, 호출하지 않아도 대화는 끝까지 진행됩니다.
+`options`는 **인라인으로 담을 수 있는 길이면 항상 인라인으로** 내려갑니다 — 기준은 `inlineLimit`
+건 이하이며, `POST /agents/plan`·`POST /agents/settlement`의 쿼리 파라미터입니다(`?inlineLimit=50`;
+생략 시 기본 50; 목록별로 각각 적용). 그보다 긴 목록 중 `lookup`(또는 `optionsUrl`)이 있는 것은
+`options` 없이 내려가고, 둘 다 없는 긴 목록은 달리 받을 곳이 없으므로 인라인을 유지합니다. `lookup`을
+제외한 모든 질문이 인라인입니다. `lookup`(터미널 415건, 통화 179건)은 `options` 없이 `lookup` 객체를
+내려줍니다: **클라이언트가 직접 호출할 BizPlay 엔드포인트**(`{method, path, labelField, filter?, then?}`)
+입니다. 지금 BizPlay API를 호출하시는 것과 같이 귀사 백엔드를 경유해 호출하고, 각 행의 `labelField`를
+보여 준 뒤 선택한 행의 값을 다음 메시지로 보내 주시면 에이전트가 해석합니다. 사용자가 직접 입력하게
+두셔도 됩니다. `optionsUrl`은 같은 목록을 AI 서버에서 내려주는 미러일 뿐이며, 어느 쪽도 호출하지
+않아도 대화는 끝까지 진행됩니다.
 
 ### `kind` 목록
 
@@ -144,7 +150,7 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 | `TRAVELER` | 출장자 | `lookup` / `chips` | 사람 이름 |
 | `APPROVAL_LINE` / `APPROVER` | 결재선 | `approval-line` | 사람 이름(역할을 덧붙여도 됩니다: `"김비플 합의"`) |
 | `PLAN` / `PLAN_PENDING` | 정산할 출장(승인됨 / 결재 대기) | `table` | 옵션의 `sendText`(계획 토큰) |
-| `TRANKIND` | 경비 항목(교통비 · 숙박비 …) — 계획서 양식이 지정한 항목, 지정이 없으면 해당 법인의 출장비 규정에 있는 항목(국내/해외로 구분) | `chips` | `trankind:11719` |
+| `TRANKIND` | 경비 항목(교통비 · 숙박비 …) — 정산서 양식의 증빙 섹션이 허용한 항목(EXPENSE_REPORT 양식의 `paperSummaries[].tranKinds`, 사용 중인 섹션만), 지정이 없으면 해당 법인의 출장비 규정에 있는 항목(국내/해외로 구분) | `chips` | `trankind:11719` |
 | `CARD_TYPE` | 조회할 카드 종류 | `chips` | `card-types:PERSONAL,MY_DATA` |
 | `RECEIPT` | 첨부할 영수증 | `table` | `receipt:<id>` / `receipts-done` |
 | `EVIDENCE_PERIOD` | 조회 기간 | `chips` (+ `ui: "calendar"`) | `"2026-09-03 ~ 2026-09-05"` |
@@ -251,7 +257,8 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 | `type` | `text`, `number`, `date`, `select`, `file`. |
 | `required` | `true`면 필수(없으면 호출 불가), `false`면 비워 둘 수 있음. |
 | `options` | 인라인 `{label, value}` 목록 — 고정 enum인 `select`에 붙습니다. |
-| `optionsUrl` | 인라인으로 담기엔 긴 목록의 위치(통화 179건, 터미널 415건). |
+| `lookup` | 긴 목록을 직접 조회할 BizPlay 엔드포인트: `{method, path, labelField, filter?, then?}`. `filter`는 남길 조건(예: `vehicleType`), `then`은 후속 호출(국가 → 도시)이며 `pathParamFrom`은 경로를 채울 행의 필드명입니다. |
+| `optionsUrl` | 같은 목록의 AI 서버 미러. 선택 사항. |
 | `source` / `upstream` | 그 목록이 속한 capability와, 그 뒤의 BizPlay 엔드포인트. |
 
 ```jsonc

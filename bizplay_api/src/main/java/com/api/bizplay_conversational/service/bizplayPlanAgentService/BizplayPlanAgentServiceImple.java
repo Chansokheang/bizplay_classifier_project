@@ -403,24 +403,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     // No trip types on this purpose - the single option IS the answer.
                     turnText = ofPurpose.get(0).getSendText();
                 } else if (!ofPurpose.isEmpty()) {
-                    appendTurn(session, "user", message);
-                    // The answer to this question is one of THESE trip types - remembered so a
-                    // typed "일반" is read against them and not against the whole catalogue.
-                    state.put("pendingSegmentPurposeId", purposeId);
-                    String ask = t(ko, "Which trip type? ", "출장 유형을 선택해 주세요. ");
-                    appendTurn(session, "assistant", ask);
-                    saveState(session, state);
-                    ConversationalAgentSession savedSeg = sessionRepo.save(session);
-                    return BizplayPlanAgentResponse.builder()
-                            .sessionId(savedSeg.getId().toString())
-                            .status(savedSeg.getStatus() == null ? null : savedSeg.getStatus().name())
-                            .intent("SEGMENT_SELECTION")
-                            .subAgents(List.of("PURPOSE_SEGMENT_AGENT"))
-                            .reply(ask)
-                            .pendingChoices(List.of(segmentChoice(ofPurpose)))
-                            .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
-                            .draftJson(savedSeg.getDraftJson())
-                            .build();
+                    return askSegment(session, state, message, purposeId, ofPurpose, ko);
                 }
             }
 
@@ -431,6 +414,34 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
             PurposeResolutionResult res = purposeSegmentAgentService.resolve(turnText, options);
             subAgents.add("PURPOSE_SEGMENT_AGENT");
+            // Shown the whole catalogue and "Osaka" / "해외 출장", the judge tends to pick that
+            // purpose's general trip type on its own. A trip type the user never gave is asked,
+            // not assumed: a judged pick of a purpose with several trip types stands only when
+            // THIS message states one (a judge that sees only that purpose's trip types decides);
+            // otherwise the trip-type question is asked and what was said is kept for the form.
+            if (res.isResolved() && segmentAnswer == null) {
+                PurposeOption picked = res.getResolved();
+                List<PurposeOption> siblings = new ArrayList<>();
+                for (PurposeOption o : options) {
+                    if (o.getPurposeId() == picked.getPurposeId()) {
+                        siblings.add(o);
+                    }
+                }
+                if (siblings.size() > 1) {
+                    PurposeOption stated = segmentStatedIn(turnText, siblings);
+                    if (stated == null) {
+                        log.info("[SEGMENT] '{}' names purpose '{}' but no trip type - asking instead "
+                                + "of assuming '{}'.", truncate(turnText, 30), picked.getPurposeName(),
+                                picked.getSegmentName());
+                        state.withArray("staged").add(turnText);
+                        return askSegment(session, state, message, picked.getPurposeId(), siblings, ko);
+                    }
+                    if (stated != picked) {
+                        res = PurposeResolutionResult.builder().resolved(stated)
+                                .reason("Trip type as stated in the message.").build();
+                    }
+                }
+            }
             if (res.isResolved()) {
                 state.remove("pendingSegmentPurposeId");   // answered; the question is closed
             }
@@ -467,6 +478,21 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                     state.put("destination", answer);
                 }
             } else {
+                // "해외 출장", "Osaka": the judge knows the purpose but nothing said which of its
+                // trip types. It lists only that purpose's options - which is the trip-type
+                // question, so ask exactly that (over the corporation's real segments) rather than
+                // the whole purpose list, and keep what was said for the form.
+                long onlyPurpose = singlePurposeOf(res.getCandidates(), options);
+                if (onlyPurpose > 0) {
+                    List<PurposeOption> ofPurpose = new ArrayList<>();
+                    for (PurposeOption o : options) {
+                        if (o.getPurposeId() == onlyPurpose) {
+                            ofPurpose.add(o);
+                        }
+                    }
+                    state.withArray("staged").add(turnText);
+                    return askSegment(session, state, message, onlyPurpose, ofPurpose, ko);
+                }
                 intent = "PURPOSE_SELECTION";
                 state.withArray("staged").add(turnText);
                 pendingChoices = List.of(purposeChoice(res.getCandidates(), options));
@@ -1358,8 +1384,20 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                                     + "가시나요? 예: \"인천공항에서 출발해서 비행기로 가요\". "
                                     + "돌아오는 구간은 자동으로 추가돼요.")).append(more);
                 } else if (agentPromptService.isModuleEnabled("form-follow-up")) {
+                    // The admin's tooltip / placeholder for the asked field goes into the
+                    // question, so "직원숙소신청(출장)" is asked the way BizPlay's screen explains it.
+                    List<String> askWithHint = new ArrayList<>();
+                    for (String label : askNow) {
+                        String hint = "";
+                        for (JsonNode f : state.path("fields")) {
+                            if (label.equals(f.path("label").asText()) && !f.path("hint").asText("").isBlank()) {
+                                hint = f.path("hint").asText();
+                            }
+                        }
+                        askWithHint.add(hint.isBlank() ? label : label + " (안내: " + hint + ")");
+                    }
                     reply.append(formFollowUpAgentService.composeFollowUp(
-                            state.path("paperName").asText(null), askNow, ko)).append(more);
+                            state.path("paperName").asText(null), askWithHint, ko)).append(more);
                     subAgents.add("FOLLOW_UP_AGENT");
                 } else {
                     // Module off: deterministic ask, no LLM call.
@@ -1623,6 +1661,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                 ? approvalLines : state.path("approvalLines");
         applyPickedApprovalLines((ObjectNode) documents.get(0), picked);
         fillApprovalLineDepartments((ObjectNode) documents.get(0), bizplayToken);
+        fillCostCenterDefault((ObjectNode) documents.get(0), bizplayToken);
 
         // Region (국가/도시 → selectionId), period times and 이동경로 — the values the provider's
         // own screen fills from lookup APIs, decided per paper (most forms need none of it).
@@ -1745,6 +1784,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             state.put("destinationDetail", request.getDestinationDetail().trim());
         }
         // Same region/period-time/route enrichment as the chat create — one save contract.
+        fillCostCenterDefault((ObjectNode) documents.get(0), bizplayToken);
         planEnrichmentService.enrich(documents, state, bizplayToken, false);
 
         String providerResponse = bizplayGatewayService.postPlanDraft(documents, bizplayToken);
@@ -2102,6 +2142,7 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                             List<String> subAgents, StringBuilder reply, boolean ko,
                             List<String> turns) {
         JsonNode mapped = fieldMapperAgentService.mapFields(text, state.path("fields"), turns);
+        scrubPurposeEchoes(mapped, state);
         subAgents.add("FIELD_MAPPER_AGENT");
         // A sentence that was just read as a TRAVEL ROUTE names the company's own SITES
         // ("비즈플레이", "티엑스알로보틱스(부산)"). The mapper, seeing place names, offers one of
@@ -4336,6 +4377,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         return List.of(TripPlanAgentResponse.PendingChoice.builder()
                 .kind("DESTINATION")
                 .name(t(ko, "Destination", "목적지"))
+                // Which BizPlay list these came from, so the client can fetch the same list
+                // directly (the controller turns it into the endpoint).
+                .source("destinationOptions:" + opts.path("listKind").asText("SIDO"))
                 .options(options)
                 .build());
     }
@@ -4463,6 +4507,106 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
         return options;
+    }
+
+    /**
+     * The purpose every candidate belongs to, when they all belong to one purpose that has more
+     * than one trip type in the catalogue - the judge's way of saying "purpose known, sub-type not
+     * stated". 0 otherwise (candidates spanning purposes, or a purpose with a single option).
+     */
+    private long singlePurposeOf(List<PurposeOption> candidates, List<PurposeOption> options) {
+        if (candidates == null || candidates.isEmpty()) {
+            return 0;
+        }
+        long purposeId = candidates.get(0).getPurposeId();
+        for (PurposeOption c : candidates) {
+            if (c.getPurposeId() != purposeId) {
+                return 0;
+            }
+        }
+        int inCatalogue = 0;
+        for (PurposeOption o : options) {
+            if (o.getPurposeId() == purposeId) {
+                inCatalogue++;
+            }
+        }
+        return inCatalogue > 1 ? purposeId : 0;
+    }
+
+    /**
+     * "Which trip type?" for one purpose: the question names the purpose, offers its segments as
+     * chips, and records which purpose it asked about so a typed answer ("일반", "long-term") is
+     * read against those segments next turn ({@link #segmentOfPendingPurpose}).
+     */
+    private BizplayPlanAgentResponse askSegment(ConversationalAgentSession session, ObjectNode state,
+            String message, long purposeId, List<PurposeOption> ofPurpose, boolean ko) {
+        appendTurn(session, "user", message);
+        // The answer to this question is one of THESE trip types - remembered so a
+        // typed "일반" is read against them and not against the whole catalogue.
+        state.put("pendingSegmentPurposeId", purposeId);
+        String name = ofPurpose.get(0).getPurposeName();
+        String ask = t(ko, "Which trip type of \"" + name + "\"? ",
+                "\"" + name + "\" 출장의 유형을 선택해 주세요. ");
+        appendTurn(session, "assistant", ask);
+        saveState(session, state);
+        ConversationalAgentSession savedSeg = sessionRepo.save(session);
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(savedSeg.getId().toString())
+                .status(savedSeg.getStatus() == null ? null : savedSeg.getStatus().name())
+                .intent("SEGMENT_SELECTION")
+                .subAgents(List.of("PURPOSE_SEGMENT_AGENT"))
+                .reply(ask)
+                .pendingChoices(List.of(segmentChoice(ofPurpose)))
+                .approvalLines(state.has("approvalLines") ? state.get("approvalLines") : null)
+                .draftJson(savedSeg.getDraftJson())
+                .build();
+    }
+
+    /**
+     * The trip type of one purpose that THIS message itself states - or null when it states none.
+     *
+     * <p>Two passes over that purpose's own segments: the segment name as the corporation spells
+     * it (a data match, any position), then a judge shown those names and nothing else, told that
+     * a destination, dates or the purpose alone state no trip type. Null is the answer this exists
+     * for: it means the question has to be asked.
+     */
+    private PurposeOption segmentStatedIn(String message, List<PurposeOption> ofPurpose) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        String said = message.trim().toLowerCase(java.util.Locale.ROOT);
+        for (PurposeOption o : ofPurpose) {
+            String seg = o.getSegmentName() == null ? ""
+                    : o.getSegmentName().trim().toLowerCase(java.util.Locale.ROOT);
+            if (!seg.isBlank() && said.contains(seg)) {
+                return o;
+            }
+        }
+        try {
+            StringBuilder names = new StringBuilder();
+            for (PurposeOption o : ofPurpose) {
+                names.append(names.isEmpty() ? "" : ", ").append(o.getSegmentName());
+            }
+            String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
+                    "segment", "Which 출장 유형 (trip type) of \"" + ofPurpose.get(0).getPurposeName()
+                            + "\" does THIS message itself state? Allowed answers: " + names
+                            + ", or \"none\". Answer a name ONLY when the message says or clearly "
+                            + "implies that sub-type, in any language (장기 = long-term / long stay / "
+                            + "extended; 일반 = general / regular / normal / standard). A destination, "
+                            + "dates, or the purpose alone (\"overseas trip\", \"해외 출장\") state NO "
+                            + "sub-type: answer \"none\". Never pick the usual one."), false)
+                    .path("segment").asText("").trim();
+            for (PurposeOption o : ofPurpose) {
+                if (o.getSegmentName() != null && o.getSegmentName().equalsIgnoreCase(verdict)) {
+                    log.info("[SEGMENT] '{}' states the trip type '{}'.", truncate(message, 30),
+                            o.getSegmentName());
+                    return o;
+                }
+            }
+        } catch (RuntimeException e) {
+            log.debug("Trip-type judge unavailable: {}", e.getMessage());
+        }
+        return null;
     }
 
     /**
@@ -4640,12 +4784,34 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
                                                                        ObjectNode state, String token,
                                                                        StringBuilder reply, List<String> subAgents,
                                                                        boolean ko) {
+        // The purpose's name is not a person: "테스트(유성린) 성린4 계획 만들어줘" had the mapper
+        // file '유성린' as a traveller, and the roster then said "not found". A name that is a
+        // piece of the chosen purpose / trip-type label (catalogue data, compared whole) is
+        // dropped here, before any lookup, and taken off the draft.
+        String purposeLabel = (state.path("purpose").path("purposeName").asText("") + " "
+                + state.path("purpose").path("segmentName").asText("") + " "
+                + state.path("purpose").path("label").asText("")).toLowerCase(java.util.Locale.ROOT);
         List<String> pending = new ArrayList<>();
+        ArrayNode keep = objectMapper.createArrayNode();
+        boolean dropped = false;
         for (JsonNode n : state.path("travelers")) {
             String name = n.asText("");
-            if (!name.isBlank() && !state.path("resolvedTravelers").has(name)) {
+            if (name.isBlank()) {
+                continue;
+            }
+            String bare = name.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!purposeLabel.isBlank() && bare.length() >= 2 && purposeLabel.contains(bare)) {
+                log.info("[TRAVELER] '{}' is part of the purpose label - not a traveller.", name);
+                dropped = true;
+                continue;
+            }
+            keep.add(name);
+            if (!state.path("resolvedTravelers").has(name)) {
                 pending.add(name);
             }
+        }
+        if (dropped) {
+            state.set("travelers", keep);
         }
         if (pending.isEmpty()) {
             return List.of();
@@ -5226,6 +5392,114 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             line.put("departmentApproval", false);
             line.put("paperApprovalLineType1", "EMPLOYEE");
         }
+    }
+
+    /**
+     * 코스트센터 the way BizPlay's own screen fills it: when the form's COST_CENTER item is
+     * configured {@code defaultType = LOGIN_USER} and the traveller chose nothing, the drafter's
+     * own budget department goes in — the one flagged {@code main}, else the first. A drafter with
+     * none keeps the empty slot, which the provider accepts (the item is optional).
+     */
+    private void fillCostCenterDefault(ObjectNode document, String token) {
+        ObjectNode slot = null;
+        for (JsonNode row : document.path("issuedItems")) {
+            if ("COST_CENTER".equals(row.path("item").path("itemType").asText(""))
+                    && row instanceof ObjectNode o && !o.hasNonNull("value")
+                    && o.path("selections").isEmpty()) {
+                slot = o;
+                break;
+            }
+        }
+        if (slot == null) {
+            return;
+        }
+        try {
+            long itemId = slot.path("item").path("id").asLong(0);
+            JsonNode papers = bizplayGatewayService.getPapers(document.path("bstrPurposeId").asLong(),
+                    document.hasNonNull("bstrSegmentId") ? document.path("bstrSegmentId").asLong() : null, token);
+            String defaultType = "";
+            for (JsonNode paper : papers) {
+                if (!"BSTR_PLAN".equals(paper.path("paperKind").path("paperKindType").asText(""))) {
+                    continue;
+                }
+                for (JsonNode item : paper.path("items")) {
+                    if (item.path("id").asLong(0) == itemId) {
+                        defaultType = item.path("defaultType").asText("");
+                    }
+                }
+            }
+            if (!"LOGIN_USER".equals(defaultType)) {
+                return;                       // the form does not ask for a default
+            }
+            long drafter = document.path("draftUserId").asLong(0);
+            JsonNode depts = bizplayGatewayService.getUserBudgetDepartments(drafter, token);
+            JsonNode pick = null;
+            for (JsonNode d : depts) {
+                if (pick == null || d.path("main").asBoolean(false)) {
+                    pick = d;
+                }
+            }
+            if (pick == null) {
+                log.info("[COST_CENTER] form defaults to the login user's cost center, but user {} has "
+                        + "none — left empty.", drafter);
+                return;
+            }
+            slot.put("value", pick.path("erpCode").asText(""));
+            ArrayNode selections = slot.putArray("selections");
+            ObjectNode sel = selections.addObject();
+            sel.put("selectionId", pick.path("id").asLong());
+            sel.put("selectionName", pick.path("name").asText(""));
+            sel.put("selectionErpCode", pick.path("erpCode").asText(""));
+            log.info("[COST_CENTER] defaulted to the drafter's budget department {} ({}).",
+                    pick.path("name").asText(""), pick.path("id").asLong());
+        } catch (RuntimeException e) {
+            log.warn("Cost-center default skipped: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * The purpose's name is not a place. "해외출장 장기 다녀올게요" had the mapper answer
+     * DESTINATION = "해외", lifted out of the purpose word, and the draft showed it until the real
+     * destination was asked. A destination that is a fragment of the chosen purpose / trip-type
+     * label (catalogue data, compared whole) is dropped from the mapper's output - the explicit
+     * field and the copy embedded in the period - before any of it is written.
+     */
+    private void scrubPurposeEchoes(JsonNode mapped, ObjectNode state) {
+        if (mapped == null || !mapped.isObject()) {
+            return;
+        }
+        String purposeLabel = (state.path("purpose").path("purposeName").asText("") + " "
+                + state.path("purpose").path("segmentName").asText("") + " "
+                + state.path("purpose").path("label").asText("")).toLowerCase(java.util.Locale.ROOT);
+        if (purposeLabel.isBlank()) {
+            return;
+        }
+        ObjectNode out = (ObjectNode) mapped;
+        List<String> dropKeys = new ArrayList<>();
+        java.util.Iterator<java.util.Map.Entry<String, JsonNode>> it = out.fields();
+        while (it.hasNext()) {
+            java.util.Map.Entry<String, JsonNode> e = it.next();
+            String key = e.getKey();
+            JsonNode v = e.getValue();
+            if (key.endsWith("DESTINATION") && v.isTextual() && echoesPurpose(v.asText(), purposeLabel)) {
+                dropKeys.add(key);
+            } else if (v.isObject() && v.hasNonNull("destination")
+                    && echoesPurpose(v.path("destination").asText(""), purposeLabel)) {
+                ((ObjectNode) v).remove("destination");
+                log.info("[DESTINATION] '{}' is part of the purpose label - not a place (period copy).",
+                        v.path("destination").asText(""));
+            }
+        }
+        for (String k : dropKeys) {
+            log.info("[DESTINATION] '{}' is part of the purpose label - not a place.", out.get(k).asText(""));
+            out.remove(k);
+        }
+    }
+
+    /** A short value that sits inside the purpose label ("해외" in 해외출장) is the label, not a place. */
+    private boolean echoesPurpose(String value, String purposeLabel) {
+        String bare = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        return bare.length() >= 2 && purposeLabel.contains(bare);
     }
 
     /** Is this person already on the approval line we are building? */

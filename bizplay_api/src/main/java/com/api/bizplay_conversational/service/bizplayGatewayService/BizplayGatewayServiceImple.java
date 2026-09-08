@@ -391,6 +391,17 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getUserBudgetDepartments(long corpUserId, String token) {
+        try {
+            JsonNode mine = get(buildUrl(endpoints.getBudgetDeptUser(), "corpUserId", corpUserId), token);
+            return mine != null && mine.isArray() ? mine : objectMapper.createArrayNode();
+        } catch (Exception e) {
+            log.info("User {} has no authorized budget department ({}).", corpUserId, rootMessage(e));
+            return objectMapper.createArrayNode();
+        }
+    }
+
+    @Override
     public JsonNode getBudgetDepartments(long corpUserId, String token) {
         try {
             JsonNode mine = get(buildUrl(endpoints.getBudgetDeptUser(), "corpUserId", corpUserId), token);

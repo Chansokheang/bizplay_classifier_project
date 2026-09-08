@@ -42,6 +42,9 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
             - DESTINATION: the trip destination place string
             - ORIGIN: the departure place string (where the trip starts FROM)
             - anything else (HTML or unknown types): a plain string
+            A field may carry "hint": the corporation admin's own explanation or example of that
+            field as shown on the real form (tooltip / placeholder). Use it to recognise which field
+            the user's words belong to when the label alone is unclear.
             Rules:
             - Include ONLY keys the message actually gives information for. Omit everything unknown.
             - Normalize dates to YYYY-MM-DD. Do not invent names, dates, options, or places.
@@ -120,6 +123,10 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
                 if (f.path("options").isArray() && f.path("options").size() > 0) {
                     def.append(" | options=").append(f.path("options").toString());
                 }
+                if (!f.path("hint").asText("").isBlank()) {
+                    // The admin's tooltip / placeholder: what this item means on the real screen.
+                    def.append(" | hint=").append(f.path("hint").asText());
+                }
                 def.append('\n');
             }
             // History rides in the SYSTEM message, labelled as background. As real UserMessages the
@@ -175,6 +182,9 @@ public class FieldMapperAgentServiceImple implements FieldMapperAgentService {
                     .append(" | type=").append(field.path("type").asText());
             if (field.path("options").isArray() && field.path("options").size() > 0) {
                 def.append(" | options=").append(field.path("options").toString());
+            }
+            if (!field.path("hint").asText("").isBlank()) {
+                def.append(" | hint=").append(field.path("hint").asText());
             }
             List<Message> prompt = List.of(
                     new SystemMessage(SINGLE_FIELD_PROMPT),

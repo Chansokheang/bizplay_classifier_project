@@ -136,6 +136,14 @@ public interface BizplayGatewayService {
      *  registered, else the corp-wide list. Never throws — an empty array on failure. */
     JsonNode getBudgetDepartments(long corpUserId, String token);
 
+    /**
+     * Only the budget departments this user is authorized for — {@code [{id, name, erpCode,
+     * main, …}]} — or an empty array when the provider has none for them (it answers 400).
+     * Unlike {@link #getBudgetDepartments} this never falls back to the corporation's list: it
+     * feeds a DEFAULT, and a default from somebody else's cost centers is worse than none.
+     */
+    JsonNode getUserBudgetDepartments(long corpUserId, String token);
+
     /** ⑨ Settlement (출장정산서) documents in a period — POST filter, streaming JSON response. */
     JsonNode getSettlementList(String startDate, String endDate, String token);
 

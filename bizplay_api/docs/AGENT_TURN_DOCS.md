@@ -125,11 +125,17 @@ For those turns the field is omitted and the client draws `reply` plus the text 
 }
 ```
 
-`options` is inline **whenever the list is short enough to send** — which is every question except
-a `lookup`. A `lookup` (터미널 415 rows, stations) sends `optionsUrl` and no `options`: query it as
-the user types, or let them type the answer, which the agent resolves either way. For every other
-question `optionsUrl` is a convenience for "show all / search", and the conversation completes
-without ever calling it.
+`options` is inline **whenever the list is short enough to send** — up to `inlineLimit` rows, a
+query parameter on `POST /agents/plan` and `POST /agents/settlement` (`?inlineLimit=50`; default 50
+when absent; applied to each list on its own). A longer list that has a `lookup` (or `optionsUrl`) is
+sent without `options`; a longer list with neither stays inline, because there is nowhere else to
+fetch it. Every question is inline except a `lookup`. A `lookup` (터미널 415 rows, 통화 179) sends no `options`; instead it
+carries `lookup`: **the BizPlay endpoint your client can call directly** for the full list
+(`{method, path, labelField, filter?, then?}`). Call it through your own backend as you already do
+for BizPlay's API, show `labelField` of each row, and send the chosen row's label back as the next
+message — the agent resolves it. Or let the user type the answer. `optionsUrl` is only our mirror
+of the same list, for clients that prefer one call to the AI server; nothing requires it, and the
+conversation completes without ever calling either.
 
 ### `kind` values
 
@@ -145,7 +151,7 @@ independent, and the same `kind` can arrive with a different `render` when the l
 | `TRAVELER` | Who is travelling | `lookup` / `chips` | a person's name |
 | `APPROVAL_LINE` / `APPROVER` | Approval line | `approval-line` | a person's name (a role may be added: `"김비플 합의"`) |
 | `PLAN` / `PLAN_PENDING` | Trip to settle — approved / still awaiting approval | `table` | the option's `sendText` (a plan token) |
-| `TRANKIND` | Expense type (교통비, 숙박비 …) — the kinds the plan's form pins, or, when it pins none, the kinds the corporation has a 출장비 규정 for (scoped 국내/해외) | `chips` | `trankind:11719` |
+| `TRANKIND` | Expense type (교통비, 숙박비 …) — the kinds allowed by the settlement form's receipt sections (`paperSummaries[].tranKinds` of the EXPENSE_REPORT paper, active sections only), or, when those pin none, the kinds the corporation has a 출장비 규정 for (scoped 국내/해외) | `chips` | `trankind:11719` |
 | `CARD_TYPE` | Which card types to search | `chips` | `card-types:PERSONAL,MY_DATA` |
 | `RECEIPT` | Receipt to attach | `table` | `receipt:<id>` / `receipts-done` |
 | `EVIDENCE_PERIOD` | Period to search | `chips` (with `ui: "calendar"`) | `"2026-09-03 ~ 2026-09-05"` |
@@ -251,7 +257,8 @@ hard-coded, and it lists only fields the provider's own receipt carries. A trans
 | `type` | `text`, `number`, `date`, `select`, `file`. |
 | `required` | `true` blocks the call; `false` may be left empty. |
 | `options` | Inline `{label, value}` list — present on a `select` with a fixed enum. |
-| `optionsUrl` | Where the full list lives, when it is too long to inline (통화 179 rows, 터미널 415). |
+| `lookup` | The BizPlay endpoint to call directly for a long list: `{method, path, labelField, filter?, then?}`. `filter` is what to keep (e.g. `vehicleType`), `then` the follow-up call (country → city) with `pathParamFrom` naming the row field that fills the path. |
+| `optionsUrl` | Our mirror of the same list on the AI server. Optional. |
 | `source` / `upstream` | Which capability that list belongs to, and the BizPlay endpoint behind it. |
 
 ```jsonc

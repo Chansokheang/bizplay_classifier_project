@@ -36,9 +36,10 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
               overseas (해외) purpose. Each option carries tripType (DOMESTIC | OVERSEA) taken from
               its own form - trust that field over the purpose NAME, since a corporation's purposes
               are often named after projects rather than 국내/해외. A domestic trip must never be
-              filed on an OVERSEA option, nor an overseas trip on a DOMESTIC one. If the destination alone doesn't distinguish that purpose's
-              sub-types, set "best" to its most GENERAL sub-type (일반 or the plain unqualified one)
-              instead of asking again.
+              filed on an OVERSEA option, nor an overseas trip on a DOMESTIC one. When the purpose is clear but NOTHING in the message decides
+              its sub-type (장기 vs 일반 ...), do NOT pick a sub-type for the user: best=null and
+              "alternatives" = ONLY that purpose's option numbers, reason "purpose known, sub-type
+              not stated". The user is then asked that one question.
             - If the message says nothing about the trip type, best=null and alternatives=[] (the user
               will be shown the full list).
             - NEVER cross the domestic/overseas line to make a match. If the destination is domestic
@@ -52,7 +53,8 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
               business trip" = 해외출장; "domestic trip" = 국내출장; "long-term" = 장기;
               "general/regular/normal" = 일반; "training" = 교육. So "a general overseas
               business trip to Osaka" clearly implies 해외출장 · 일반 — pick it as best,
-              do not ask.
+              do not ask. But "an overseas trip to Osaka" / "해외 출장 계획" names NO sub-type:
+              best=null, alternatives = the 해외출장 options only.
             /no_think
             """;
 
@@ -184,9 +186,12 @@ public class PurposeSegmentAgentServiceImple implements PurposeSegmentAgentServi
             // names the option only in "reason" ("... matches option 2 (해외출장 · 일반)").
             // Strict isNumber() threw the correct understanding away and asked anyway.
             JsonNode bestNode = parsed.path("best");
-            Integer best = bestNode.isNumber() ? bestNode.asInt()
+            // Boxed on every branch: a mixed int/Integer ternary is typed int and unboxes a
+            // null best into a NullPointerException - which used to turn every "best: null"
+            // verdict into "resolution failed, full catalogue".
+            Integer best = bestNode.isNumber() ? Integer.valueOf(bestNode.asInt())
                     : bestNode.isTextual() && bestNode.asText().trim().matches("\\d+")
-                            ? Integer.parseInt(bestNode.asText().trim()) : null;
+                            ? Integer.valueOf(bestNode.asText().trim()) : null;
             String reason = parsed.path("reason").asText(null);
             if (best == null && reason != null) {
                 java.util.regex.Matcher om = java.util.regex.Pattern

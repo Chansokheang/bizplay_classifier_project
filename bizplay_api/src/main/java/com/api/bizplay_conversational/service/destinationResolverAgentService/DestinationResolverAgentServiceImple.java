@@ -114,6 +114,7 @@ public class DestinationResolverAgentServiceImple implements DestinationResolver
             boolean policy = paper.path("bstrPolicyRegionUsed").asBoolean(false);
             if ("DOMESTIC".equals(bstrType) && regionUsed) {
                 out.put("source", "sido");
+                out.put("listKind", policy ? "SIDO_USED" : "SIDO");   // which BizPlay list this is
                 JsonNode sidos = policy
                         ? bizplayGatewayService.getUsedRegionList("SIDO", token)
                         : bizplayGatewayService.getRegionList("SIDO", token);
@@ -124,6 +125,7 @@ public class DestinationResolverAgentServiceImple implements DestinationResolver
                 // Country-level form without a policy list: the COUNTRY is the saved region, so
                 // the full country master is the choice list — terminal, no city step.
                 out.put("source", "countries-flat");
+                out.put("listKind", "COUNTRY");
                 for (JsonNode c : safeArray(bizplayGatewayService.getRegionList("COUNTRY", token))) {
                     regions.add(c.path("name").asText("?"));
                 }
@@ -131,6 +133,7 @@ public class DestinationResolverAgentServiceImple implements DestinationResolver
                 // Country → city two-step without a policy list: hand back the country master;
                 // the UI fetches the picked country's cities via ?citiesOf={countryCode}.
                 out.put("source", "countries");
+                out.put("listKind", "COUNTRY_CITY");
                 ArrayNode countries = out.putArray("countries");
                 for (JsonNode c : safeArray(bizplayGatewayService.getRegionList("COUNTRY", token))) {
                     ObjectNode e = countries.addObject();
@@ -144,6 +147,7 @@ public class DestinationResolverAgentServiceImple implements DestinationResolver
                 // (that's what selectionId ultimately needs); "all cities" countries show as
                 // the country itself.
                 out.put("source", "policy");
+                out.put("listKind", "COUNTRY_USED_CITY_USED");
                 JsonNode countries = bizplayGatewayService.getUsedRegionList("COUNTRY", token);
                 for (JsonNode c : safeArray(countries)) {
                     JsonNode cities = bizplayGatewayService.getUsedRegionCities(

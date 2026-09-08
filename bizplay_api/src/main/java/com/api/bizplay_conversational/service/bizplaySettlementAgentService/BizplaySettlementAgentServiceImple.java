@@ -2181,9 +2181,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         slots.put("tripStartDate", start);
         slots.put("tripEndDate", end);
-        // The receipt sections' allowed TranKinds (paper.paperItemOrderDto[].itemDto.tranKinds),
+        // The receipt sections' allowed TranKinds (the 정산서 paper's paperSummaries[].tranKinds),
         // resolved to {id, name, type} — drives the "find receipts by TranKind" chips + manual entry.
-        resolvePlanTranKinds(state, d, token, subAgents);
+        resolvePlanTranKinds(state, d, papers, token, subAgents);
 
         ObjectNode doc = ((ObjectNode) form.getDocument()).deepCopy();
         String drafter = d.path("draftUserName").asText("");
@@ -6606,61 +6606,76 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         return found;
     }
 
-    private void resolvePlanTranKinds(ObjectNode state, JsonNode planDetail, String token, List<String> subAgents) {
-        // The plan-detail tranKinds are OBJECTS {id, type, name, ...} — use them directly. (Bare-id
-        // arrays are handled as a fallback via the TranKind master.)
+    private void resolvePlanTranKinds(ObjectNode state, JsonNode planDetail, JsonNode papers,
+            String token, List<String> subAgents) {
+        // BizPlay's "Receipt Process" deck, STEP 2: the allowed set is the 정산서 paper's
+        // paperApprovalInfoSettingDto.paperSummaries[].tranKinds - one receipt section each
+        // (숙박비 / 교통비 / 기타), exactly the kinds the admin configured for it. A section the
+        // admin switched off (used=false) is not on the screen and offers nothing.
+        // (The plan paper's paperItemOrderDto[].itemDto.tranKinds, read here before, means
+        // something else: the kinds an EXPENSE_BEYOND_BSTR_PERIOD item allows outside the trip.)
         java.util.LinkedHashMap<Long, ObjectNode> byId = new java.util.LinkedHashMap<>();
-        java.util.LinkedHashSet<Long> needMaster = new java.util.LinkedHashSet<>();
-        for (JsonNode item : planDetail.path("paper").path("paperItemOrderDto")) {
-            for (JsonNode tk : item.path("itemDto").path("tranKinds")) {
-                if (tk.isObject() && tk.hasNonNull("id")) {
-                    long id = tk.path("id").asLong();
-                    if (byId.containsKey(id)) {
+        java.util.Map<Long, JsonNode> master = new java.util.HashMap<>();
+        try {
+            for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
+                master.put(tk.path("id").asLong(), tk);
+            }
+        } catch (RuntimeException e) {
+            log.warn("TranKind master lookup failed: {}", e.getMessage());
+        }
+        long sectionPaper = 0;
+        List<String> sections = new ArrayList<>();
+        for (JsonNode paper : papers == null ? objectMapper.createArrayNode() : papers) {
+            if (!"EXPENSE_REPORT".equals(paper.path("paperKind").path("paperKindType").asText(""))) {
+                continue;
+            }
+            for (JsonNode section : paper.path("paperApprovalInfoSettingDto").path("paperSummaries")) {
+                if (!section.path("used").asBoolean(false)) {
+                    continue;
+                }
+                String sectionName = section.hasNonNull("title") ? section.path("title").asText()
+                        : section.path("description").asText("");
+                sections.add(sectionName);
+                for (JsonNode tk : section.path("tranKinds")) {
+                    long id = tk.path("id").asLong(0);
+                    if (id <= 0 || byId.containsKey(id)) {
+                        continue;
+                    }
+                    // STEP 3 of the same deck: inactive, expense-only and typeless kinds are
+                    // out even when the form lists them - judged by the MASTER's flags, since
+                    // the object embedded in the section says activated=false for every kind.
+                    JsonNode m = master.get(id);
+                    if (m != null && (!m.path("activated").asBoolean(true)
+                            || "EXPENSE".equals(m.path("scope").asText(""))
+                            || m.path("type").asText("").isBlank())) {
+                        log.info("[TRANKIND] {} ({}) is in section '{}' but the master rules it "
+                                + "out (activated={}, scope={}, type={}).", m.path("name").asText(""),
+                                id, sectionName, m.path("activated"), m.path("scope").asText(""),
+                                m.path("type").asText(""));
                         continue;
                     }
                     ObjectNode o = objectMapper.createObjectNode();
                     o.put("id", id);
-                    o.put("name", tk.path("name").asText("TranKind " + id));
-                    if (tk.hasNonNull("type")) {
-                        o.put("type", tk.path("type").asText());
-                    } else {
+                    o.put("name", m != null ? m.path("name").asText(tk.path("name").asText("TranKind " + id))
+                            : tk.path("name").asText("TranKind " + id));
+                    String type = m != null ? m.path("type").asText("") : tk.path("type").asText("");
+                    if (type.isBlank()) {
                         o.putNull("type");
+                    } else {
+                        o.put("type", type);
                     }
+                    o.put("section", sectionName);
                     byId.put(id, o);
-                } else if (tk.canConvertToLong()) {
-                    needMaster.add(tk.asLong());
                 }
+                sectionPaper = paper.path("id").asLong(0);
             }
         }
-        // NO early return when the paper pins nothing: that is exactly the case the master
-        // fallback below exists for. Bailing out here left planTranKinds empty, the flow never
-        // asked which expense type it was, and the receipt was then registered without one —
-        // which BizPlay creates NOT ISSUED and refuses to attach.
-        // Resolve any bare ids from the master (only when the plan gave ids, not objects).
-        if (!needMaster.isEmpty()) {
-            try {
-                java.util.Map<Long, JsonNode> master = new java.util.HashMap<>();
-                for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
-                    master.put(tk.path("id").asLong(), tk);
-                }
-                for (Long id : needMaster) {
-                    if (byId.containsKey(id)) {
-                        continue;
-                    }
-                    JsonNode m = master.get(id);
-                    ObjectNode o = objectMapper.createObjectNode();
-                    o.put("id", id);
-                    o.put("name", m == null ? ("TranKind " + id) : m.path("name").asText("TranKind " + id));
-                    if (m != null && m.hasNonNull("type")) {
-                        o.put("type", m.path("type").asText());
-                    } else {
-                        o.putNull("type");
-                    }
-                    byId.put(id, o);
-                }
-            } catch (RuntimeException e) {
-                log.warn("TranKind master lookup failed: {}", e.getMessage());
-            }
+        if (!byId.isEmpty()) {
+            log.info("[TRANKIND] 정산서 paper {} sections {} allow {} kind(s): {}", sectionPaper, sections,
+                    byId.size(), byId.values().stream().map(n -> n.path("name").asText()).toList());
+        } else if (!sections.isEmpty()) {
+            log.info("[TRANKIND] 정산서 paper {} sections {} pin no TranKind - falling back to the "
+                    + "출장비 규정.", sectionPaper, sections);
         }
         // A paper that pins nothing is NOT a dead end. Most forms pin none: paper 24354 (해외출장
         // ·장기) happens to carry its kinds on the 사전출장(노출) item, while paper 27803 (해외출장

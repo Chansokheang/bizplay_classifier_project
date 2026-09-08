@@ -312,7 +312,8 @@ public class BizplayFormController {
                 response.getPendingChoices() == null ? java.util.List.of() : response.getPendingChoices();
         for (com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c : choices) {
             if (c.getSource() != null) {
-                keys.add(c.getSource().startsWith("terminals:") ? "terminals" : c.getSource());
+                keys.add(c.getSource().contains(":")
+                        ? c.getSource().substring(0, c.getSource().indexOf(':')) : c.getSource());
             }
             keys.addAll(keysForKind(c.getKind()));
         }
@@ -437,6 +438,73 @@ public class BizplayFormController {
     }
 
     /**
+     * The BizPlay endpoint a client calls DIRECTLY for a long list, so their screen needs no proxy
+     * to the AI server (company feedback: the UI may not reach us, only their backend). Each of our
+     * four lookups wraps exactly one BizPlay API; this hands the client that API, the row field to
+     * show, and the filter we would have applied. Null for any other choice.
+     */
+    private java.util.Map<String, Object> bizplayLookup(String source, String filter,
+            com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c) {
+        if (source == null) {
+            return null;
+        }
+        java.util.Map<String, Object> lookup = new java.util.LinkedHashMap<>();
+        lookup.put("method", "GET");
+        switch (source) {
+            case "terminals" -> {
+                lookup.put("path", bizplayEndpoints.getEtcCardTerminal());
+                lookup.put("labelField", "name");
+                if (filter != null && !filter.isBlank()) {
+                    lookup.put("filter", java.util.Map.of("vehicleType", filter));
+                }
+            }
+            case "currencies" -> {
+                lookup.put("path", bizplayEndpoints.getCurrencyCodes());
+                lookup.put("labelField", "name");
+            }
+            case "routeOptions" -> {
+                lookup.put("path", bizplayEndpoints.getDestinationList());
+                lookup.put("labelField", "name");
+            }
+            case "destinationOptions" -> {
+                // The list the FORM uses, as the resolver reported it: the 시/도 list (master or
+                // 급지-registered), the flat country list, country then city, or the registered
+                // countries with their registered cities (an empty registered city list means
+                // every city of that country is allowed - then the full city list applies).
+                String kind = filter == null ? "SIDO" : filter;
+                lookup.put("labelField", "name");
+                switch (kind) {
+                    case "SIDO_USED" -> lookup.put("path",
+                            bizplayEndpoints.getRegionUsedList().replace("{regionType}", "SIDO"));
+                    case "COUNTRY" -> lookup.put("path",
+                            bizplayEndpoints.getRegionList().replace("{regionType}", "COUNTRY"));
+                    case "COUNTRY_CITY" -> {
+                        lookup.put("path", bizplayEndpoints.getRegionList().replace("{regionType}", "COUNTRY"));
+                        lookup.put("then", java.util.Map.of("method", "GET",
+                                "path", bizplayEndpoints.getRegionCities(),
+                                "pathParamFrom", "countryCode", "labelField", "name"));
+                    }
+                    case "COUNTRY_USED_CITY_USED" -> {
+                        lookup.put("path", bizplayEndpoints.getRegionUsedList().replace("{regionType}", "COUNTRY"));
+                        lookup.put("then", java.util.Map.of("method", "GET",
+                                "path", bizplayEndpoints.getRegionUsedCities(),
+                                "pathParamFrom", "countryCode", "labelField", "name",
+                                "emptyMeans", "all cities of that country are allowed - use "
+                                        + bizplayEndpoints.getRegionCities()));
+                    }
+                    default -> lookup.put("path",
+                            bizplayEndpoints.getRegionList().replace("{regionType}", "SIDO"));
+                }
+            }
+            default -> {
+                return null;
+            }
+        }
+        lookup.put("send", "the chosen row's " + lookup.get("labelField") + " as the next message");
+        return lookup;
+    }
+
+    /**
      * Answer the company's question — "어떤 intent에서 어떤 API를 호출해야 하는지" — in the response
      * itself rather than in documentation.
      *
@@ -447,11 +515,16 @@ public class BizplayFormController {
      * keyed identically. {@code GET /agents/contract} publishes the whole surface for a developer
      * reading it once.
      */
+    /** Default for {@code ?inlineLimit=}: how many rows a list may carry inline, per list. */
+    private static final int DEFAULT_INLINE_LIMIT = 50;
+
     private BizplayPlanAgentResponse withContract(BizplayPlanAgentResponse response, String agent,
-                                                  String corpNo) {
+                                                  String corpNo, Integer inlineLimit) {
         if (response == null) {
             return null;
         }
+        // The client's inline cap, per list: BizPlay sets it to fit its screen; absent, 50.
+        int limit = inlineLimit == null || inlineLimit < 0 ? DEFAULT_INLINE_LIMIT : inlineLimit;
         String q = "?corpNo=" + java.net.URLEncoder.encode(corpNo == null ? "" : corpNo,
                 java.nio.charset.StandardCharsets.UTF_8);
         java.util.Map<String, java.util.List<java.util.Map<String, String>>> allRes = resourcesFor(agent, q);
@@ -486,11 +559,13 @@ public class BizplayFormController {
             for (com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice c : choices) {
                 // A choice that names a source has a fuller list behind an endpoint (the 통화 chips
                 // are 5 of 179); otherwise the inline options ARE the whole list.
+                // "source:detail" - the detail is the vehicle type for terminals, the list
+                // kind for destinations; the part before the colon is the capability.
                 String source = c.getSource();
                 String filter = null;
-                if (source != null && source.startsWith("terminals:")) {
-                    filter = source.substring("terminals:".length());
-                    source = "terminals";
+                if (source != null && source.contains(":")) {
+                    filter = source.substring(source.indexOf(':') + 1);
+                    source = source.substring(0, source.indexOf(':'));
                 }
                 if (source == null) {
                     source = switch (c.getKind() == null ? "" : c.getKind()) {
@@ -505,12 +580,24 @@ public class BizplayFormController {
                     url = url.replace("{vehicleType}", java.net.URLEncoder.encode(
                             filter, java.nio.charset.StandardCharsets.UTF_8));
                 }
-                decorated.add(c.toBuilder()
+                com.api.bizplay_conversational.model.response.TripPlanAgentResponse.PendingChoice built =
+                        c.toBuilder()
                         .render(c.getRender() != null ? c.getRender() : renderFor(c))
+                        .lookup(c.getLookup() != null ? c.getLookup() : bizplayLookup(source, filter, c))
                         .optionsUrl(c.getOptionsUrl() != null ? c.getOptionsUrl() : url)
                         .upstream(c.getUpstream() != null ? c.getUpstream()
                                 : (source == null ? null : allUp.get(source)))
-                        .build());
+                        .build();
+                // Over the client's inline cap: a list that can be fetched elsewhere (a BizPlay
+                // lookup, or our mirror) is sent as the lookup alone. A long list with neither
+                // stays inline - there is nowhere else to get it.
+                int rows = built.getOptions() == null ? 0 : built.getOptions().size();
+                if (rows > limit && (built.getLookup() != null || built.getOptionsUrl() != null)) {
+                    log.info("[INLINE] {} list of {} rows exceeds inlineLimit {} - sent as lookup only.",
+                            built.getKind(), rows, limit);
+                    built = built.toBuilder().options(null).render("lookup").build();
+                }
+                decorated.add(built);
             }
             withChoices = response.toBuilder().pendingChoices(decorated).build();
         }
@@ -560,11 +647,12 @@ public class BizplayFormController {
     @PostMapping("/agents/plan")
     public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> planChat(
             @RequestBody BizplayPlanAgentRequest request,
+            @RequestParam(value = "inlineLimit", required = false) Integer inlineLimit,
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
         log.info("POST /bizplay/agents/plan - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
         return ResponseEntity.ok(ApiResponse.ok(withContract(
-                bizplayPlanAgentService.chat(request, token), "plan", request.getCorpNo())));
+                bizplayPlanAgentService.chat(request, token), "plan", request.getCorpNo(), inlineLimit)));
     }
 
     @Operation(summary = "⑨-b One settlement document by approvalId (GET /api/v2/approval/bstr/{id}). "
@@ -665,11 +753,13 @@ public class BizplayFormController {
     @PostMapping("/agents/settlement")
     public ResponseEntity<ApiResponse<BizplayPlanAgentResponse>> settlementChat(
             @RequestBody BizplayPlanAgentRequest request,
+            @RequestParam(value = "inlineLimit", required = false) Integer inlineLimit,
             @RequestHeader(value = "X-Bizplay-Token", required = false) String token) {
         log.info("POST /bizplay/agents/settlement - corpNo={}, corpUserId={}, sessionId={}",
                 request.getCorpNo(), request.getCorpUserId(), request.getSessionId());
         return ResponseEntity.ok(ApiResponse.ok(withContract(
-                bizplaySettlementAgentService.chat(request, token), "settlement", request.getCorpNo())));
+                bizplaySettlementAgentService.chat(request, token), "settlement", request.getCorpNo(),
+                inlineLimit)));
     }
 
     @Operation(summary = "LLM intent judge for the approval-line step: what does the user's "

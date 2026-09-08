@@ -133,7 +133,12 @@ public class FormSkeletonServiceImple implements FormSkeletonService {
                                 ? optionItems.deepCopy() : null)
                         .requestWay(item.path("requestWay").asText(null))
                         .travelerItem(entry.path("travelerItemUsed").asBoolean(false))
+                        .hint(itemHint(item))
                         .build());
+                if (itemHint(item) != null) {
+                    log.info("[HINT] item {} '{}' carries the admin's hint: {}", item.path("id").asLong(),
+                            item.path("name").asText(""), itemHint(item));
+                }
             }
             // SECTION_ITEM (GROUP_TITLE / DIVIDER) is layout only — skipped.
         }
@@ -176,6 +181,21 @@ public class FormSkeletonServiceImple implements FormSkeletonService {
      * BASIC_TRAVELER -> the per-traveler document fan-out (and BSTR_PERIOD, a custom ITEM,
      * -> bstrStartDate / bstrEndDate).
      */
+    /**
+     * The admin's explanation of an item, as BizPlay's screen shows it: the tooltip when the
+     * item has one switched on, then the placeholder. Null when there is neither.
+     */
+    private String itemHint(JsonNode item) {
+        StringBuilder hint = new StringBuilder();
+        if (item.path("tooltipUsed").asBoolean(false) && !item.path("tooltip").asText("").isBlank()) {
+            hint.append(item.path("tooltip").asText().trim());
+        }
+        if (item.path("placeholderUsed").asBoolean(false) && !item.path("placeholder").asText("").isBlank()) {
+            hint.append(hint.isEmpty() ? "" : " / ").append("예: ").append(item.path("placeholder").asText().trim());
+        }
+        return hint.isEmpty() ? null : hint.toString();
+    }
+
     private boolean isServerGeneratedBasic(String basicType) {
         return "BASIC_PAPER_NO".equals(basicType)
                 || "BASIC_DRAFT_USER_NAME".equals(basicType)

@@ -55,5 +55,11 @@ public class BizplayFormResponse {
          * once at form level in the custom-items section.
          */
         private boolean travelerItem;
+        /**
+         * What the admin wrote to explain this item on BizPlay's own screen: the tooltip (help
+         * text) and/or the placeholder (example text in the empty box), joined. Null when the
+         * item has neither. The only description of a custom item the company can give.
+         */
+        private String hint;
     }
 }

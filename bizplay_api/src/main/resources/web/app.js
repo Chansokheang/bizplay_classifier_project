@@ -1297,6 +1297,16 @@ const TRIP_TYPES = {
  * fallback so the modal still works when the private API is unreachable.
  * ================================================================ */
 const BZ_API_BASE = () => API_ORIGIN + "/api/v1/agent-conversations/bizplay";
+// How many rows a choice list may carry inline: the API's ?inlineLimit= (default 50, per list);
+// longer lists arrive as a lookup alone. This UI draws dropdowns for long lists, so it asks for
+// 200. ?inlineLimit=N on the page URL overrides it - to see what BizPlay's screen gets at its limit.
+const INLINE_LIMIT = (() => {
+  try {
+    const v = parseInt(new URLSearchParams(location.search).get("inlineLimit"), 10);
+    return Number.isFinite(v) && v >= 0 ? v : 200;
+  } catch (e) { return 200; }
+})();
+const INLINE_LIMIT_QS = () => `?inlineLimit=${INLINE_LIMIT}`;
 let BZ_CORP_USER_ID = localStorage.getItem("bizplay.corpUserId")
   || (window.APP_CONFIG && window.APP_CONFIG.corpUserId) || "30447";
 /* The signed-in demo user — "I"/"me" in chat defaults to this person. */
@@ -6676,11 +6686,11 @@ async function sendAgent(opts) {
         if (agent.planApprovalId) body.bstrPlanApprovalId = agent.planApprovalId;
       }
     } else if (agent.settle) {
-      url = `${BZ_API_BASE()}/agents/settlement`;
+      url = `${BZ_API_BASE()}/agents/settlement${INLINE_LIMIT_QS()}`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
       if (agent.sessionId) body.sessionId = agent.sessionId;
     } else if (agent.live) {
-      url = `${BZ_API_BASE()}/agents/plan`;
+      url = `${BZ_API_BASE()}/agents/plan${INLINE_LIMIT_QS()}`;
       body = { corpNo: CORP_NO, corpUserId: BZ_CORP_USER_ID, message: message || null };
       // A title the user typed into the form is a VALUE, not context - send it so the agent
       // writes it instead of composing one over it. Only when it DIFFERS from what the agent

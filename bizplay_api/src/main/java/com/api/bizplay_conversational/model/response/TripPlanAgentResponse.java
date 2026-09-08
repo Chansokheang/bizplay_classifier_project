@@ -61,6 +61,14 @@ public class TripPlanAgentResponse {
          * wants to search, page or refresh the list on its own. Null when no endpoint backs it.
          */
         private String optionsUrl;
+        /**
+         * For a long list: the BizPlay endpoint the client can call DIRECTLY for the full list -
+         * {@code {method, path, labelField, filter?, then?}}. Show {@code labelField} of each row
+         * and send the chosen row's label back as the next message; the agent resolves it. This is
+         * the primary way to fetch a lookup: a client that already reaches BizPlay's API needs no
+         * proxy to the AI server. {@code optionsUrl} is only our convenience mirror of the same list.
+         */
+        private java.util.Map<String, Object> lookup;
         /** The ambiguous input as the user typed/extracted it (e.g. "sokheang"). */
         private String name;
         /** The candidate options to choose from. */
