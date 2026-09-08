@@ -236,7 +236,16 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         // named after the segment ("귀향교통비") claimed it and answered with a tool error.
         boolean chipToken = bareMessage.toLowerCase(java.util.Locale.ROOT)
                 .startsWith("trip type:");
-        if (!message.isBlank() && !chipToken && !askPending && !(midSession && shortAnswer)) {
+        // A message that names one of the corporation's own purposes ("선급금 출장 계획
+        // 만들어줘") is a plan request - catalogue data says so - and a custom agent whose
+        // description happens to fit the word (a per-diem helper) must not claim it.
+        boolean namesPurpose = !message.isBlank() && !chipToken
+                && mentionsAPurpose(bareMessage, request.getCorpUserId(), bizplayToken);
+        if (namesPurpose) {
+            log.info("'{}' names a purpose of this corporation - the plan flow owns it.",
+                    truncateForLog(bareMessage));
+        }
+        if (!message.isBlank() && !chipToken && !askPending && !(midSession && shortAnswer) && !namesPurpose) {
             CustomAgentService.RoutedReply custom = customAgentService.tryHandle(request.getCorpNo(), message);
             if (custom != null && midSession && aboutThisDraft(bareMessage, ko)) {
                 // An OPEN draft owns anything about itself. A staff-lookup agent claimed
@@ -316,9 +325,15 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
 
         // "결재자는 김도하" / "Set 김도하 as the approver" — about who SIGNS, not who travels.
         // Without this the name fell through to the traveller mapper and joined the trip.
+        // While the approval question is open, a message is an approval edit UNLESS the judge
+        // says plainly that it is about something else - "출장자를 김도하로 바꿔줘" is a traveller
+        // change, and swapping names on the approval line instead was wrong. "unsure" keeps the
+        // old reading (a bare name answers the open question).
+        String approvalSubject = documents.isEmpty() ? ""
+                : approvalSubject(stripChatContext(turnText), recentTurns(session), ko);
         boolean approverTurn = !documents.isEmpty()
-                && (state.path("pendingApprovalAsk").asBoolean(false)
-                    || namesAnApprover(stripChatContext(turnText), recentTurns(session), ko));
+                && ("yes".equals(approvalSubject)
+                    || (state.path("pendingApprovalAsk").asBoolean(false) && !"no".equals(approvalSubject)));
         if (approverTurn) {
             String added = approvalLineService.applyEdit(state, turnText, bizplayToken, ko, recentTurns(session));
             if (added != null) {
@@ -388,9 +403,13 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             // clicking that purpose's chip: the catalogue name, compared whole, not a phrase read
             // out of a sentence. Without this a typed "해외출장" fell to the judge, which on its
             // own had no reason to prefer 해외출장 over asking the question again.
-            String namedPurpose = purposeNamedExactly(message, options);
+            // The web chat wraps every message in a "(Current user: … Form state …)" block.
+            // A typed "해외출장" or a chip's "purpose:2952" is the USER's text after that block,
+            // so the whole-message comparisons below see the words alone.
+            String bare = stripChatContext(message);
+            String namedPurpose = purposeNamedExactly(bare, options);
             java.util.regex.Matcher purposePick = PURPOSE_PICK.matcher(
-                    namedPurpose != null ? namedPurpose : message);
+                    namedPurpose != null ? namedPurpose : bare);
             if (purposePick.matches()) {
                 long purposeId = Long.parseLong(purposePick.group(1));
                 List<PurposeOption> ofPurpose = new ArrayList<>();
@@ -2188,7 +2207,9 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             state.put("destination", destKept);
             formValueWriterService.refreshPeriod(document, state);
         }
-        applied.addAll(ensurePeriodFallback(document, state, text));
+        applied.addAll(ensurePeriodFallback(document, state, text,
+                !java.util.Objects.equals(beforeApply.path("bstrStartDate").asText(""), document.path("bstrStartDate").asText(""))
+                        || !java.util.Objects.equals(beforeApply.path("bstrEndDate").asText(""), document.path("bstrEndDate").asText(""))));
         applied.addAll(bindPendingAnswer(document, state, text, mapped));
         state.remove("staged"); // consumed
         // The mapper knows today's date, so on a turn that names NO date it can echo TODAY into
@@ -2503,7 +2524,23 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * write first..last through the SAME period writer path.
      */
     private List<String> ensurePeriodFallback(ObjectNode document, ObjectNode state, String text) {
-        if (document.hasNonNull("bstrStartDate") || text == null) {
+        return ensurePeriodFallback(document, state, text, false);
+    }
+
+    /**
+     * @param periodMappedThisTurn the mapper already wrote the period on this turn - then there
+     *                             is nothing to rescue. When the form ALREADY has a period and the
+     *                             mapper wrote none, a text with dates in it is a CHANGE
+     *                             ("9월 28일부터 29일까지로 바꿔줘") the mapper dropped; the same
+     *                             focused extraction recovers it, applied only when it differs.
+     */
+    private List<String> ensurePeriodFallback(ObjectNode document, ObjectNode state, String text,
+                                              boolean periodMappedThisTurn) {
+        if (text == null) {
+            return List.of();
+        }
+        boolean hadPeriod = document.hasNonNull("bstrStartDate");
+        if (hadPeriod && (periodMappedThisTurn || !DATEISH.matcher(text).find())) {
             return List.of();
         }
         List<String> dates = new ArrayList<>();
@@ -2564,6 +2601,15 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
         }
         if (dates.isEmpty()) {
             return List.of();
+        }
+        if (hadPeriod) {
+            String curStart = document.path("bstrStartDate").asText("");
+            String curEnd = document.path("bstrEndDate").asText("");
+            if (curStart.startsWith(dates.get(0)) && curEnd.startsWith(dates.get(dates.size() - 1))) {
+                return List.of();     // the text repeats the period the form already holds
+            }
+            log.info("[PERIOD] change recovered from the text: {} ~ {} -> {} ~ {}",
+                    curStart, curEnd, dates.get(0), dates.get(dates.size() - 1));
         }
         String periodKey = null;
         for (JsonNode f : state.path("fields")) {
@@ -4304,8 +4350,16 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
      * "김도하 팀장님 결재 넣어줘" all mean the same thing, and none of them adds a traveller.
      */
     private boolean namesAnApprover(String message, java.util.List<String> turns, boolean ko) {
+        return "yes".equals(approvalSubject(message, turns, ko));
+    }
+
+    /**
+     * The same judge, with its three answers kept: "yes" (about the approval line), "no" (about
+     * the travellers, dates, destination or anything else), "" (unsure or unavailable).
+     */
+    private String approvalSubject(String message, java.util.List<String> turns, boolean ko) {
         if (message == null || message.isBlank() || message.length() > 200) {
-            return false;
+            return "";
         }
         try {
             String verdict = slotFillerAgentService.extract(message, java.util.Map.of(
@@ -4319,12 +4373,16 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             if ("yes".equals(verdict)) {
                 log.info("[APPR] '{}' is about the approval line, not the travellers.",
                         truncateForLog(message));
-                return true;
+                return "yes";
+            }
+            if ("no".equals(verdict)) {
+                log.info("[APPR] '{}' is NOT about the approval line.", truncateForLog(message));
+                return "no";
             }
         } catch (Exception e) {
             log.warn("Approval-subject judge unavailable: {}", e.getMessage());
         }
-        return false;
+        return "";
     }
 
 
@@ -4693,6 +4751,30 @@ public class BizplayPlanAgentServiceImple implements BizplayPlanAgentService {
             }
         }
         return hit == null ? null : "purpose:" + hit;
+    }
+
+    /**
+     * Does the message contain one of the corporation's purpose names (two characters or more,
+     * compared without spaces)? Catalogue data, cached; false when the catalogue is unavailable.
+     */
+    private boolean mentionsAPurpose(String message, String corpUserId, String token) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        try {
+            String said = message.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+            for (PurposeOption o : purposeSegmentAgentService.flattenCatalog(
+                    bizplayGatewayService.getPurposeCatalog(corpUserId, token))) {
+                String name = o.getPurposeName() == null ? ""
+                        : o.getPurposeName().replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+                if (name.length() >= 2 && said.contains(name)) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return false;
     }
 
     /** Is the whole message one of the corporation's purpose names? (Catalogue data, cached.) */
