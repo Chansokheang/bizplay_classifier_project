@@ -1,0 +1,4776 @@
+{
+  "$schema": "bizplay-ruled-amount-golden-vectors/v1",
+  "생성일": "2026-09-09",
+  "대상": "applyCalcConditions / applyCalcConditionsKRW — 규정금액 3층 중 ②(조건식 일별 적용)",
+  "정본": "packages/domains/src/bstr-policy/utils/calc-condition-engine.ts",
+  "사용법": [
+    "1. 각 벡터의 input(+opts / krwBaseMap)을 당신의 ② 구현에 넣는다.",
+    "2. 결과의 일별 금액을 expected.limitAmounts 와 비교한다.",
+    "3. 다르면 그 벡터의 group·description 이 어느 규칙에서 갈렸는지 알려준다.",
+    "krwBaseMap 이 있는 벡터는 applyCalcConditionsKRW 경로다 — 외화를 먼저 원화로 환산한 뒤 조건을 적용하는 케이스이며, krwBaseMap 이 그 환산 결과다.",
+    "calcBreakdown* 는 산출근거(화면 툴팁) 검산용이다. 금액만 맞추려면 limitAmounts 만 보면 된다."
+  ],
+  "주의": [
+    "이 벡터는 ②(조건식 적용)만 검증한다. ①(한도 조회)·③(검증)은 각 문서의 규칙을 따른다.",
+    "input.limitAmounts 는 기준금액이다 — 최종금액이 아니다.",
+    "엔진은 반올림하지 않는다. 절사는 증빙 단계의 책임이다(B-15 참조)."
+  ],
+  "벡터수": 71,
+  "그룹": [
+    "가드",
+    "operator",
+    "calcMethod",
+    "dayType",
+    "range",
+    "dailyDiff",
+    "이동일",
+    "누적",
+    "overridden",
+    "외화"
+  ],
+  "vectors": [
+    {
+      "id": "A-01",
+      "group": "가드",
+      "description": "appliedConditions 없음 → 기준금액 패스스루(calcBreakdown 도 없음)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        }
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": null,
+        "calcBreakdownBaseAmount": null,
+        "calcBreakdownItems": null
+      }
+    },
+    {
+      "id": "A-02",
+      "group": "가드",
+      "description": "appliedConditions 빈 배열 → 패스스루",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": []
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": null,
+        "calcBreakdownBaseAmount": null,
+        "calcBreakdownItems": null
+      }
+    },
+    {
+      "id": "A-03",
+      "group": "가드",
+      "description": "calcEnabled=false → 조건이 있어도 기준금액 유지",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": false,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": null,
+        "calcBreakdownBaseAmount": null,
+        "calcBreakdownItems": null
+      }
+    },
+    {
+      "id": "A-04",
+      "group": "가드",
+      "description": "matched=false 만 있으면 금액 불변 + calcBreakdown(items 빈 배열) 생성",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": false,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 400000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": []
+      }
+    },
+    {
+      "id": "B-01",
+      "group": "operator",
+      "description": "none → 금액 무변경",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 400000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "변경없음"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-02",
+      "group": "operator",
+      "description": "x + PERCENT → 금액 × (값/100)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-03",
+      "group": "operator",
+      "description": "x + AMOUNT → 금액 × 값 (배수)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "2",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 200000,
+          "2026-06-02": 200000,
+          "2026-06-03": 200000,
+          "2026-06-04": 200000
+        },
+        "calcBreakdownTotalAmount": 800000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×2배"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-04",
+      "group": "operator",
+      "description": "x + unit null → AMOUNT 와 동일(배수). PERCENT 로 오해하면 안 된다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "2",
+            "operatorUnit": null,
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 200000,
+          "2026-06-02": 200000,
+          "2026-06-03": 200000,
+          "2026-06-04": 200000
+        },
+        "calcBreakdownTotalAmount": 800000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×2배"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-05",
+      "group": "operator",
+      "description": "x + '%' → PERCENT 와 동일(엔진 방어값)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "%",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-06",
+      "group": "operator",
+      "description": "+ → 금액 + 값. operatorUnit 을 무시한다(PERCENT 여도 금액)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "20000",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 120000,
+          "2026-06-02": 120000,
+          "2026-06-03": 120000,
+          "2026-06-04": 120000
+        },
+        "calcBreakdownTotalAmount": 480000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "+20,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-07",
+      "group": "operator",
+      "description": "- → 금액 − 값",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "-",
+            "operatorValue": "30000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 70000,
+          "2026-06-02": 70000,
+          "2026-06-03": 70000,
+          "2026-06-04": 70000
+        },
+        "calcBreakdownTotalAmount": 280000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "-30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-08",
+      "group": "operator",
+      "description": "/ → 금액 ÷ 값",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "/",
+            "operatorValue": "4",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 25000,
+          "2026-06-02": 25000,
+          "2026-06-03": 25000,
+          "2026-06-04": 25000
+        },
+        "calcBreakdownTotalAmount": 100000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "÷4"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-09",
+      "group": "operator",
+      "description": "★ fixed → cond.fixedAmount 로 대체한다(operatorValue 가 아니다). 비가환 연산",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "fixed",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": 55000,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 55000,
+          "2026-06-02": 55000,
+          "2026-06-03": 55000,
+          "2026-06-04": 55000
+        },
+        "calcBreakdownTotalAmount": 220000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "정액 55,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-09b",
+      "group": "operator",
+      "description": "★ 함정 — fixed 인데 fixedAmount 가 null 이면 금액을 그대로 둔다(0 이 아니다). operatorValue 는 무시된다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "fixed",
+            "operatorValue": "55000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 400000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "정액 0원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-10",
+      "group": "operator",
+      "description": "unpaid → 금액 0",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "unpaid",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 0,
+          "2026-06-02": 0,
+          "2026-06-03": 0,
+          "2026-06-04": 0
+        },
+        "calcBreakdownTotalAmount": 0,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "미지급(0원)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-11",
+      "group": "operator",
+      "description": "★ silbiLimit → fixed 와 동일한 대체다(min 이 아니다). fixedAmount 를 쓴다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "silbiLimit",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": 70000,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 70000,
+          "2026-06-02": 70000,
+          "2026-06-03": 70000,
+          "2026-06-04": 70000
+        },
+        "calcBreakdownTotalAmount": 280000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "실비(제한) 70,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-11b",
+      "group": "operator",
+      "description": "★ silbiLimit 은 min 이 아니다 — 한도가 기준금액보다 커도 그 값으로 올라간다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "silbiLimit",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": 150000,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 150000,
+          "2026-06-02": 150000,
+          "2026-06-03": 150000,
+          "2026-06-04": 150000
+        },
+        "calcBreakdownTotalAmount": 600000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "실비(제한) 150,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-12",
+      "group": "operator",
+      "description": "대문자 별칭 MULTIPLY → x 와 동일",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "MULTIPLY",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-13",
+      "group": "operator",
+      "description": "대문자 별칭 SUBTRACT → - 와 동일",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "SUBTRACT",
+            "operatorValue": "30000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 70000,
+          "2026-06-02": 70000,
+          "2026-06-03": 70000,
+          "2026-06-04": 70000
+        },
+        "calcBreakdownTotalAmount": 280000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "-30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-14",
+      "group": "operator",
+      "description": "operatorValue 가 비유한값(빈 문자열) → parseValue 가 0 으로 본다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 400000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "+원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-15",
+      "group": "operator",
+      "description": "소수 결과를 반올림하지 않는다 (37.5 그대로)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 75
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-01"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 37.5
+        },
+        "calcBreakdownTotalAmount": 37.5,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-01",
+      "group": "calcMethod",
+      "description": "daily → 전 일자 커버",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-02",
+      "group": "calcMethod",
+      "description": "departArrive → 출발일·도착일만 커버, 나머지 날은 금액 0",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "departArrive",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 0,
+          "2026-06-03": 0,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 100000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-03",
+      "group": "calcMethod",
+      "description": "excludeDepart → 출발일 제외",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "excludeDepart",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 0,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 150000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-04",
+      "group": "calcMethod",
+      "description": "excludeArrive → 도착일 제외",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "excludeArrive",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 0
+        },
+        "calcBreakdownTotalAmount": 150000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-05",
+      "group": "calcMethod",
+      "description": "excludeN(excludeDays=2) → 앞 2일 제외",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "excludeN",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": 2,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 0,
+          "2026-06-04": 0
+        },
+        "calcBreakdownTotalAmount": 100000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-06",
+      "group": "calcMethod",
+      "description": "★ excludeN + excludeDays=null → 0 으로 폴백해 전 일자 커버",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "excludeN",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-07",
+      "group": "calcMethod",
+      "description": "★ 커버 실패는 \"건너뛰기\"가 아니라 \"그 날 0\" — 앞 조건 누적분까지 소멸한다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "50000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "departArrive",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 150000,
+          "2026-06-02": 0,
+          "2026-06-03": 0,
+          "2026-06-04": 150000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "+50,000원"
+          },
+          {
+            "label": "기본",
+            "effect": "변경없음"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-08",
+      "group": "calcMethod",
+      "description": "대문자 별칭 DEPART_ARRIVE → departArrive 와 동일",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "DEPART_ARRIVE",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 0,
+          "2026-06-03": 0,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 100000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-01",
+      "group": "dayType",
+      "description": "평일 조건 → 주말 2일은 건너뛰기(금액 유지)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 80000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 80000
+        },
+        "calcBreakdownTotalAmount": 360000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-02",
+      "group": "dayType",
+      "description": "주말 조건 → 평일 2일 건너뛰기",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "unpaid",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "주말",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 0,
+          "2026-06-07": 0,
+          "2026-06-08": 100000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "주말",
+            "effect": "미지급(0원)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-03",
+      "group": "dayType",
+      "description": "와일드카드 '평일/공휴일' → 요일 제약 없음(전 일자 적용)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일/공휴일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 50000,
+          "2026-06-06": 50000,
+          "2026-06-07": 50000,
+          "2026-06-08": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일/공휴일",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-04",
+      "group": "dayType",
+      "description": "itemValue 빈 문자열 → 제약 없음",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 50000,
+          "2026-06-06": 50000,
+          "2026-06-07": 50000,
+          "2026-06-08": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일/공휴일",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-05",
+      "group": "dayType",
+      "description": "★ dayTypeMap 없음 + 구체값 조건 → 전부 불일치(미적용)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "calcBreakdownTotalAmount": 400000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": []
+      }
+    },
+    {
+      "id": "D-06",
+      "group": "dayType",
+      "description": "★ dayTypeMap 없음 + dayType 항목 없는 조건 → 그대로 적용된다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 50000,
+          "2026-06-06": 50000,
+          "2026-06-07": 50000,
+          "2026-06-08": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D-07",
+      "group": "dayType",
+      "description": "대문자 DAY_TYPE 항목도 동일하게 인식",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "DAY_TYPE",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 80000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 80000
+        },
+        "calcBreakdownTotalAmount": 360000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-01",
+      "group": "range",
+      "description": "dateRange from/to → 범위 밖 날짜는 건너뛰기",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "dateRange": {
+                "from": "2026-06-02",
+                "to": "2026-06-03"
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-02",
+      "group": "range",
+      "description": "dateRange from 만 → 그 이후만 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "dateRange": {
+                "from": "2026-06-03",
+                "to": null
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-03",
+      "group": "range",
+      "description": "periodRange gte 3 → 3일차부터 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "periodRange": {
+                "op": "gte",
+                "value": "3"
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-04",
+      "group": "range",
+      "description": "periodRange lte 2 → 1~2일차만 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "periodRange": {
+                "op": "lte",
+                "value": "2"
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-05",
+      "group": "range",
+      "description": "periodRange op 미지정 → gte 로 본다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "periodRange": {
+                "op": null,
+                "value": "3"
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-06",
+      "group": "range",
+      "description": "periodRange value 없음 → 제약 없음(전 일자)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "periodRange": {
+                "op": "gte",
+                "value": null
+              }
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-01",
+      "group": "dailyDiff",
+      "description": "pct 모드 — 첫날/중간/마지막 비율. base 는 그날 금액",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "100",
+            "diffLast": "50",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/100/50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-02",
+      "group": "dailyDiff",
+      "description": "★ pct + diffBaseAmt → base 가 그날 금액이 아니라 고정값이다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "100",
+            "diffLast": "50",
+            "excludeDays": null,
+            "details": {
+              "diffBaseAmt": 30000
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 15000,
+          "2026-06-02": 30000,
+          "2026-06-03": 30000,
+          "2026-06-04": 15000
+        },
+        "calcBreakdownTotalAmount": 90000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/100/50%, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-03",
+      "group": "dailyDiff",
+      "description": "amt 모드 — base + 가감액, 음수는 0 으로 클램프",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffFirstAmt": -20000,
+              "diffMidAmt": 10000,
+              "diffLastAmt": -20000
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 110000,
+          "2026-06-03": 110000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 380000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 -20,000원/+10,000원/-20,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-04",
+      "group": "dailyDiff",
+      "description": "amt + diffBaseAmt → 고정 base 에 가감",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": -10000,
+              "diffMidAmt": 0,
+              "diffLastAmt": -10000
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 20000,
+          "2026-06-02": 30000,
+          "2026-06-03": 30000,
+          "2026-06-04": 20000
+        },
+        "calcBreakdownTotalAmount": 100000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 -10,000원/0원/-10,000원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-05",
+      "group": "dailyDiff",
+      "description": "amt — 해당 tier 가감액 미설정이면 base 유지(가감 0)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": -10000
+            },
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 20000,
+          "2026-06-02": 30000,
+          "2026-06-03": 30000,
+          "2026-06-04": 30000
+        },
+        "calcBreakdownTotalAmount": 110000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 -10,000원/0원/0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-06",
+      "group": "dailyDiff",
+      "description": "pct — 비율 빈값이면 그 tier 는 금액 유지(0 곱 아님)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "",
+            "diffLast": "50",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/0/50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-07",
+      "group": "dailyDiff",
+      "description": "operator 를 무시한다 — x 100 이 있어도 차등만 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "x",
+            "operatorValue": "100",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "100",
+            "diffLast": "50",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 50000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/100/50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F-08",
+      "group": "dailyDiff",
+      "description": "1일 출장 — isFirst 가 isLast 보다 우선",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-01"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "100",
+            "diffLast": "10",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 50000
+        },
+        "calcBreakdownTotalAmount": 50000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/100/10%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-01",
+      "group": "이동일",
+      "description": "opts 없음 → 이동일 조건이 코어 조건으로 전 일자 적용된다(조건이 사라지지 않는다)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": 0,
+              "diffMidAmt": 0,
+              "diffLastAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 30000,
+          "2026-06-02": 30000,
+          "2026-06-03": 30000,
+          "2026-06-04": 30000
+        },
+        "calcBreakdownTotalAmount": 120000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "차등 0원/0원/0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-02",
+      "group": "이동일",
+      "description": "pre/post 각 1일 — 전일출발 조건은 첫날에만, 익일도착 조건은 마지막날에만",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffLastAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "260",
+                "itemValue": "익일도착",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 1,
+        "predepartType": "259",
+        "nextarriveType": "260"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 30000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 30000
+        },
+        "calcBreakdownTotalAmount": 260000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "전일출발일 0원, 기준 30,000원"
+          },
+          {
+            "label": "익일도착",
+            "effect": "익일도착일 0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-03",
+      "group": "이동일",
+      "description": "pre 만 1일",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 0,
+        "predepartType": "259"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 30000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 330000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "전일출발일 0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-04",
+      "group": "이동일",
+      "description": "★ 이동일 슬롯은 isDayCovered 를 생략한다 — departArrive 여도 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "departArrive",
+            "operator": "unpaid",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 0,
+        "predepartType": "259"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 0,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "미지급(0원)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-05",
+      "group": "이동일",
+      "description": "코어 조건은 이동일에 적용되지 않는다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 1,
+        "predepartType": "259",
+        "nextarriveType": "260"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-06",
+      "group": "이동일",
+      "description": "★ predepartType 에 숫자를 넘기면(문자열 아님) 매칭 실패 — 문자열로 보낼 것",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 0,
+        "predepartType": 259
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 30000,
+          "2026-06-03": 30000,
+          "2026-06-04": 30000
+        },
+        "calcBreakdownTotalAmount": 190000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "차등 0원/0원/0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-07",
+      "group": "이동일",
+      "description": "★ 배정할 자리가 없으면(2일 출장 + pre1/post1) 배정을 포기하고 전 일자를 코어로 되돌린다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-02"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {
+              "diffType": "amt",
+              "diffBaseAmt": 30000,
+              "diffFirstAmt": 0
+            },
+            "items": [
+              {
+                "itemType": "259",
+                "itemValue": "전일출발",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 1,
+        "predepartType": "259",
+        "nextarriveType": "260"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 30000,
+          "2026-06-02": 30000
+        },
+        "calcBreakdownTotalAmount": 60000,
+        "calcBreakdownBaseAmount": 30000,
+        "calcBreakdownItems": [
+          {
+            "label": "전일출발",
+            "effect": "차등 0원/0원/0원, 기준 30,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "G-08",
+      "group": "이동일",
+      "description": "코어 first/last 는 코어 구간 기준으로 판정된다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "dailyDiff",
+            "operator": "none",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "50",
+            "diffMid": "100",
+            "diffLast": "50",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "opts": {
+        "preCount": 1,
+        "postCount": 1,
+        "predepartType": "259",
+        "nextarriveType": "260"
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 50000,
+          "2026-06-03": 50000,
+          "2026-06-04": 100000
+        },
+        "calcBreakdownTotalAmount": 300000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "차등 50/100/50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-01",
+      "group": "누적",
+      "description": "sortOrder 오름차순 순차 적용 — 앞 결과가 뒤 입력이다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 40000,
+          "2026-06-02": 40000,
+          "2026-06-03": 40000,
+          "2026-06-04": 40000
+        },
+        "calcBreakdownTotalAmount": 160000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          },
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-02",
+      "group": "누적",
+      "description": "★ 순서가 결과를 바꾼다 — x2 → fixed 10000 = 10000",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 5000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-01"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "2",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "fixed",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": 10000,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 10000
+        },
+        "calcBreakdownTotalAmount": 10000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×2배"
+          },
+          {
+            "label": "기본",
+            "effect": "정액 10,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-03",
+      "group": "누적",
+      "description": "★ 반대 순서 — fixed 10000 → x2 = 20000",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 5000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-01"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "fixed",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": 10000,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "2",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 20000
+        },
+        "calcBreakdownTotalAmount": 20000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "정액 10,000원"
+          },
+          {
+            "label": "기본",
+            "effect": "×2배"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-04",
+      "group": "누적",
+      "description": "곱셈끼리는 교환법칙이 성립한다(순서 무관)",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 40000,
+          "2026-06-02": 40000,
+          "2026-06-03": 40000,
+          "2026-06-04": 40000
+        },
+        "calcBreakdownTotalAmount": 160000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          },
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-05",
+      "group": "누적",
+      "description": "dayType 필터 + 누적 — 주말은 조건① 만 건너뛰고 조건② 는 받는다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 40000,
+          "2026-06-06": 50000,
+          "2026-06-07": 50000,
+          "2026-06-08": 40000
+        },
+        "calcBreakdownTotalAmount": 180000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일",
+            "effect": "×80%"
+          },
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "H-06",
+      "group": "누적",
+      "description": "unpaid 뒤에 + 가 오면 0 에서 다시 더해진다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "unpaid",
+            "operatorValue": "",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 2,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "10000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 10000,
+          "2026-06-02": 10000,
+          "2026-06-03": 10000,
+          "2026-06-04": 10000
+        },
+        "calcBreakdownTotalAmount": 40000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "미지급(0원)"
+          },
+          {
+            "label": "기본",
+            "effect": "+10,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "I-01",
+      "group": "overridden",
+      "description": "★ overridden=true 라도 supersededByIds 상위가 그 날 적용 안 되면 이어받는다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-05": 100000,
+          "2026-06-06": 100000,
+          "2026-06-07": 100000,
+          "2026-06-08": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말",
+          "2026-06-07": "주말",
+          "2026-06-08": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-08"
+        },
+        "appliedConditions": [
+          {
+            "id": 3,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 4,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "20",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": true,
+            "supersededByIds": [
+              3
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 80000,
+          "2026-06-06": 20000,
+          "2026-06-07": 20000,
+          "2026-06-08": 80000
+        },
+        "calcBreakdownTotalAmount": 200000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "평일",
+            "effect": "×80%"
+          },
+          {
+            "label": "기본",
+            "effect": "×20%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "I-02",
+      "group": "overridden",
+      "description": "supersededByIds 상위가 매 날 적용되면 하위는 계속 밀린다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 3,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 4,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "20",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": true,
+            "supersededByIds": [
+              3
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "I-03",
+      "group": "overridden",
+      "description": "★ supersededByIds 가 없으면(구버전 응답) overridden=true 는 전역 미적용이다",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 3,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 4,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "20",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": true
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "I-04",
+      "group": "overridden",
+      "description": "overridden=false 는 정상 적용",
+      "input": {
+        "limitAmount": 100000,
+        "limitAmounts": {
+          "2026-06-01": 100000,
+          "2026-06-02": 100000,
+          "2026-06-03": 100000,
+          "2026-06-04": 100000
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일",
+          "2026-06-03": "평일",
+          "2026-06-04": "평일"
+        },
+        "currencyCode": "KRW",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-04"
+        },
+        "appliedConditions": [
+          {
+            "id": 3,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "80",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          },
+          {
+            "id": 4,
+            "sortOrder": 2,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "20",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false,
+            "supersededByIds": [
+              3
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 80000,
+          "2026-06-02": 80000,
+          "2026-06-03": 80000,
+          "2026-06-04": 80000
+        },
+        "calcBreakdownTotalAmount": 320000,
+        "calcBreakdownBaseAmount": 100000,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×80%"
+          }
+        ]
+      }
+    },
+    {
+      "id": "J-01",
+      "group": "외화",
+      "description": "★ 환산 후 조건 적용 — KRW 환산 base 위에 +50,000",
+      "input": {
+        "limitAmount": 100,
+        "limitAmounts": {
+          "2026-06-01": 100,
+          "2026-06-02": 100
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일",
+          "2026-06-02": "평일"
+        },
+        "currencyCode": "USD",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-02"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "50000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "krwBaseMap": {
+        "2026-06-01": 130000,
+        "2026-06-02": 130000
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 180000,
+          "2026-06-02": 180000
+        },
+        "calcBreakdownTotalAmount": 360000,
+        "calcBreakdownBaseAmount": 100,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "+50,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "J-02",
+      "group": "외화",
+      "description": "외화 + dayType 필터 — 주말은 건너뛴다",
+      "input": {
+        "limitAmount": 100,
+        "limitAmounts": {
+          "2026-06-05": 100,
+          "2026-06-06": 100
+        },
+        "dayTypeMap": {
+          "2026-06-05": "평일",
+          "2026-06-06": "주말"
+        },
+        "currencyCode": "USD",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-05",
+          "end": "2026-06-06"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "+",
+            "operatorValue": "50000",
+            "operatorUnit": "AMOUNT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [
+              {
+                "itemType": "dayType",
+                "itemValue": "평일",
+                "sortOrder": 1
+              }
+            ],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "krwBaseMap": {
+        "2026-06-05": 130000,
+        "2026-06-06": 130000
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-05": 180000,
+          "2026-06-06": 130000
+        },
+        "calcBreakdownTotalAmount": 310000,
+        "calcBreakdownBaseAmount": 100,
+        "calcBreakdownItems": [
+          {
+            "label": "평일",
+            "effect": "+50,000원"
+          }
+        ]
+      }
+    },
+    {
+      "id": "J-03",
+      "group": "외화",
+      "description": "외화 + 배수 — PERCENT 는 환산 금액에 적용된다",
+      "input": {
+        "limitAmount": 100,
+        "limitAmounts": {
+          "2026-06-01": 100
+        },
+        "dayTypeMap": {
+          "2026-06-01": "평일"
+        },
+        "currencyCode": "USD",
+        "calcEnabled": true,
+        "calcPeriod": {
+          "start": "2026-06-01",
+          "end": "2026-06-01"
+        },
+        "appliedConditions": [
+          {
+            "id": 1,
+            "sortOrder": 1,
+            "calcMethod": "daily",
+            "operator": "x",
+            "operatorValue": "50",
+            "operatorUnit": "PERCENT",
+            "fixedAmount": null,
+            "fixedCurrency": "KRW",
+            "diffFirst": "",
+            "diffMid": "",
+            "diffLast": "",
+            "excludeDays": null,
+            "details": {},
+            "items": [],
+            "matched": true,
+            "overridden": false
+          }
+        ]
+      },
+      "krwBaseMap": {
+        "2026-06-01": 130000
+      },
+      "expected": {
+        "limitAmounts": {
+          "2026-06-01": 65000
+        },
+        "calcBreakdownTotalAmount": 65000,
+        "calcBreakdownBaseAmount": 100,
+        "calcBreakdownItems": [
+          {
+            "label": "기본",
+            "effect": "×50%"
+          }
+        ]
+      }
+    }
+  ]
+}

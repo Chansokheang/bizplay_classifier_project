@@ -364,7 +364,7 @@ shape: `{ "key": [ { "method": "GET", "path": "…" } ] }`. `{braces}` in a path
 | `ROUTE_ASK` | `GET /agents/plan/route-options` | `GET /api/v2/bstr/destination/active/list` |
 | `APPROVAL_LINE_ASK` | `GET /corporation-users` | `GET /api/v2/popup/user/all/{corporationId}` |
 | `PLAN_SEARCH` | `GET /plans` | `GET /api/v2/approval/seah/bstr/plan/list?travelerId=…`, `GET /api/v2/approval/bstr/plan/list?…` |
-| `MANUAL_EXPENSE_PROMPT_FULL` | `POST …/manual-expense/create` | `POST /api/v2/receipt/etc-card`, `POST /api/v2/filebox/upload`, `GET /api/v2/receipt/issued/bulk/{ids}`, `POST /api/v2/bstr/policy/limit` |
+| `MANUAL_EXPENSE_PROMPT_FULL` | `POST …/manual-expense/create` | `POST /api/v2/receipt/etc-card`, `POST /api/v2/filebox/upload`, `GET /api/v2/receipt/issued/bulk/{ids}`, `POST /api/v2/bstr/policy/renewal/limit` |
 | `EXPENSE_IMAGE_REQUIRED` | `POST …/manual-expense/attach` | `POST /api/v2/filebox/upload`, `PATCH /api/v2/receipt/image/{receiptId}` |
 | `SUBMIT_REQUESTED` | `POST …/agents/plan/{sessionId}/create` | `POST /api/v2/approval/{productCode}/bstr/plan/draft` |
 | `CREATE_PLAN` / `CREATE_SETTLEMENT` | — | — |
@@ -375,6 +375,13 @@ shape: `{ "key": [ { "method": "GET", "path": "…" } ] }`. `{braces}` in a path
 > **filters by trip type**, which matters: a settlement form registered as OVERSEA is invisible to a
 > DOMESTIC trip on that path. Called without the `segmentId` of a purpose that has segments, it
 > answers 400 `COMM_ERROR`.
+
+> A note on filing: when BizPlay refuses the plan draft, `POST …/agents/plan/{sessionId}/create`
+> answers **503** with BizPlay's reason in `detail`. One refusal is worth knowing in advance:
+> BizPlay's `BSTR_PLAN_WARN_400_0001` carries only the traveler's name as its message and means
+> **that traveler already has a trip plan overlapping the dates**. The `detail` says so in words
+> ("출장자 X 님은 이 기간에 이미 다른 출장 계획이 있습니다 …", code kept) — change the period or
+> check the existing plan; the session stays open, so the user can reply with new dates.
 
 ### Reading the whole surface at once
 
@@ -496,3 +503,16 @@ An entry with `"choices": []` is a free-text question — that turn carries no `
    from `reply` + `pendingChoices` (as chips) and the conversation keeps working.
 6. **`draftJson`** — the same structure as the BizPlay save body, so it can be used directly for
    previews.
+7. **규정금액 on a receipt line** — every expense line in `draftJson` carries `ruledAmount` (KRW)
+   and, for a 규정 quoted in a foreign currency, `overseasRuledAmount` in that currency. It is
+   computed the way BizPlay's own screen does it, in three layers: ① `POST
+   /api/v2/bstr/policy/renewal/limit` per 급지 section and traveler gives the BASE amount per day
+   plus the matched conditions; ② the conditions are applied day by day on our side (the
+   `appliedConditions[]` engine — dayType, date and period options, the 8 operators, tiered
+   `dailyDiff`, travel days, per-day `supersededByIds` fallback; a foreign 규정 or operand is
+   converted to KRW FIRST, with the receipt's own rate); ③ the receipt's usage days are summed
+   (check-out day excluded for lodging on a 급지 path). 실비 (ACTUAL / ACTUAL_FIXED) and the
+   transport 등급제 carry the spend; no 규정 at all is 0. The `reply` says what applied, e.g.
+   "규정: 한도 USD 100/일. 적용 조건: 평일 +10,000원. 규정금액 ₩287,580 (USD 215)." A receipt over
+   the 규정금액 is reported ("규정 금액을 초과했습니다") but still files — BizPlay's excess checks
+   are client-side there, and the server accepts the amount.

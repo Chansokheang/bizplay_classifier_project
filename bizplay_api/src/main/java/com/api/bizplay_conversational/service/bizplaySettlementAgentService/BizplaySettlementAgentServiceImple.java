@@ -175,6 +175,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private final com.api.bizplay_conversational.config.BizplayProperties bizplayProperties;
     private final ObjectMapper objectMapper;
     private final com.api.bizplay_conversational.service.corpProvisioningService.CorpProvisioningService corpProvisioningService;
+    private final com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService ruledAmountLookupService;
 
     @Override
     @Transactional
@@ -1622,6 +1623,24 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             "for", "of", "to", "on", "in", "do", "does", "let", "lets", "let's", "want", "wants",
             "please", "would", "like", "i", "we", "id", "want to", "make", "create");
 
+    /** How many of the hint's words each candidate's title / purpose / docNo contains. */
+    private java.util.Map<Integer, Integer> scorePlans(ArrayNode candidates, List<String> words) {
+        java.util.Map<Integer, Integer> scores = new java.util.HashMap<>();
+        for (int i = 0; i < candidates.size(); i++) {
+            JsonNode c = candidates.get(i);
+            String haystack = (c.path("title").asText("") + " " + c.path("purpose").asText("")
+                    + " " + c.path("docNo").asText("")).toLowerCase(java.util.Locale.ROOT);
+            int score = 0;
+            for (String word : words) {
+                if (haystack.contains(word)) {
+                    score++;
+                }
+            }
+            scores.put(i, score);
+        }
+        return scores;
+    }
+
     /** The distinguishing words of a trip hint — stopwords and 1-char noise removed. */
     private List<String> hintWords(String hint) {
         List<String> words = new ArrayList<>();
@@ -1657,33 +1676,35 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         JsonNode list = bizplayGatewayService.getPlanList(corpUserId, start, end, token);
         subAgents.add("PLAN_SEARCH_TOOL");
         ArrayNode inWindow = planCandidates(list, start, end, 500);
-        if (inWindow.isEmpty()) {
-            // Widen once rather than reporting "no such trip" through a two-month keyhole. The
-            // provider honours the period, so a wider answer needs a wider ASK, not a re-filter.
-            start = today.minusMonths(WIDE_SEARCH_MONTHS).toString();
-            end = today.plusMonths(WIDE_SEARCH_MONTHS).toString();
-            list = bizplayGatewayService.getPlanList(corpUserId, start, end, token);
-            inWindow = planCandidates(list, start, end, 500);
-        }
         // Score, don't just test: common words ("2026" in every docNo) would otherwise match
         // everything. Only the best-scoring trips are shown, so the distinguishing word wins.
         List<String> words = hintWords(hint);
-        ArrayNode matches = objectMapper.createArrayNode();
-        int best = 0;
-        java.util.Map<Integer, Integer> scores = new java.util.HashMap<>();
-        for (int i = 0; i < inWindow.size(); i++) {
-            JsonNode c = inWindow.get(i);
-            String haystack = (c.path("title").asText("") + " " + c.path("purpose").asText("")
-                    + " " + c.path("docNo").asText("")).toLowerCase(java.util.Locale.ROOT);
-            int score = 0;
-            for (String word : words) {
-                if (haystack.contains(word)) {
-                    score++;
-                }
+        java.util.Map<Integer, Integer> scores = scorePlans(inWindow, words);
+        int best = scores.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+        if (inWindow.isEmpty() || best < words.size()) {
+            // Widen once rather than answering through a two-month keyhole - both when nothing
+            // is there AND when the best trip in it matches only SOME of the words: "대전 lg 출장"
+            // used to come back as "대전 선급금 출장" while the real "대전 lg 출장" sat nine weeks
+            // ahead. The provider honours the period, so a wider answer needs a wider ASK, not a
+            // re-filter; the wider list only replaces the narrow one when it scores better.
+            String wideStart = today.minusMonths(WIDE_SEARCH_MONTHS).toString();
+            String wideEnd = today.plusMonths(WIDE_SEARCH_MONTHS).toString();
+            ArrayNode wide = planCandidates(
+                    bizplayGatewayService.getPlanList(corpUserId, wideStart, wideEnd, token),
+                    wideStart, wideEnd, 500);
+            java.util.Map<Integer, Integer> wideScores = scorePlans(wide, words);
+            int wideBest = wideScores.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+            if (inWindow.isEmpty() || wideBest > best) {
+                log.info("[PLAN_SEARCH] '{}' scored {} in {}~{}, {} in the wide window - using the wide one",
+                        hint, best, start, end, wideBest);
+                start = wideStart;
+                end = wideEnd;
+                inWindow = wide;
+                scores = wideScores;
+                best = wideBest;
             }
-            scores.put(i, score);
-            best = Math.max(best, score);
         }
+        ArrayNode matches = objectMapper.createArrayNode();
         if (best > 0) {
             for (int i = 0; i < inWindow.size(); i++) {
                 if (scores.get(i) == best) {
@@ -4946,8 +4967,6 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (tranKindId <= 0) {
             return null;   // nothing to look a 규정 up by
         }
-        JsonNode etc = receipt.path("receiptEtc");
-        ObjectNode body = objectMapper.createObjectNode();
         // BOTH ids are load-bearing, checked against cloud-dev: without corporationUserId the
         // lookup answers 500, and without corporationId it answers 200 with an EMPTY body. The
         // traveller is the demo's static user unless the plan names one.
@@ -4964,27 +4983,92 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             log.info("[POLICY] skipped — no corporationId/corporationUserId to ask 규정조회 with");
             return null;
         }
-        body.put("corporationId", corporationId);
-        body.put("corporationUserId", traveler);
-        putIfText(body, "bstrType", doc.path("bstrType").asText(""));
-        copyNumberOrNull(body, "bstrPurposeId", doc.path("bstrPurposeId"));
-        copyNumberOrNull(body, "bstrSegmentId", doc.path("bstrSegmentId"));
-        body.put("tranKindId", tranKindId);
-        putIfText(body, "tranKindType", receipt.path("tranKindType").asText(""));
-        putIfText(body, "vehicleType", etc.path("vehicleType").asText(""));
-        putIfText(body, "departureTerminal", etc.path("depart").asText(""));
-        putIfText(body, "arrivalTerminal", etc.path("arrival").asText(""));
-        putIfText(body, "bstrDate", receipt.path("approvalDate").asText(""));
-        putIfText(body, "departureDate", doc.path("bstrStartDate").asText(""));
-        putIfText(body, "returnDate", doc.path("bstrEndDate").asText(""));
-        copyNumberOrNull(body, "receiptEtcId", etc.path("id"));
-        body.put("activityDivision", "ACTUAL");
+        // 규정금액 layer ① (증빙 규정금액 산출/01, 04 §4.10): the renewal lookup, per 급지 section and
+        // per user, with the trip's own facts. The 용도 TYPE is mandatory there; a card receipt
+        // that carries only the id gets it from the TranKind master.
+        ObjectNode line = receipt.deepCopy();
+        if (line.path("tranKindType").asText("").isBlank()) {
+            try {
+                for (JsonNode tk : bizplayGatewayService.getTranKindList(token)) {
+                    if (tk.path("id").asLong(0) == tranKindId && tk.hasNonNull("type")) {
+                        line.put("tranKindType", tk.path("type").asText());
+                        break;
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.debug("TranKind master unavailable for the 규정 lookup: {}", e.getMessage());
+            }
+        }
+        JsonNode planPaper = null;
         try {
-            return bizplayGatewayService.getPolicyLimit(body, token);
+            Long segmentId = doc.hasNonNull("bstrSegmentId") ? doc.path("bstrSegmentId").asLong() : null;
+            for (JsonNode p : bizplayGatewayService.getPapers(doc.path("bstrPurposeId").asLong(0), segmentId, token)) {
+                if ("BSTR_PLAN".equals(p.path("paperKind").path("paperKindType").asText(""))) {
+                    planPaper = p;   // its EXPENSE_BEYOND items carry the allowed days per 용도
+                }
+            }
+        } catch (RuntimeException e) {
+            log.debug("Plan form unavailable for the allowed-day rule: {}", e.getMessage());
+        }
+        // 04 §4.6: meals are asked per person - drafter plus companions. The settlement document
+        // names the traveller only; companions join here when the plan carries them.
+        java.util.List<Long> users = new ArrayList<>();
+        users.add(traveler);
+        // Layer ② needs KRW per unit for every foreign axis (02 §6). The receipt's own pair -
+        // KRW approvalAmount over the foreign overseasApprovalAmount - is the rate that applied to
+        // it (unit included); any other currency takes the provider's daily 환율.
+        final String receiptCurrency = line.path("currencyCode").asText("KRW").trim().toUpperCase(java.util.Locale.ROOT);
+        final double approvalKrw = line.path("approvalAmount").asDouble(0);
+        final double foreignSpend = line.path("overseasApprovalAmount").asDouble(0);
+        final String rateDay = firstNonBlank(line.path("usedStartDate").asText(""),
+                line.path("receiptEtc").path("usedStartDate").asText(""), line.path("approvalDate").asText(""));
+        com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.KrwRate rates = currency -> {
+            String code = currency == null ? "" : currency.trim().toUpperCase(java.util.Locale.ROOT);
+            if (code.isBlank() || "KRW".equals(code)) {
+                return 1.0;
+            }
+            if (code.equals(receiptCurrency) && foreignSpend > 0 && approvalKrw > 0) {
+                return approvalKrw / foreignSpend;
+            }
+            return krwPerUnit(code, rateDay, token);
+        };
+        try {
+            return ruledAmountLookupService.lookup(doc, line, planPaper, corporationId, users, token, rates);
         } catch (RuntimeException e) {
             log.warn("규정조회 skipped: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * KRW per one unit of a currency from the provider's 환율 (unit folded in - JPY is quoted per
+     * 100), walking back up to a week from the date as {@link #convertToKrw} does; NaN when none.
+     */
+    private double krwPerUnit(String code, String date, String token) {
+        LocalDate day;
+        try {
+            day = LocalDate.parse(date);
+        } catch (Exception e) {
+            day = LocalDate.now();
+        }
+        if (day.isAfter(LocalDate.now())) {
+            day = LocalDate.now();
+        }
+        for (int back = 0; back <= 7; back++) {
+            String on = day.minusDays(back).toString();
+            try {
+                JsonNode rate = bizplayGatewayService.getExchangeRate(code, on, token);
+                double value = rate == null ? 0 : rate.path("exchangeRate").asDouble(0);
+                if (value <= 0) {
+                    continue;
+                }
+                int unit = bizplayGatewayService.getCurrencyUnit(code, on, token);
+                return value / Math.max(1, unit);
+            } catch (RuntimeException e) {
+                log.debug("[FX] {} on {}: {}", code, on, e.getMessage());
+            }
+        }
+        return Double.NaN;
     }
 
     /** Write a text field only when there is one — the policy lookup errors on empty strings. */
@@ -5001,20 +5085,176 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * ANOTHER currency (this corp's 숙박비 is USD, the receipt KRW) is NOT converted here — there is
      * no rate in the answer, so the actual amount stands and the 규정 is reported to the user.
      */
+    /**
+     * A per-day map summed over the receipt's usage days - check-out day excluded for lodging on
+     * a 급지 path (04 §4.5) - with NO fallback to the whole map when nothing overlaps (설명 §8-2
+     * U-6 names that silent fallback as a trap). NaN when the map or the dates are missing, or
+     * no day overlaps.
+     */
+    private double daysSum(JsonNode map, JsonNode receipt, JsonNode policy) {
+        if (map == null || !map.isObject() || map.size() == 0 || receipt == null) {
+            return Double.NaN;
+        }
+        String type = policy.path("tranKindType").asText(receipt.path("tranKindType").asText(""));
+        JsonNode etc = receipt.path("receiptEtc");
+        String startText = firstNonBlank(receipt.path("usedStartDate").asText(""), etc.path("usedStartDate").asText(""),
+                receipt.path("approvalDate").asText(""));
+        String endText = firstNonBlank(receipt.path("usedEndDate").asText(""), etc.path("usedEndDate").asText(""), startText);
+        LocalDate start = isoDay(startText);
+        LocalDate end = isoDay(endText);
+        if (start == null) {
+            return Double.NaN;
+        }
+        if (end == null || end.isBefore(start)) {
+            end = start;
+        }
+        boolean sectioned = false;
+        for (JsonNode sec : policy.path("sections")) {
+            sectioned |= sec.hasNonNull("regionId");
+        }
+        if ("ROOM".equals(type) && sectioned) {
+            end = end.minusDays(1);   // the check-out day is not a night (04 §4.5)
+        }
+        double sum = 0;
+        int hit = 0;
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            JsonNode v = map.get(d.toString());
+            if (v != null && v.isNumber()) {
+                sum += v.asDouble();
+                hit++;
+            }
+        }
+        if (hit == 0) {
+            log.info("[POLICY] the receipt's days {}~{} overlap none of the 규정's {} day(s)", start, end, map.size());
+            return Double.NaN;
+        }
+        return sum;
+    }
+
+    /**
+     * The 규정금액 in the 규정's own currency - the per-day map summed over the receipt's usage
+     * days (check-out day excluded for lodging on a 급지 path), else the scalar. What
+     * {@code overseasRuledAmount} carries for a foreign 규정.
+     */
+    private double foreignBase(JsonNode policy, JsonNode receipt) {
+        double limit = policy.path("limitAmount").asDouble(0);
+        JsonNode map = policy.path("limitAmounts");
+        if (!map.isObject() || map.size() == 0 || receipt == null) {
+            return limit;
+        }
+        JsonNode etc = receipt.path("receiptEtc");
+        LocalDate start = isoDay(firstNonBlank(receipt.path("usedStartDate").asText(""),
+                etc.path("usedStartDate").asText(""), receipt.path("approvalDate").asText("")));
+        LocalDate end = isoDay(firstNonBlank(receipt.path("usedEndDate").asText(""),
+                etc.path("usedEndDate").asText("")));
+        if (start == null) {
+            return limit;
+        }
+        if (end == null || end.isBefore(start)) {
+            end = start;
+        }
+        boolean sectioned = false;
+        for (JsonNode sec : policy.path("sections")) {
+            sectioned |= sec.hasNonNull("regionId");
+        }
+        if ("ROOM".equals(policy.path("tranKindType").asText(receipt.path("tranKindType").asText(""))) && sectioned) {
+            end = end.minusDays(1);
+        }
+        double sum = 0;
+        int hit = 0;
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            JsonNode v = map.get(d.toString());
+            if (v != null && v.isNumber()) {
+                sum += v.asDouble();
+                hit++;
+            }
+        }
+        return hit > 0 ? sum : limit;
+    }
+
+    /** The first non-blank of the candidates, or "". */
+    private static String firstNonBlank(String... candidates) {
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) {
+                return c;
+            }
+        }
+        return "";
+    }
+
+    /** A "YYYY-MM-DD" (or ISO datetime) text as a day; null when it is neither. */
+    private static LocalDate isoDay(String text) {
+        if (text == null || text.length() < 10) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text.substring(0, 10));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private double ruledAmount(JsonNode policy, double approvalAmount, String currencyCode) {
+        return ruledAmount(policy, null, approvalAmount, currencyCode);
+    }
+
+    /**
+     * Layer ① keeps the BASE: the per-day map ({@code limitAmounts}) summed over the receipt's
+     * usage days - check-out day excluded for lodging on a 급지 path (04 §4.5) - with no fallback
+     * to the whole map when nothing overlaps (설명 §8-2 U-6 names that silent fallback as a trap).
+     * A response without a map (or a receipt without dates) uses the scalar. Matched conditions
+     * are logged, not applied: that is layer ②.
+     */
+    private double ruledAmount(JsonNode policy, JsonNode receipt, double approvalAmount, String currencyCode) {
         if (policy == null || !policy.isObject()) {
             return approvalAmount;
         }
         double limit = policy.path("limitAmount").asDouble(0);
+        // Layer ② already ran in the lookup: limitAmounts is the FINAL per-day amount in the
+        // 규정's currency, limitAmountsKrw the same in KRW (converted first, then applied - 02 §6).
+        double days = daysSum(policy.path("limitAmounts"), receipt, policy);
+        if (!Double.isNaN(days)) {
+            limit = days;
+        }
+        double krwLimit = daysSum(policy.path("limitAmountsKrw"), receipt, policy);
+        if (policy.path("calcApplied").asBoolean(false)) {
+            log.info("[POLICY] layer ② applied {} -> {} {} over the receipt's days{}",
+                    policy.path("calcBreakdown").path("items"), limit, policy.path("currencyCode").asText(""),
+                    Double.isNaN(krwLimit) ? "" : " (KRW " + krwLimit + ")");
+        } else if (policy.path("calcDeferred").asBoolean(false)) {
+            log.warn("[POLICY] {} matched 조건식 could not be applied in KRW (no rate) - base used",
+                    policy.path("appliedConditions").size());
+        }
         String policyCurrency = policy.path("currencyCode").asText("");
-        if (limit <= 0 || (!policyCurrency.isBlank() && !policyCurrency.equalsIgnoreCase(currencyCode))) {
+        String payClass = policy.path("bstrPayClassType").asText("");
+        // 실비 kinds and the transport 등급제 substitute the spend for the 규정금액 (03 함정 6,
+        // 04 §4.4). Everything else carries the computed amount itself - LIMITED included: its
+        // cap applies to the REQUESTED amount (06 §6.3), and capping the 규정금액 with the spend
+        // was exactly what made every excess 0 (설명 §0-3).
+        if ("ACTUAL".equals(payClass) || "ACTUAL_FIXED".equals(payClass)
+                || "GRADE".equals(policy.path("bstrCategoryType").asText(""))) {
             return approvalAmount;
         }
-        return switch (policy.path("bstrPayClassType").asText("")) {
-            case "LIMITED" -> Math.min(approvalAmount, limit);
-            case "FIXED", "ACTUAL_FIXED" -> limit;
-            default -> approvalAmount;   // ACTUAL 실비 and anything unknown: the actual spend
-        };
+        if (limit <= 0) {
+            return 0;   // a 규정 with no amount: nothing is allowed (설명 §1-2 - 0, not the spend)
+        }
+        if (!policyCurrency.isBlank() && !"KRW".equalsIgnoreCase(policyCurrency)) {
+            if (!Double.isNaN(krwLimit)) {
+                return Math.round(krwLimit);   // the lookup's KRW figure: converted, then conditions applied
+            }
+            // A foreign 규정 is stored in KRW (설명 §1-1). The receipt's own pair - KRW
+            // approvalAmount over the foreign overseasApprovalAmount - is the rate that applied
+            // to it (unit included), so the same rate converts the 규정금액.
+            double foreignSpend = receipt == null ? 0 : receipt.path("overseasApprovalAmount").asDouble(0);
+            if (receipt != null && policyCurrency.equalsIgnoreCase(receipt.path("currencyCode").asText(currencyCode))
+                    && foreignSpend > 0 && approvalAmount > 0) {
+                return Math.round(limit * (approvalAmount / foreignSpend));
+            }
+            log.info("[POLICY] 규정 in {} but the receipt is in {} - no rate to convert with; the "
+                    + "spend stands as the 규정금액", policyCurrency, currencyCode);
+            return approvalAmount;
+        }
+        return limit;
     }
 
     /**
@@ -5108,8 +5348,20 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         double approval = enriched.path("approvalAmount").asDouble(0);
         String currency = enriched.path("currencyCode").asText("KRW");
         JsonNode policy = policyFor(doc, enriched, token);
-        double ruled = ruledAmount(policy, approval, currency);
+        if (policy == null) {
+            // 설명 §1-2: BizPlay's own save writes 0 for a receipt whose 규정 was not found; a
+            // spend copied into the 규정금액 would only pretend the receipt is within a rule.
+            log.info("[POLICY] no 규정 for {} - 규정금액 0", enriched.path("mestName").asText(""));
+        }
+        double ruled = policy == null ? 0 : ruledAmount(policy, enriched, approval, currency);
         enriched.put("ruledAmount", ruled);
+        String policyCurrency = policy == null ? "" : policy.path("currencyCode").asText("");
+        double foreignRuled = 0;
+        if (!policyCurrency.isBlank() && !"KRW".equalsIgnoreCase(policyCurrency)
+                && policyCurrency.equalsIgnoreCase(enriched.path("currencyCode").asText(""))) {
+            foreignRuled = Math.round(foreignBase(policy, enriched) * 100) / 100.0;   // cents, not a float tail
+            enriched.put("overseasRuledAmount", foreignRuled);   // the foreign figure, 설명 §1-1
+        }
         ObjectNode row = bstrReceipt(enriched, receiptId, issuedReceiptId);
         // The 용도's debit account, when the receipt brought no slip of its own — the provider's
         // own sample line carries accountSubjectId/Name/ErpCode, and a 기타증빙 has no slip.
@@ -5126,7 +5378,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             putIfText(row, "bstrPayClassType", policy.path("bstrPayClassType").asText(""));
             if (note != null) {
                 note.append(policyNote(enriched.path("mestName").asText(""), policy, approval,
-                        ruled, currency, ko));
+                        ruled, foreignRuled, currency, ko));
             }
         }
         return row;
@@ -5137,10 +5389,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * there is one, and — the point of saying it at all — a warning when this receipt is over it.
      */
     private String policyNote(String mestName, JsonNode policy, double approval, double ruled,
-                              String currency, boolean ko) {
+                              double foreignRuled, String currency, boolean ko) {
         String payClass = policy.path("bstrPayClassType").asText("");
         double limit = policy.path("limitAmount").asDouble(0);
         String policyCurrency = policy.path("currencyCode").asText(currency);
+        boolean foreignPolicy = !"KRW".equalsIgnoreCase(policyCurrency);
         String kind = switch (payClass) {
             case "LIMITED" -> t(ko, "limit", "한도");
             case "FIXED" -> t(ko, "fixed allowance", "정액");
@@ -5152,27 +5405,38 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         StringBuilder s = new StringBuilder();
         if (limit > 0) {
             s.append(label).append(": ").append(kind).append(" ")
-                    .append(money(limit, policyCurrency)).append(". ");
-            boolean comparable = policyCurrency.equalsIgnoreCase(currency);
-            if (comparable && approval > limit) {
-                s.append(policy.path("exceptionReasonRequired").asBoolean(false)
-                        ? t(ko, "This receipt is over it — a reason for the excess is required. ",
-                                "규정 금액을 초과했습니다 — 초과사유가 필요합니다. ")
-                        : t(ko, "This receipt is over it. ", "규정 금액을 초과했습니다. "));
-            } else if (!comparable) {
-                // No exchange rate comes back with the 규정, so nothing is converted — say so
-                // instead of quietly comparing two currencies.
+                    .append(money(limit, policyCurrency)).append(t(ko, " per day. ", "/일. "));
+            JsonNode items = policy.path("calcBreakdown").path("items");
+            if (items.isArray() && items.size() > 0) {
+                // Layer ②: the conditions that shaped the amount, in the provider's own wording.
+                java.util.List<String> parts = new java.util.ArrayList<>();
+                for (JsonNode it : items) {
+                    parts.add(it.path("label").asText("") + " " + it.path("effect").asText(""));
+                }
+                s.append(t(ko, "Conditions: " + String.join(", ", parts) + ". ",
+                        "적용 조건: " + String.join(", ", parts) + ". "));
+            }
+            boolean converted = !foreignPolicy || foreignRuled > 0;
+            if (!converted) {
+                // A foreign 규정 with a receipt in another currency: no rate pairs them, so the
+                // 규정금액 stayed at the spend - said plainly, not compared silently.
                 s.append(t(ko, "The policy is in " + policyCurrency + " and this receipt in " + currency
                                 + ", so the policy amount stays at the actual amount. ",
                         "규정은 " + policyCurrency + ", 영수증은 " + currency
                                 + " 기준이라 규정금액은 실제 금액으로 두었습니다. "));
+            } else if (approval > ruled) {
+                s.append(policy.path("exceptionReasonRequired").asBoolean(false)
+                        ? t(ko, "This receipt is over it — a reason for the excess is required. ",
+                                "규정 금액을 초과했습니다 — 초과사유가 필요합니다. ")
+                        : t(ko, "This receipt is over it. ", "규정 금액을 초과했습니다. "));
             }
         } else {
             s.append(label).append(": ").append(kind).append(". ");
         }
         if (ruled != approval) {
-            s.append(t(ko, "Policy amount " + money(ruled, currency) + ". ",
-                    "규정금액 " + money(ruled, currency) + ". "));
+            // Both amounts are KRW on the line; a foreign 규정 is also named in its own currency.
+            String amount = money(ruled, "KRW") + (foreignRuled > 0 ? " (" + money(foreignRuled, policyCurrency) + ")" : "");
+            s.append(t(ko, "Policy amount " + amount + ". ", "규정금액 " + amount + ". "));
         }
         return s.toString();
     }

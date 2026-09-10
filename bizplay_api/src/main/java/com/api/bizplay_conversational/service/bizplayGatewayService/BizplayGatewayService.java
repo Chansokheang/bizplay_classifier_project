@@ -203,6 +203,15 @@ public interface BizplayGatewayService {
     JsonNode getPolicyLimit(JsonNode request, String token);
 
     /**
+     * 규정금액 layer ① - {@code POST /bstr/policy/renewal/limit}: base amounts per day
+     * ({@code limitAmounts}), {@code dayTypeMap} and the matched {@code appliedConditions[]} for
+     * one 용도 on one trip section and one user. Null when the provider has no 규정 (it answers
+     * 200 with an empty body). The request body is the provider's full contract, built by
+     * RuledAmountLookupService.
+     */
+    JsonNode getRenewalLimit(JsonNode request, String token);
+
+    /**
      * 세금코드 master: id, taxCode ("V0"), taxName, taxRate, deductionStatus and the account subject
      * each code is assigned to. Cached - it is corp master data.
      */

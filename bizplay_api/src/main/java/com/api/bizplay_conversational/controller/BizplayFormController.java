@@ -279,7 +279,7 @@ public class BizplayFormController {
             up.put("registerExpense", calls(call("POST", bizplayEndpoints.getEtcCard()),
                     call("POST", bizplayEndpoints.getFileboxUpload()),
                     call("GET", bizplayEndpoints.getIssuedBulk()),
-                    call("POST", bizplayEndpoints.getPolicyLimit())));
+                    call("POST", bizplayEndpoints.getPolicyRenewalLimit())));
             up.put("attachExpenseImage", calls(call("POST", bizplayEndpoints.getFileboxUpload()),
                     call("PATCH", bizplayEndpoints.getReceiptImage())));
             up.put("editExpenseField", calls(call("PATCH", bizplayEndpoints.getEtcCardUpdate())));

@@ -56,6 +56,9 @@ bizplay:
     # 규정조회 (company feedback #9): the 용도 policy for THIS trip + expense - 한도 금액,
     # 지급구분 (실비/한도/정액), and whether an 초과사유 is required. POST, body built in the gateway.
     policy-limit: /api/v2/bstr/policy/limit
+    # 규정금액 layer ① (증빙 규정금액 산출/01): base amounts PER DAY + the matched 조건식. POST, body
+    # built by RuledAmountLookupService; the conditions are applied by us, not the provider.
+    policy-renewal-limit: /api/v2/bstr/policy/renewal/limit
     # Which 용도 carry a 출장비 규정 at all, per TranKind type (also carries each 용도's debit account).
     policy-trankinds: /api/v2/bstr/policy/trankindlist/{tranKindType}
     # 세금코드 master - the source for a line's taxCodeId/taxName (company feedback #8).

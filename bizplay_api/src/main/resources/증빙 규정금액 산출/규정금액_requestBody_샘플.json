@@ -1,0 +1,448 @@
+[
+  {
+    "paperId": 611,
+    "title": "출장정산서 - 부산 고객사 방문 (규정금액 예시)",
+    "content": "부산 고객사 정기 점검. 숙박비 규정 초과 1건 포함.",
+    "clientRequestId": "er-20260908-ruled-sample",
+    "bstrPlanApprovalId": 9101,
+    "bstrPurposeId": 102,
+    "bstrSegmentId": 52,
+    "bstrType": null,
+    "bstrPayType": null,
+    "bstrStartDate": "2026-08-27",
+    "bstrEndDate": "2026-08-30",
+    "draftUserId": 161,
+    "issuedItems": [
+      {
+        "item": {
+          "itemType": "BSTR_PERIOD",
+          "id": 207,
+          "name": "출장 기간"
+        },
+        "value": null,
+        "value2": null,
+        "selections": [
+          {
+            "selectionId": 41,
+            "selectionName": "2026-08-27",
+            "selectionErpCode": "2026-08-30",
+            "selectionMemo": null,
+            "selectionAreaInfo": "{\"name\":\"부산\"}"
+          }
+        ]
+      },
+      {
+        "item": {
+          "itemType": "COST_CENTER",
+          "id": 214,
+          "name": "예산부서"
+        },
+        "value": null,
+        "value2": null,
+        "selections": [
+          {
+            "selectionId": 3021,
+            "selectionName": "예산부서A",
+            "selectionErpCode": "DEPT001",
+            "selectionMemo": null,
+            "selectionAreaInfo": null
+          }
+        ]
+      },
+      {
+        "item": {
+          "itemType": "POSTING_DATE",
+          "id": 231,
+          "name": "전기일"
+        },
+        "value": "2026-09-01",
+        "value2": null,
+        "selections": []
+      },
+      {
+        "item": {
+          "itemType": "DAILY_COST",
+          "id": 240,
+          "name": "일비"
+        },
+        "value": "true",
+        "value2": null,
+        "selections": [
+          {
+            "selectionId": null,
+            "selectionName": "2026-08-27",
+            "selectionErpCode": null,
+            "selectionMemo": null,
+            "selectionAreaInfo": null
+          },
+          {
+            "selectionId": null,
+            "selectionName": "2026-08-28",
+            "selectionErpCode": null,
+            "selectionMemo": null,
+            "selectionAreaInfo": null
+          },
+          {
+            "selectionId": null,
+            "selectionName": "2026-08-29",
+            "selectionErpCode": null,
+            "selectionMemo": null,
+            "selectionAreaInfo": null
+          },
+          {
+            "selectionId": null,
+            "selectionName": "2026-08-30",
+            "selectionErpCode": null,
+            "selectionMemo": null,
+            "selectionAreaInfo": null
+          }
+        ]
+      },
+      {
+        "item": {
+          "itemType": "TEXT",
+          "id": 252,
+          "name": "출장 상세내용"
+        },
+        "value": "부산 고객사 정기 점검 및 차기 요건 협의",
+        "value2": null,
+        "selections": []
+      }
+    ],
+    "bstrRoutes": [],
+    "bstrEdus": [],
+    "bstrCommutes": [],
+    "approvalLines": [
+      {
+        "approvalKindType": "DRAFT",
+        "approvalOrder": 0,
+        "corporationUserId": 161,
+        "departmentId": null,
+        "departmentApproval": false,
+        "paperApprovalLineType1": "EMPLOYEE"
+      },
+      {
+        "approvalKindType": "APPROVAL",
+        "approvalOrder": 1,
+        "corporationUserId": 170,
+        "departmentId": null,
+        "departmentApproval": false,
+        "paperApprovalLineType1": "EMPLOYEE"
+      }
+    ],
+    "referenceLines": [],
+    "receiptIds": [
+      55201,
+      55202
+    ],
+    "issuedFields": [
+      {
+        "receiptId": 55201,
+        "imageIds": [
+          88401
+        ],
+        "receiptEtc": {
+          "etcReceiptType": "RECEIPT"
+        },
+        "issuedReceiptDtos": [
+          {
+            "id": 77301,
+            "receiptId": 55201,
+            "reqAmt": 47000,
+            "issuedAmt": 47000,
+            "splAmt": 42727,
+            "vatAmt": 4273,
+            "approvalAmount": 47000,
+            "ruledAmount": 60000,
+            "overseasRuledAmount": 0,
+            "overseasApprovalAmount": 0,
+            "currencyCode": "KRW",
+            "exchangeRate": null,
+            "bldat": "2026-08-27",
+            "imageIds": [
+              88401
+            ],
+            "receiptEtc": {
+              "etcReceiptType": "RECEIPT"
+            },
+            "slip": {
+              "slipAmt": 47000,
+              "slipSplAmt": 42727,
+              "slipVatAmt": 4273,
+              "budgetDepartmentId": 3021,
+              "budgetDepartmentName": "예산부서A",
+              "budgetDepartmentErpCode": "DEPT001",
+              "accountSubjectId": 812,
+              "accountSubjectName": "여비교통비",
+              "accountSubjectErpCode": "ACCT001",
+              "taxCodeId": 17,
+              "taxName": "매입세액공제",
+              "branchOfficeId": 5,
+              "internalOrderId": null,
+              "wbsId": null,
+              "projectId": null,
+              "projectName": null,
+              "projectErpCode": null,
+              "summary": "KTX 서울-부산 왕복",
+              "docDate": "2026-09-01"
+            }
+          }
+        ]
+      },
+      {
+        "receiptId": 55202,
+        "imageIds": [
+          88402
+        ],
+        "receiptEtc": {
+          "etcReceiptType": "RECEIPT"
+        },
+        "issuedReceiptDtos": [
+          {
+            "id": 77302,
+            "receiptId": 55202,
+            "reqAmt": 180000,
+            "issuedAmt": 180000,
+            "splAmt": 163636,
+            "vatAmt": 16364,
+            "approvalAmount": 180000,
+            "ruledAmount": 130000,
+            "overseasRuledAmount": 0,
+            "overseasApprovalAmount": 0,
+            "currencyCode": "KRW",
+            "exchangeRate": null,
+            "bldat": "2026-08-30",
+            "imageIds": [
+              88402
+            ],
+            "receiptEtc": {
+              "etcReceiptType": "RECEIPT"
+            },
+            "slip": {
+              "slipAmt": 180000,
+              "slipSplAmt": 163636,
+              "slipVatAmt": 16364,
+              "budgetDepartmentId": 3021,
+              "budgetDepartmentName": "예산부서A",
+              "budgetDepartmentErpCode": "DEPT001",
+              "accountSubjectId": 813,
+              "accountSubjectName": "숙박비",
+              "accountSubjectErpCode": "ACCT002",
+              "taxCodeId": 17,
+              "taxName": "매입세액공제",
+              "branchOfficeId": 5,
+              "internalOrderId": null,
+              "wbsId": null,
+              "projectId": null,
+              "projectName": null,
+              "projectErpCode": null,
+              "summary": "부산 OO호텔 3박 (규정 초과 50,000)",
+              "docDate": "2026-09-01"
+            }
+          }
+        ]
+      }
+    ],
+    "etcReceiptSaveRequests": [
+      {
+        "tranKindId": 4401,
+        "tranKindType": "DAILY_COST",
+        "mestName": "일비 증빙",
+        "approvalDate": "2026-08-30",
+        "bldat": "2026-08-30",
+        "usedStartDate": "2026-08-27",
+        "usedEndDate": "2026-08-30",
+        "approvalAmount": 120000,
+        "supplyAmount": 120000,
+        "vatAmount": 0,
+        "reqAmt": 120000,
+        "ruledAmount": 120000,
+        "currencyCode": "KRW",
+        "exchangeRate": 0,
+        "bstrPayClassType": "FIXED",
+        "approvalCanceled": false,
+        "displayHidden": false,
+        "documentBound": true,
+        "nonDeductionCustom": true,
+        "etcReceiptType": "RECEIPT",
+        "departTerminalId": null,
+        "arrivalTerminalId": null,
+        "issuedItems": [],
+        "slip": {
+          "slipAmt": 120000,
+          "slipSplAmt": 120000,
+          "slipVatAmt": 0,
+          "budgetDepartmentId": 3021,
+          "budgetDepartmentName": "예산부서A",
+          "budgetDepartmentErpCode": "DEPT001",
+          "accountSubjectId": 812,
+          "accountSubjectName": "여비교통비",
+          "accountSubjectErpCode": "ACCT001",
+          "branchOfficeId": 5,
+          "taxCodeId": 21,
+          "taxName": "불공제",
+          "internalOrderId": null,
+          "wbsId": null,
+          "projectId": null,
+          "projectName": null,
+          "projectErpCode": null,
+          "summary": "일비 4일 x 30,000원"
+        }
+      }
+    ],
+    "bstrReceipts": [
+      {
+        "id": 77301,
+        "receiptId": 55201,
+        "bstrReceiptType": "CORP",
+        "editable": true,
+        "tranKindId": 1101,
+        "tranKindType": "TRANSPORT",
+        "mestName": "한국철도공사",
+        "approvalDate": "2026-08-27",
+        "approvalTime": "08:15:00",
+        "approvalNumber": "30291884",
+        "approvalAmount": 47000,
+        "overseasApprovalAmount": 0,
+        "approvalCanceled": false,
+        "settleAmount": 47000,
+        "ruledAmount": 60000,
+        "overseasRuledAmount": 0,
+        "usedStartDate": "2026-08-27",
+        "usedEndDate": "2026-08-27",
+        "reqAmt": 47000,
+        "cancelReason": null,
+        "issuedAmt": 47000,
+        "divisionType": null,
+        "divisionOrder": null,
+        "bankCodeName": null,
+        "cardNo": "9410-****-****-1123",
+        "bldat": "2026-08-27",
+        "summary": "KTX 서울-부산 왕복",
+        "excessReason": "",
+        "accountSubjectId": 812,
+        "accountSubjectName": "여비교통비",
+        "accountSubjectErpCode": "ACCT001",
+        "supplyAmount": 42727,
+        "vatAmount": 4273,
+        "nonDeduction": false,
+        "slipAmt": 47000,
+        "slipSplAmt": 42727,
+        "slipVatAmt": 4273,
+        "budgetDepartmentId": 3021,
+        "budgetDepartmentName": "예산부서A",
+        "budgetDepartmentErpCode": "DEPT001",
+        "bstrRoutes": [],
+        "documentBound": false,
+        "currencyCode": "KRW",
+        "exchangeRate": null,
+        "imageIds": [
+          88401
+        ],
+        "fileIds": [
+          88401
+        ],
+        "bstrPayClassType": "LIMITED",
+        "serviceCharge": 0,
+        "taxCodeId": 17,
+        "taxName": "매입세액공제",
+        "taxCode": "TX1",
+        "internalOrderId": null,
+        "internalOrderName": null,
+        "internalOrderErpCode": null,
+        "depart": "서울",
+        "arrival": "부산",
+        "complianceTypesStr": "",
+        "displayHidden": false
+      },
+      {
+        "id": 77302,
+        "receiptId": 55202,
+        "bstrReceiptType": "CORP",
+        "editable": true,
+        "tranKindId": 3301,
+        "tranKindType": "ROOM",
+        "mestName": "부산 OO호텔",
+        "approvalDate": "2026-08-30",
+        "approvalTime": "11:20:00",
+        "approvalNumber": "30291997",
+        "approvalAmount": 180000,
+        "overseasApprovalAmount": 0,
+        "approvalCanceled": false,
+        "settleAmount": 180000,
+        "ruledAmount": 130000,
+        "overseasRuledAmount": 0,
+        "usedStartDate": "2026-08-27",
+        "usedEndDate": "2026-08-30",
+        "reqAmt": 180000,
+        "cancelReason": null,
+        "issuedAmt": 180000,
+        "divisionType": null,
+        "divisionOrder": null,
+        "bankCodeName": null,
+        "cardNo": "5310-****-****-7742",
+        "bldat": "2026-08-30",
+        "summary": "부산 OO호텔 3박 (규정 초과 50,000)",
+        "excessReason": "동행 임원 일정에 맞춰 학회 지정 호텔 이용 - 규정 초과 50,000원 본인부담",
+        "accountSubjectId": 813,
+        "accountSubjectName": "숙박비",
+        "accountSubjectErpCode": "ACCT002",
+        "supplyAmount": 163636,
+        "vatAmount": 16364,
+        "nonDeduction": false,
+        "slipAmt": 180000,
+        "slipSplAmt": 163636,
+        "slipVatAmt": 16364,
+        "budgetDepartmentId": 3021,
+        "budgetDepartmentName": "예산부서A",
+        "budgetDepartmentErpCode": "DEPT001",
+        "bstrRoutes": [],
+        "documentBound": false,
+        "currencyCode": "KRW",
+        "exchangeRate": null,
+        "imageIds": [
+          88402
+        ],
+        "fileIds": [
+          88402
+        ],
+        "bstrPayClassType": "FIXED",
+        "serviceCharge": 0,
+        "taxCodeId": 17,
+        "taxName": "매입세액공제",
+        "taxCode": "V1",
+        "internalOrderId": null,
+        "internalOrderName": null,
+        "internalOrderErpCode": null,
+        "depart": null,
+        "arrival": null,
+        "complianceTypesStr": "RULED_AMOUNT_EXCEED",
+        "displayHidden": false
+      }
+    ],
+    "originDocuments": [
+      {
+        "originDocumentsId": 9101,
+        "note": ""
+      }
+    ],
+    "deleteOverlappingDocs": false,
+    "files": [],
+    "externalLinks": [],
+    "opinion": {
+      "content": "",
+      "deleteRestriction": null,
+      "fileIds": []
+    },
+    "totalBstrAmount": 347000,
+    "totalPointAmount": 0,
+    "totalPersonalAmount": 120000,
+    "totalSettleAmount": 120000,
+    "dailyCostAmount": 120000,
+    "lodgingCostAmount": 180000,
+    "fuelCostAmount": 0,
+    "foodCostAmount": 0,
+    "incidentalCostAmount": 0,
+    "publicFixCostAmount": 0
+  }
+]

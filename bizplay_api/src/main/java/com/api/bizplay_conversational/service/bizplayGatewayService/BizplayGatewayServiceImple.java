@@ -169,7 +169,7 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
             // Surface the provider's real error body (their 500s carry a JSON message).
             log.warn("BizPlay plan-draft save failed: HTTP {} {}", e.getStatusCode().value(), e.getResponseBodyAsString());
             throw new IllegalStateException("BizPlay rejected the plan draft (HTTP "
-                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+                    + e.getStatusCode().value() + "): " + explainPlanRejection(e.getResponseBodyAsString()));
         } catch (Exception e) {
             log.warn("BizPlay plan-draft save failed: {}", e.getMessage());
             throw new IllegalStateException("BizPlay plan-draft save failed: " + rootMessage(e));
@@ -591,6 +591,27 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
 
     // --- internals ---------------------------------------------------------------
 
+    /**
+     * BizPlay's plan-save warnings carry only a code and a bare value: {@code BSTR_PLAN_WARN_400_0001}
+     * with the traveller's NAME as the message means that traveller already has a trip plan
+     * overlapping these dates (verified 2026-09-10: the same body saves on free dates). Said in
+     * words, with the code kept for their support; any other body is returned as it came.
+     */
+    private String explainPlanRejection(String body) {
+        try {
+            JsonNode err = objectMapper.readTree(body);
+            String code = err.path("errorCode").asText("");
+            String message = err.path("message").asText("");
+            if ("BSTR_PLAN_WARN_400_0001".equals(code)) {
+                return "출장자 " + message + " 님은 이 기간에 이미 다른 출장 계획이 있습니다 (BizPlay 중복 출장 경고 "
+                        + code + "). 기간을 바꾸거나 기존 계획을 확인해 주세요.";
+            }
+        } catch (Exception ignored) {
+            // not JSON - the raw body is the best we have
+        }
+        return body;
+    }
+
     private JsonNode getCached(String cacheKey, String url, String token) {
         cacheKey = cacheKey + "@" + url;   // per-corp base URLs must never share cache entries
         CacheEntry hit = cache.get(cacheKey);
@@ -689,6 +710,45 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
         }
     }
 
+
+    @Override
+    public JsonNode getRenewalLimit(JsonNode request, String token) {
+        if (request == null || !request.isObject()) {
+            throw new IllegalArgumentException("A renewal-limit request body is required.");
+        }
+        String url = buildUrl(endpoints.getPolicyRenewalLimit());
+        String bearer = resolveToken(token);
+        try {
+            String response = restClient.post()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(request))
+                    .retrieve()
+                    .body(String.class);
+            // 01 §2.7: no 규정 = HTTP 200 with an EMPTY body, not a JSON null.
+            if (response == null || response.isBlank()) {
+                log.info("[POLICY] renewal/limit: no 규정 for {} (tranKind {}) user {} region {} {}~{}",
+                        request.path("tranKindType").asText("?"), request.path("tranKindId").asText("?"),
+                        request.path("corporationUserId").asText("?"), request.path("bstrRegionId").asText("-"),
+                        request.path("bstrDate").asText("?"), request.path("bstrEndDate").asText("?"));
+                return null;
+            }
+            JsonNode policy = objectMapper.readTree(response);
+            log.info("[POLICY] renewal/limit {} (tranKind {}) user {} region {} {}~{} -> {} {} limit={} days={} conditions={}",
+                    request.path("tranKindType").asText("?"), request.path("tranKindId").asText("?"),
+                    request.path("corporationUserId").asText("?"), request.path("bstrRegionId").asText("-"),
+                    request.path("bstrDate").asText("?"), request.path("bstrEndDate").asText("?"),
+                    policy.path("bstrPayClassType").asText("?"), policy.path("currencyCode").asText("?"),
+                    policy.path("limitAmount").asText("?"), policy.path("limitAmounts").size(),
+                    policy.path("appliedConditions").size());
+            return policy;
+        } catch (Exception e) {
+            throw new IllegalStateException("BizPlay renewal-limit lookup failed: " + rootMessage(e), e);
+        }
+    }
 
     @Override
     public JsonNode getPolicyLimit(JsonNode request, String token) {

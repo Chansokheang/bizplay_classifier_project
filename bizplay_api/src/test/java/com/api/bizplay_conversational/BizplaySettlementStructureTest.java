@@ -97,7 +97,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         // --- drive the flow --------------------------------------------------------
         String sessionId = null;
@@ -189,7 +190,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         String sessionId = null;
         for (String msg : new String[]{"2026-08-01 ~ 2026-08-31", "settle-plan:9001",
@@ -254,7 +256,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         BizplayPlanAgentRequest req = new BizplayPlanAgentRequest();
         req.setCorpNo("1234567890");
@@ -329,7 +332,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         // --- turn 1: rich message fills slots, but LISTS the plans (no auto-pick) ----
         BizplayPlanAgentRequest t1 = new BizplayPlanAgentRequest();
@@ -412,7 +416,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         // import a plan so a draft exists
         String sessionId = null;
@@ -496,7 +501,8 @@ class BizplaySettlementStructureTest {
         BizplaySettlementAgentServiceImple agent = new BizplaySettlementAgentServiceImple(
                 sessions, guardrail, gateway, mock(ApprovalLineService.class),
                 new FormSkeletonServiceImple(mapper),
-                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH);
+                planPicker, followUp, slotFiller, Runnable::run, props, mapper, CORP_PASSTHROUGH,
+                mock(com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.class));
 
         // "submit" with no draft yet → NOT a submit (no provider call)
         BizplayPlanAgentRequest early = new BizplayPlanAgentRequest();

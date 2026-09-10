@@ -97,6 +97,12 @@ public class BizplayEndpoints {
     /** 규정조회: POST the trip + expense facts, get the 용도 policy back (한도/지급구분/초과사유 필요 여부). */
     private String policyLimit = "/api/v2/bstr/policy/limit";
 
+    /**
+     * 규정금액 layer ①: per-day BASE amounts, the day types and the matched 조건식 for one 용도 on
+     * one trip section. The provider does not apply the conditions - the caller does (02).
+     */
+    private String policyRenewalLimit = "/api/v2/bstr/policy/renewal/limit";
+
     /** Which 용도 a 출장비 규정 is attached to, per TranKind type: GET {tranKindType}. */
     private String policyTranKinds = "/api/v2/bstr/policy/trankindlist/{tranKindType}";
 

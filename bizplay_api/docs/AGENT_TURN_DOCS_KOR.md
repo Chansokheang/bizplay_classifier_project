@@ -364,7 +364,7 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 | `ROUTE_ASK` | `GET /agents/plan/route-options` | `GET /api/v2/bstr/destination/active/list` |
 | `APPROVAL_LINE_ASK` | `GET /corporation-users` | `GET /api/v2/popup/user/all/{corporationId}` |
 | `PLAN_SEARCH` | `GET /plans` | `GET /api/v2/approval/seah/bstr/plan/list?travelerId=…`, `GET /api/v2/approval/bstr/plan/list?…` |
-| `MANUAL_EXPENSE_PROMPT_FULL` | `POST …/manual-expense/create` | `POST /api/v2/receipt/etc-card`, `POST /api/v2/filebox/upload`, `GET /api/v2/receipt/issued/bulk/{ids}`, `POST /api/v2/bstr/policy/limit` |
+| `MANUAL_EXPENSE_PROMPT_FULL` | `POST …/manual-expense/create` | `POST /api/v2/receipt/etc-card`, `POST /api/v2/filebox/upload`, `GET /api/v2/receipt/issued/bulk/{ids}`, `POST /api/v2/bstr/policy/renewal/limit` |
 | `EXPENSE_IMAGE_REQUIRED` | `POST …/manual-expense/attach` | `POST /api/v2/filebox/upload`, `PATCH /api/v2/receipt/image/{receiptId}` |
 | `SUBMIT_REQUESTED` | `POST …/agents/plan/{sessionId}/create` | `POST /api/v2/approval/{productCode}/bstr/plan/draft` |
 | `CREATE_PLAN` / `CREATE_SETTLEMENT` | — | — |
@@ -374,6 +374,13 @@ BizPlay가 정한 고정 enum(편도/왕복, 좌석등급, 카드 종류)입니�
 > `/api/v2/paper/purpose/{bstrType}/{purposeId}?segmentId={segmentId}` 도 동작하며, 추가로
 > **국내/해외 유형으로 필터링**합니다 — 즉 OVERSEA로 등록된 정산서 양식은 DOMESTIC 출장에서는
 > 조회되지 않습니다. 세부구분이 있는 용도를 `segmentId` 없이 호출하면 400 `COMM_ERROR`가 납니다.
+
+> 상신에 대한 참고: BizPlay가 계획서 임시저장을 거부하면 `POST …/agents/plan/{sessionId}/create`는
+> **503**으로 응답하고 `detail`에 BizPlay의 사유를 담습니다. 미리 알아 둘 거부 사유 하나:
+> BizPlay의 `BSTR_PLAN_WARN_400_0001`은 메시지에 출장자 이름만 담겨 오는데, **그 출장자에게
+> 같은 기간에 겹치는 출장 계획이 이미 있다**는 뜻입니다. `detail`은 이를 말로 풀어 줍니다
+> ("출장자 X 님은 이 기간에 이미 다른 출장 계획이 있습니다 …", 코드 유지) — 기간을 바꾸거나 기존
+> 계획을 확인하면 되고, 세션은 그대로 열려 있어 사용자가 새 날짜로 이어서 답할 수 있습니다.
 
 ### 전체 목록을 한 번에 보기
 
@@ -492,3 +499,14 @@ GET /api/v1/agent-conversations/bizplay/agents/contract?corpNo=1234567890
 5. **모르는 값 처리** — `intent`, `kind`, `render`, `ui`는 앞으로 값이 추가될 수 있습니다. 모르는
    값은 `reply` + `pendingChoices`(chips) 기본 렌더로 처리하시면 대화가 끊기지 않습니다.
 6. **`draftJson`** — BizPlay 저장 body와 같은 구조이므로, 화면 미리보기에 그대로 쓰실 수 있습니다.
+7. **증빙 라인의 규정금액** — `draftJson`의 모든 경비 라인에 `ruledAmount`(원화)가, 외화로 정해진
+   규정이면 그 통화의 `overseasRuledAmount`도 실립니다. 산출은 BizPlay 화면과 같은 3층입니다:
+   ① 급지 구간·출장자별 `POST /api/v2/bstr/policy/renewal/limit`로 일자별 **기준금액**과 매칭된
+   조건식을 받고, ② 조건식은 저희 쪽에서 일자별로 적용하며(`appliedConditions[]` 엔진 — 요일 유형,
+   날짜/기간 옵션, 8개 연산자, 차등 `dailyDiff`, 이동일, `supersededByIds`에 의한 일별 대체; 외화
+   규정이나 외화 피연산자는 증빙 자체의 환율로 **먼저 원화 환산** 후 적용), ③ 증빙 사용일을 합산합니다
+   (급지 경로의 숙박은 체크아웃일 제외). 실비(ACTUAL / ACTUAL_FIXED)와 교통 등급제는 실제 지출액을,
+   규정이 없으면 0을 씁니다. `reply`가 적용 내용을 말해 줍니다. 예: "규정: 한도 USD 100/일. 적용 조건:
+   평일 +10,000원. 규정금액 ₩287,580 (USD 215)." 규정금액을 초과한 증빙은 알려 주되("규정 금액을
+   초과했습니다") 그대로 상신됩니다 — BizPlay의 초과 검증은 그쪽 클라이언트에서 하고, 서버는 금액을
+   받아들입니다.
