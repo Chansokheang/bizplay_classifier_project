@@ -212,6 +212,18 @@ public interface BizplayGatewayService {
     JsonNode getRenewalLimit(JsonNode request, String token);
 
     /**
+     * The corp's 신청금액 setting (06_검증 §6.4.7): {@code requestedAmountUsed} and
+     * {@code requestedAmountTypeList[{expenseType, requestedAmountDefaultType}]}. Cached.
+     */
+    JsonNode getRequestedAmountSetting(String token);
+
+    /**
+     * The 초과사유 settings per 용도 (06_검증 §6.5.7): [{id, tranKindId, tranKindName, bstrLimitType,
+     * activated}] - an empty list means no 용도 ever requires a reason. Cached.
+     */
+    JsonNode getExpenseExceedReasons(String token);
+
+    /**
      * 세금코드 master: id, taxCode ("V0"), taxName, taxRate, deductionStatus and the account subject
      * each code is assigned to. Cached - it is corp master data.
      */

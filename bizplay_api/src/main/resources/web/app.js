@@ -5448,6 +5448,8 @@ function settleReceiptItemHtml(r, i) {
     // What 규정조회 returned for this line (feedback #8/#9). Always shown, even when it equals the
     // approved amount — the company reads a hidden row as a missing field, not as a tidy one.
     fld(T("Policy amount", "규정금액"), r.ruledAmount != null ? won(r.ruledAmount) : ""),
+    // Layer ③: what this line CLAIMS — capped by the 규정 (LIMITED/FIXED) or the spend (실비).
+    fld(T("Claim amount", "신청금액"), r.reqAmt != null ? won(r.reqAmt) : ""),
     fld(T("Pay class", "지급구분"), rcLabel(r.bstrPayClassType, TP_PAY_CLASS) || r.bstrPayClassType),
     // 세금코드 is picked from the corp's master, never typed — and the row stays visible when it is
     // unset, because "not resolved" is precisely the case the approver needs to correct.

@@ -103,6 +103,12 @@ public class BizplayEndpoints {
      */
     private String policyRenewalLimit = "/api/v2/bstr/policy/renewal/limit";
 
+    /** 규정금액 layer ③: the corp's 신청금액 setting (06_검증 §6.4.7). */
+    private String requestedAmountSetting = "/api/v2/business-setting/etc/BSTR/requestedAmount";
+
+    /** 06_검증 §6.5.7: the 초과사유 settings per 용도 (active rows make a reason mandatory). */
+    private String expenseExceedReasons = "/api/v2/bstr/expense-exceed-reason";
+
     /** Which 용도 a 출장비 규정 is attached to, per TranKind type: GET {tranKindType}. */
     private String policyTranKinds = "/api/v2/bstr/policy/trankindlist/{tranKindType}";
 

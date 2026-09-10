@@ -516,3 +516,14 @@ An entry with `"choices": []` is a free-text question — that turn carries no `
    "규정: 한도 USD 100/일. 적용 조건: 평일 +10,000원. 규정금액 ₩287,580 (USD 215)." A receipt over
    the 규정금액 is reported ("규정 금액을 초과했습니다") but still files — BizPlay's excess checks
    are client-side there, and the server accepts the amount.
+8. **Claim amount and excess reason** — each line's `reqAmt` (what is claimed) is filled the way
+   BizPlay's screen fills it: the corp's 신청금액 setting (`GET /api/v2/business-setting/etc/BSTR/requestedAmount`)
+   chooses the basis per card type, and the pay class caps it — LIMITED to the smaller of 규정금액
+   and spend, FIXED / FUEL to the 규정금액, 실비 and corporate cards to the spend, a 기타증빙 without
+   any rule is left for the user to enter. `totalSettleAmount` sums the claims, `totalBstrAmount`
+   the spends. When a 용도 has an ACTIVE 초과사유 setting (`GET /api/v2/bstr/expense-exceed-reason`)
+   and the receipt is over by that setting's rule, the agent asks for the reason right after the
+   receipt lands (`EXCESS_REASON_ASK`), reads the next message as the reason
+   (`EXCESS_REASON_SAVED`, written to the line's `excessReason`), and refuses to file until it is
+   there — the chat submit answers `EXCESS_REASON_ASK`, the create endpoint answers 400 with the
+   same question. A corp with no such setting is never asked.

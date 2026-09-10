@@ -510,3 +510,13 @@ GET /api/v1/agent-conversations/bizplay/agents/contract?corpNo=1234567890
    평일 +10,000원. 규정금액 ₩287,580 (USD 215)." 규정금액을 초과한 증빙은 알려 주되("규정 금액을
    초과했습니다") 그대로 상신됩니다 — BizPlay의 초과 검증은 그쪽 클라이언트에서 하고, 서버는 금액을
    받아들입니다.
+8. **신청금액과 초과사유** — 각 라인의 `reqAmt`(신청금액)는 BizPlay 화면과 같은 방식으로 채웁니다:
+   회사의 신청금액 설정(`GET /api/v2/business-setting/etc/BSTR/requestedAmount`)이 카드 유형별 기준을
+   정하고, 지급구분이 상한을 겁니다 — 한도(LIMITED)는 규정금액과 지출 중 작은 쪽, 정액(FIXED)/유류비
+   (FUEL)는 규정금액, 실비와 법인카드는 지출액, 규정이 전혀 없는 기타증빙은 사용자가 직접 입력합니다.
+   `totalSettleAmount`는 신청금액의 합, `totalBstrAmount`는 지출액의 합입니다. 어떤 용도에
+   **활성화된** 초과사유 설정(`GET /api/v2/bstr/expense-exceed-reason`)이 있고 그 규칙으로 증빙이
+   초과하면, 에이전트는 증빙이 들어온 직후 사유를 묻고(`EXCESS_REASON_ASK`) 다음 메시지를 사유로 읽어
+   라인의 `excessReason`에 기록하며(`EXCESS_REASON_SAVED`), 사유가 없으면 상신하지 않습니다 — 채팅
+   제출은 `EXCESS_REASON_ASK`로, 생성 엔드포인트는 같은 질문을 담은 400으로 응답합니다. 설정이 없는
+   회사에서는 묻지 않습니다.

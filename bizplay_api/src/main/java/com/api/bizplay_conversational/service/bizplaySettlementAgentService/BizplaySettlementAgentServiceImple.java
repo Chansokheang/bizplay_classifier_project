@@ -176,6 +176,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private final ObjectMapper objectMapper;
     private final com.api.bizplay_conversational.service.corpProvisioningService.CorpProvisioningService corpProvisioningService;
     private final com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService ruledAmountLookupService;
+    private final com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService claimAmountService;
 
     @Override
     @Transactional
@@ -702,6 +703,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
         }
 
+        // ⑫ An 초과사유 was asked one turn ago: this message is the reason (a submit request is
+        // left to the submit path, which asks again rather than filing without it).
+        if (!machineToken && state.withArray("pendingExcessReason").size() > 0 && !documents.isEmpty()) {
+            BizplayPlanAgentResponse reasoned = captureExcessReason(session, state, documents, message, koTurn);
+            if (reasoned != null) {
+                return reasoned;
+            }
+        }
+
         // ⑧ Conversational receipt registration: "I went last Tuesday by KTX from Seoul Station to
         // Busan Station" fills the etc-card body from the sentence, asks ONE question per missing
         // required field, then PREVIEWS the body for the user to confirm before the POST runs.
@@ -1107,6 +1117,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
             ObjectNode state = loadState(session);
             boolean ko = "ko".equals(state.path("lang").asText(null));
+            String reasonAsk = excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
+            if (!reasonAsk.isBlank()) {
+                saveState(session, state);
+                sessionRepo.save(session);
+                throw new IllegalArgumentException(reasonAsk.trim());   // ⑫ - the client shows this
+            }
             applyPickedApprovalLines((ObjectNode) documents.get(0), approvalLines);
 
             // POST the draft_json AS-IS — it already carries the 정산서 save-body structure.
@@ -1236,7 +1252,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
             boolean ko = "ko".equals(state.path("lang").asText(null));
             String label = fields.path("mestName").asText("") + " ₩" + fields.path("approvalAmount").asText("");
-            String reply = t(ko, "Added manual expense: " + label + ". ", "직접 입력 경비를 추가했어요: " + label + ". ");
+            String reply = t(ko, "Added manual expense: " + label + ". ", "직접 입력 경비를 추가했어요: " + label + ". ")
+                    + excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
             state.put("stage", "AWAIT_TRANKIND");   // same reset as the chat path — see addManualExpense
@@ -1333,7 +1350,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             recomputeTotals(doc);
 
             String reply = t(ko, "Added manual expense. ", "직접 입력 경비를 추가했어요. ")
-                    + fxNote(fx, ko) + policyNote;
+                    + fxNote(fx, ko) + policyNote + excessReasonAsk(doc, state, bizplayToken, ko);
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
             // The expense often arrives conversationally while the stage machine still waits at
@@ -2651,6 +2668,23 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         && v.asText("").equals(answeredDate)) {
                     continue;
                 }
+                // A place or merchant the message never wrote is the model's invention - the
+                // focused prompt names example stations, and a small model copies one when the
+                // message has none ("공항버스 USD 100" came back with 도착지 '가남'). Kept only when
+                // the user's own words contain it; otherwise it stays a question.
+                if (FREE_TEXT_SLOT_KEYS.contains(s.key()) && !writtenIn(message, v.asText(""))) {
+                    log.info("[SLOT] focused pass offered {} = '{}' which the message never says - not taken",
+                            s.key(), truncate(v.asText(), 30));
+                    continue;
+                }
+                // "공항버스" is a carrier, and 공항 cut out of it is not where the bus left from: a
+                // place that is only a fragment of the merchant / vehicle word stays a question.
+                if (("depart".equals(s.key()) || "arrival".equals(s.key()))
+                        && fragmentOfCarrier(pending, v.asText(""))) {
+                    log.info("[SLOT] focused pass offered {} = '{}', a fragment of the carrier's name - not taken",
+                            s.key(), truncate(v.asText(), 30));
+                    continue;
+                }
                 pending.set(s.key(), v.deepCopy());
                 log.info("Focused re-extract recovered {} = '{}'", s.key(), truncate(v.asText(), 30));
             }
@@ -3554,6 +3588,42 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
 
     /** One field of an external request body: how to ask for it, and whether it blocks the call. */
     private record Slot(String key, String en, String ko, String meaning, boolean required) { }
+
+    /** Slots whose value is free text the user must actually have written: places and the merchant. */
+    private static final java.util.Set<String> FREE_TEXT_SLOT_KEYS = java.util.Set.of("depart", "arrival", "mestName");
+
+    /** Is this place merely a piece of the merchant / vehicle word already on the receipt (공항 in 공항버스)? */
+    private static boolean fragmentOfCarrier(JsonNode pending, String place) {
+        String p = place == null ? "" : place.replaceAll("\\s+", "");
+        if (p.isBlank()) {
+            return false;
+        }
+        for (String key : new String[]{"mestName", "vehicleType"}) {
+            String carrier = pending.path(key).asText("").replaceAll("\\s+", "");
+            if (!carrier.isBlank() && !carrier.equals(p) && carrier.contains(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Is {@code value} written in the message? Compared with spaces removed and case folded, and
+     * a station/airport/terminal suffix the user may have left off is forgiven ("인천공항에서" says
+     * 인천공항; "인천국제공항" is not claimed by a message that only says 인천).
+     */
+    private static boolean writtenIn(String message, String value) {
+        if (message == null || value == null || value.isBlank()) {
+            return false;
+        }
+        String m = message.replaceAll("\s+", "").toLowerCase(java.util.Locale.ROOT);
+        String v = value.replaceAll("\s+", "").toLowerCase(java.util.Locale.ROOT);
+        if (m.contains(v)) {
+            return true;
+        }
+        String core = v.replaceAll("(국제공항|공항|역|터미널|고속버스터미널|버스터미널)$", "");
+        return core.length() >= 2 && m.contains(core);
+    }
 
     /** ⑧ etc-card receipt — the base body every manual expense needs. */
     private static final List<Slot> EXPENSE_SLOTS = List.of(
@@ -4756,6 +4826,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         if (policyNotes.length() > 0) {
             reply.append(policyNotes);
         }
+        reply.append(excessReasonAsk(doc, state, token, ko));   // ⑫ - asked as soon as it is due
     }
 
     /**
@@ -4768,7 +4839,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         JsonNode slip = ir.path("slip");
         double approval = c.path("approvalAmount").asDouble(0);
         double issuedAmt = firstNumber(ir.path("issuedAmt"), c.path("issuedAmt"), approval);
-        double reqAmt = firstNumber(ir.path("requestAmount"), c.path("requestAmount"), approval);
+        double reqAmt = c.path("reqAmt").isNumber() ? c.path("reqAmt").asDouble()   // layer ③ claim
+                : firstNumber(ir.path("requestAmount"), c.path("requestAmount"), approval);
         double supply = firstNumber(c.path("supplyAmount"), ir.path("splAmt"), approval);
         double vat = firstNumber(c.path("vatAmount"), ir.path("vatAmt"), 0);
 
@@ -5362,6 +5434,23 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             foreignRuled = Math.round(foreignBase(policy, enriched) * 100) / 100.0;   // cents, not a float tail
             enriched.put("overseasRuledAmount", foreignRuled);   // the foreign figure, 설명 §1-1
         }
+        // Layer ③ (06_검증 §6.3-6.4): the CLAIM amount follows the 규정 - the corp's 신청금액 setting
+        // decides the basis, the pay class caps it (LIMITED = MIN(규정, 지출), FIXED = 규정금액,
+        // 실비 = 지출, 기타증빙 = MIN even without a rule). The excess is measured on what was SPENT.
+        ObjectNode probe = enriched.deepCopy();
+        probe.put("bstrPayClassType", policy == null ? "" : policy.path("bstrPayClassType").asText(""));
+        probe.put("bstrCategoryType", policy == null ? "" : policy.path("bstrCategoryType").asText(""));
+        com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService.Claim claim =
+                com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService.compute(
+                        probe, claimAmountService.requestedAmountSetting(token),
+                        claimAmountService.exceedReasonSettings(token));
+        if (claim.reqAmt() != null) {
+            enriched.put("reqAmt", claim.reqAmt());
+        }
+        log.info("[CLAIM] {}: used {} 규정 {} -> reqAmt {} (basis {}, cap {}), excess {}, 초과사유 {}",
+                enriched.path("mestName").asText(""), claim.used(), ruled, claim.reqAmt(),
+                claim.standardField(), claim.cap(), claim.excess(),
+                claim.reasonRequired() ? "required (" + claim.limitType() + ")" : "not required");
         ObjectNode row = bstrReceipt(enriched, receiptId, issuedReceiptId);
         // The 용도's debit account, when the receipt brought no slip of its own — the provider's
         // own sample line carries accountSubjectId/Name/ErpCode, and a 기타증빙 has no slip.
@@ -5381,7 +5470,124 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                         ruled, foreignRuled, currency, ko));
             }
         }
+        if (note != null) {
+            note.append(claimNote(claim, ko));
+        }
         return row;
+    }
+
+    /** Layer ③, said once per receipt: the claim amount when it differs from the spend. */
+    private String claimNote(com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService.Claim claim,
+                             boolean ko) {
+        if (claim.reqAmt() == null) {
+            return t(ko, "No policy applies, so enter the claim amount yourself. ",
+                    "적용되는 규정이 없어 신청금액은 직접 정해 주세요. ");
+        }
+        if (claim.capped()) {
+            return t(ko, "Claim amount " + money(claim.reqAmt(), "KRW") + " by the policy (spent "
+                            + money(claim.used(), "KRW") + "). ",
+                    "신청금액은 규정에 따라 " + money(claim.reqAmt(), "KRW") + "이에요 (지출 "
+                            + money(claim.used(), "KRW") + "). ");
+        }
+        return "";
+    }
+
+    /**
+     * ⑫ (06_검증 §6.5.7): the receipts on the settlement whose 용도 has an ACTIVE 초과사유 setting,
+     * are over their 규정 by that setting's rule, and carry no reason yet. Their receipt ids are
+     * staged in the state so the next message is read as the reason; the question is returned
+     * for the reply ("" when nothing is due). BizPlay's own screen blocks filing on the same rule.
+     */
+    private String excessReasonAsk(ObjectNode doc, ObjectNode state, String token, boolean ko) {
+        JsonNode exceed = claimAmountService.exceedReasonSettings(token);
+        if (exceed == null || !exceed.isArray() || exceed.isEmpty()) {
+            return "";                                          // no 용도 ever requires a reason
+        }
+        JsonNode setting = claimAmountService.requestedAmountSetting(token);
+        ArrayNode pending = objectMapper.createArrayNode();
+        java.util.List<String> names = new ArrayList<>();
+        for (JsonNode r : doc.withArray("bstrReceipts")) {
+            com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService.Claim claim =
+                    com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService.compute(r, setting, exceed);
+            if (claim.reasonRequired()) {
+                pending.add(r.path("receiptId").asLong());
+                names.add(r.path("mestName").asText("") + " " + money(r.path("approvalAmount").asDouble(0), "KRW")
+                        + " (" + t(ko, "policy ", "규정 ") + money(r.path("ruledAmount").asDouble(0), "KRW") + ")");
+            }
+        }
+        if (pending.isEmpty()) {
+            state.remove("pendingExcessReason");
+            return "";
+        }
+        state.set("pendingExcessReason", pending);
+        return t(ko, "An excess reason is required before filing for: " + String.join(", ", names)
+                        + ". Why did it exceed the policy? ",
+                "다음 증빙은 규정을 초과해 초과사유가 필요해요: " + String.join(", ", names)
+                        + ". 초과 사유를 알려주세요. ");
+    }
+
+    /**
+     * The turn after {@link #excessReasonAsk}: this message is the reason. The slot judge pulls it
+     * out (a file-it request is left to the submit path, which asks again); it lands on every
+     * staged line - the bstrReceipts row and its issued dto - and the stage resumes.
+     */
+    private BizplayPlanAgentResponse captureExcessReason(ConversationalAgentSession session, ObjectNode state,
+                                                          ArrayNode documents, String message, boolean ko) {
+        if (isSubmitRequest(message)) {
+            return null;
+        }
+        JsonNode found = slotFillerAgentService.extract(message, java.util.Map.of(
+                "초과사유", "The reason the expense exceeded the company's policy amount, as the "
+                        + "traveller states it in this message - a short phrase or sentence, verbatim "
+                        + "in the traveller's words (e.g. 성수기라 숙박비가 비쌌음, 늦은 시간이라 택시 이용). "
+                        + "Empty when the message gives no reason."), ko);
+        String reason = found == null ? "" : found.path("초과사유").asText("").trim();
+        String reply;
+        String intent;
+        if (reason.isBlank()) {
+            reply = t(ko, "I couldn't read a reason in that. In one sentence, why did the expense exceed the policy? ",
+                    "사유를 읽지 못했어요. 규정을 초과한 이유를 한 문장으로 알려주세요. ");
+            intent = "EXCESS_REASON_ASK";
+        } else {
+            java.util.Set<Long> ids = new java.util.HashSet<>();
+            for (JsonNode id : state.withArray("pendingExcessReason")) {
+                ids.add(id.asLong());
+            }
+            ObjectNode doc = (ObjectNode) documents.get(0);
+            int written = 0;
+            for (JsonNode r : doc.withArray("bstrReceipts")) {
+                if (ids.contains(r.path("receiptId").asLong())) {
+                    ((ObjectNode) r).put("excessReason", reason);
+                    written++;
+                }
+            }
+            for (JsonNode f : doc.withArray("issuedFields")) {
+                for (JsonNode d : f.path("issuedReceiptDtos")) {
+                    if (ids.contains(d.path("receiptId").asLong()) && d.has("excessReason")) {
+                        ((ObjectNode) d).put("excessReason", reason);
+                    }
+                }
+            }
+            state.remove("pendingExcessReason");
+            log.info("[CLAIM] 초과사유 '{}' written on {} line(s) {}", reason, written, ids);
+            reply = t(ko, "Noted the excess reason: \"" + reason + "\". ",
+                    "초과사유를 기록했어요: \"" + reason + "\". ");
+            intent = "EXCESS_REASON_SAVED";
+        }
+        session.setDraftJson(documents);
+        appendTurn(session, "user", message);
+        appendTurn(session, "assistant", reply);
+        saveState(session, state);
+        ConversationalAgentSession saved = sessionRepo.save(session);
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(saved.getId().toString())
+                .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                .intent(intent)
+                .subAgents(List.of("SLOT_FILLER_AGENT"))
+                .reply(reply.trim())
+                .pendingChoices("EXCESS_REASON_SAVED".equals(intent) ? addAnotherChips(state, ko) : null)
+                .draftJson(saved.getDraftJson())
+                .build();
     }
 
     /**
@@ -5551,7 +5757,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         field.withArray("issuedReceiptDtos").add(dto);
         dto.put("id", issuedReceiptId);
         dto.put("receiptId", receiptId);
-        dto.put("reqAmt", firstNumber(ir.path("requestAmount"), c.path("requestAmount"), approval));
+        dto.put("reqAmt", c.path("reqAmt").isNumber() ? c.path("reqAmt").asDouble()   // layer ③ claim
+                : firstNumber(ir.path("requestAmount"), c.path("requestAmount"), approval));
         dto.put("issuedAmt", issuedAmt);
         dto.put("splAmt", supply);
         dto.put("vatAmt", vat);
@@ -5628,11 +5835,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         for (JsonNode r : doc.withArray("bstrReceipts")) {
             double amt = r.path("approvalAmount").asDouble(0);
             total += amt;
+            // Layer ③: what is reimbursed is the CLAIM (reqAmt, capped by the 규정), not the spend.
+            double claimed = r.path("reqAmt").isNumber() ? r.path("reqAmt").asDouble() : amt;
             String type = r.path("bstrReceiptType").asText("");
             if ("POINT".equals(type)) {
-                point += amt;
+                point += claimed;
             } else if (!"CORP".equals(type)) {
-                personal += amt;   // corporate cards are paid by the company; the rest is reimbursed
+                personal += claimed;   // corporate cards are paid by the company; the rest is reimbursed
             }
         }
         java.util.Map<String, Double> buckets = new java.util.HashMap<>();
@@ -7796,6 +8005,23 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private BizplayPlanAgentResponse chatSubmit(ConversationalAgentSession session,
             ObjectNode state, ArrayNode documents, String message, String bizplayToken,
             boolean ko) {
+        String reasonAsk = documents.isEmpty() ? ""
+                : excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
+        if (!reasonAsk.isBlank()) {
+            // ⑫: BizPlay's screen refuses to file without the reason; so do we, and ask for it.
+            appendTurn(session, "user", message);
+            appendTurn(session, "assistant", reasonAsk);
+            saveState(session, state);
+            ConversationalAgentSession savedAsk = sessionRepo.save(session);
+            return BizplayPlanAgentResponse.builder()
+                    .sessionId(savedAsk.getId().toString())
+                    .status(savedAsk.getStatus() == null ? null : savedAsk.getStatus().name())
+                    .intent("EXCESS_REASON_ASK")
+                    .subAgents(List.of("SETTLEMENT_AGENT"))
+                    .reply(reasonAsk.trim())
+                    .draftJson(savedAsk.getDraftJson())
+                    .build();
+        }
         if (!hasEvidence(documents)) {
             // Refuse rather than file a ₩0 document nobody can act on.
             String empty = t(ko,

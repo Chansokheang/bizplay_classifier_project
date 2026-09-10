@@ -59,6 +59,11 @@ bizplay:
     # 규정금액 layer ① (증빙 규정금액 산출/01): base amounts PER DAY + the matched 조건식. POST, body
     # built by RuledAmountLookupService; the conditions are applied by us, not the provider.
     policy-renewal-limit: /api/v2/bstr/policy/renewal/limit
+    # 규정금액 layer ③ (06_검증 §6.4.7): the corp's 신청금액 setting - whether claim amounts are used
+    # and which basis (approved / supply / 규정금액 / empty) each card type auto-fills from.
+    requested-amount-setting: /api/v2/business-setting/etc/BSTR/requestedAmount
+    # 06_검증 §6.5.7: the 초과사유 settings per 용도 - only an ACTIVE row makes a reason mandatory.
+    expense-exceed-reasons: /api/v2/bstr/expense-exceed-reason
     # Which 용도 carry a 출장비 규정 at all, per TranKind type (also carries each 용도's debit account).
     policy-trankinds: /api/v2/bstr/policy/trankindlist/{tranKindType}
     # 세금코드 master - the source for a line's taxCodeId/taxName (company feedback #8).
