@@ -750,8 +750,13 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // where a Done chip happens to be on screen. Once a plan is imported and expenses exist,
         // any message nothing above claimed is judged for that meaning BEFORE the stage machine
         // narrows it to the current question. (Stage DONE has its own submit judge below.)
+        // ...with one exception: a message that NAMES one of the plan's own expense kinds ("식비")
+        // is starting the next receipt, not wrapping up. The judge reads a bare category noun as
+        // a wrap-up often enough to matter, and the chips put those exact words on screen. This
+        // is a match against the plan form's catalogue - data, not a phrase list.
         if (!machineToken && state.path("anchor").hasNonNull("approvalId")
-                && hasEvidence(documents) && !"DONE".equals(stage)) {
+                && hasEvidence(documents) && !"DONE".equals(stage)
+                && matchTranKindByName(state, message) == null) {
             String fin = finishDecision(message, koTurn, recentTurns(session));
             // A JUDGED "submit" is not the same as being told to submit. Filing sends the
             // settlement to BizPlay for approval, and words like "등록해줘" right after a receipt
