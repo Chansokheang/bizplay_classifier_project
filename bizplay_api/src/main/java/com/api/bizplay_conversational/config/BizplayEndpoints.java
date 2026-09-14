@@ -109,6 +109,13 @@ public class BizplayEndpoints {
     /** 06_검증 §6.5.7: the 초과사유 settings per 용도 (active rows make a reason mandatory). */
     private String expenseExceedReasons = "/api/v2/bstr/expense-exceed-reason";
 
+    /** 06_검증 §6.5.8: the corp's 초과금액 분할 setting (splitPopupUsed, allowedAccounts). */
+    private String excessDebitSplitSetting = "/api/v2/business-setting/etc/BSTR/excessDebitSplit";
+
+    /** 06_검증 §6.2.8: PATCH - divide a receipt into child issued rows; reset undoes it. */
+    private String receiptDivide = "/api/v2/receipt/divide/{receiptId}";
+    private String receiptDivideReset = "/api/v2/receipt/divide/reset/{receiptId}";
+
     /** Which 용도 a 출장비 규정 is attached to, per TranKind type: GET {tranKindType}. */
     private String policyTranKinds = "/api/v2/bstr/policy/trankindlist/{tranKindType}";
 

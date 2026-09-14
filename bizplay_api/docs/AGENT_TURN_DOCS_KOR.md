@@ -499,24 +499,38 @@ GET /api/v1/agent-conversations/bizplay/agents/contract?corpNo=1234567890
 5. **모르는 값 처리** — `intent`, `kind`, `render`, `ui`는 앞으로 값이 추가될 수 있습니다. 모르는
    값은 `reply` + `pendingChoices`(chips) 기본 렌더로 처리하시면 대화가 끊기지 않습니다.
 6. **`draftJson`** — BizPlay 저장 body와 같은 구조이므로, 화면 미리보기에 그대로 쓰실 수 있습니다.
-7. **증빙 라인의 규정금액** — `draftJson`의 모든 경비 라인에 `ruledAmount`(원화)가, 외화로 정해진
-   규정이면 그 통화의 `overseasRuledAmount`도 실립니다. 산출은 BizPlay 화면과 같은 3층입니다:
+7. **증빙 라인의 규정금액** — `draftJson`의 모든 경비 라인에 `ruledAmount`(원화)가, 조건식이 적용되지
+   않은 외화 규정이면 그 통화의 `overseasRuledAmount`도 실립니다(조건식이 적용되면 원화만 남고 null). 산출은 BizPlay 화면과 같은 3층입니다:
    ① 급지 구간·출장자별 `POST /api/v2/bstr/policy/renewal/limit`로 일자별 **기준금액**과 매칭된
-   조건식을 받고, ② 조건식은 저희 쪽에서 일자별로 적용하며(`appliedConditions[]` 엔진 — 요일 유형,
+   조건식을 받고(식비는 기안자와 계획서의 동행자 각각에게 조회해 일자별 한도를 합산하며, 답변에
+   몇 인 합산인지 적습니다. 직접 입력 식비는 어떤 끼니인지 chips(아침/점심/저녁/간식/야식/식사/기타)로
+   물어 `foodDivisionType`으로 보냅니다 - 없으면 BizPlay가 임의의 끼니 규정으로 답하기 때문이며,
+   이용일도 함께 실어 BizPlay 증빙 목록에도 나타나게 합니다), ② 조건식은 저희 쪽에서 일자별로 적용하며(`appliedConditions[]` 엔진 — 요일 유형,
    날짜/기간 옵션, 8개 연산자, 차등 `dailyDiff`, 이동일, `supersededByIds`에 의한 일별 대체; 외화
-   규정이나 외화 피연산자는 증빙 자체의 환율로 **먼저 원화 환산** 후 적용), ③ 증빙 사용일을 합산합니다
-   (급지 경로의 숙박은 체크아웃일 제외). 실비(ACTUAL / ACTUAL_FIXED)와 교통 등급제는 실제 지출액을,
+   규정이나 외화 피연산자는 BizPlay의 환율로 **먼저 원화 환산** 후 적용), ③ 증빙 사용일을 일자별로 원 단위
+   절사한 뒤 합산합니다(급지 경로의 숙박은 체크아웃일 제외). 실비(ACTUAL / ACTUAL_FIXED)와 교통 등급제는 실제 지출액을,
    규정이 없으면 0을 씁니다. `reply`가 적용 내용을 말해 줍니다. 예: "규정: 한도 USD 100/일. 적용 조건:
-   평일 +10,000원. 규정금액 ₩287,580 (USD 215)." 규정금액을 초과한 증빙은 알려 주되("규정 금액을
+   평일 +10,000원. 규정금액 ₩282,958 (USD 200)." 규정금액을 초과한 증빙은 알려 주되("규정 금액을
    초과했습니다") 그대로 상신됩니다 — BizPlay의 초과 검증은 그쪽 클라이언트에서 하고, 서버는 금액을
    받아들입니다.
 8. **신청금액과 초과사유** — 각 라인의 `reqAmt`(신청금액)는 BizPlay 화면과 같은 방식으로 채웁니다:
    회사의 신청금액 설정(`GET /api/v2/business-setting/etc/BSTR/requestedAmount`)이 카드 유형별 기준을
    정하고, 지급구분이 상한을 겁니다 — 한도(LIMITED)는 규정금액과 지출 중 작은 쪽, 정액(FIXED)/유류비
-   (FUEL)는 규정금액, 실비와 법인카드는 지출액, 규정이 전혀 없는 기타증빙은 사용자가 직접 입력합니다.
-   `totalSettleAmount`는 신청금액의 합, `totalBstrAmount`는 지출액의 합입니다. 어떤 용도에
+   (FUEL)는 규정금액, 실비와 법인카드는 지출액, 규정이 전혀 없는 기타증빙은 사용자가 직접 입력합니다. 문서 합계는 그쪽 §9-4대로 모두 신청금액(`reqAmt`)의
+   합이며, `totalSettleAmount`는 기타증빙·개인카드·마이데이터 증빙과 자동 증빙의 합(법인카드 제외)입니다. 어떤 용도에
    **활성화된** 초과사유 설정(`GET /api/v2/bstr/expense-exceed-reason`)이 있고 그 규칙으로 증빙이
    초과하면, 에이전트는 증빙이 들어온 직후 사유를 묻고(`EXCESS_REASON_ASK`) 다음 메시지를 사유로 읽어
    라인의 `excessReason`에 기록하며(`EXCESS_REASON_SAVED`), 사유가 없으면 상신하지 않습니다 — 채팅
    제출은 `EXCESS_REASON_ASK`로, 생성 엔드포인트는 같은 질문을 담은 400으로 응답합니다. 설정이 없는
    회사에서는 묻지 않습니다.
+9. **초과금액 분할** — 회사 설정 `excessDebitSplit.splitPopupUsed`가 켜져 있으면 BizPlay 화면은 분할 가능한
+   증빙의 지출이 규정금액을 초과한 채로는 상신을 거부합니다. 에이전트도 같게 동작하며, 그쪽 시스템의 유일한
+   해결책을 제안합니다: 그런 증빙이 들어온 직후 초과를 알리고 묻습니다(`EXCESS_SPLIT_ASK`, "…초과분은 본인
+   부담으로 분할해야 상신할 수 있어요. 분할할까요?"). "네"면 BizPlay에서 증빙을 분할해
+   (`PATCH /api/v2/receipt/divide/{receiptId}`) 두 개의 `EXCESS` 행을 만듭니다 — `MIN(지출, 규정금액)`을
+   신청하는 규정 행과 초과분을 신청하며 설정의 허용 계정으로 전기되는 본인 부담 행 — 그리고 BizPlay의
+   조회 결과로 라인을 다시 구성합니다: 같은 `receiptId` 아래 `bstrReceipts` 두 행과 `issuedReceiptDtos` 두 건,
+   지출과 규정금액은 그대로, `receiptIds`에는 자식 id(`EXCESS_SPLIT_DONE`). "아니요"면 증빙을 그대로 두고
+   (`EXCESS_SPLIT_SKIPPED`) 상신은 같은 질문과 함께 계속 거부됩니다; 칩 형태는 `excess-split:confirm` /
+   `excess-split:skip`입니다. 모든 라인은 `divisionOrder`(미분할이면 null)와, 신청금액이 규정금액을 넘을 때
+   `complianceTypesStr`의 `RULED_AMOUNT_EXCEED` 태그도 함께 보냅니다(그쪽 §1-1, §1-4).

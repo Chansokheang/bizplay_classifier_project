@@ -108,15 +108,16 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
                 body.put("corporationId", corporationId);
                 body.put("corporationUserId", corpUserId);
                 // 01 §2.2: nullable keys must be PRESENT - the provider's client always sends them.
-                putTextOrNull(body, "vehicleType", "FOOD".equals(tranKindType) ? "" : etc.path("vehicleType").asText(""));
+                // 01 §2.2 / 04 §4.10: the vehicle only for TRANSPORT; every other 용도 sends null.
+                putTextOrNull(body, "vehicleType", isTransport(tranKindType) ? etc.path("vehicleType").asText("") : "");
                 body.put("tranKindType", tranKindType);
                 if (tranKindId > 0) {
                     body.put("tranKindId", tranKindId);
                 }
                 putLongOrNull(body, "bstrPurposeId", doc.path("bstrPurposeId"));
                 putLongOrNull(body, "bstrSegmentId", doc.path("bstrSegmentId"));
-                putLongOrNull(body, "bstrDepartureId", firstRouteId(doc, "departureId"));
-                putLongOrNull(body, "bstrDestinationId", firstRouteId(doc, "arrivalId"));
+                putLongOrNull(body, "bstrDepartureId", firstRouteId(doc, "departureId"));   // first leg
+                putLongOrNull(body, "bstrDestinationId", lastRouteId(doc, "arrivalId"));     // last leg (01 §2.2)
                 body.putNull("bstrAreaCode");
                 if (s.regionId() == null) {
                     body.putNull("bstrRegionId");
@@ -130,8 +131,8 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
                 if (!exceptionIds.isEmpty()) {
                     body.set("exceptionRuleInputItemIds", exceptionIds.deepCopy());
                 }
-                if (activityDivision != null) {
-                    body.put("activityDivision", activityDivision);   // 01 §2.3.5, only from the form item
+                if (activityDivision != null && isDailyCost(tranKindType)) {
+                    body.put("activityDivision", activityDivision);   // 01 §2.2: per diem only
                 }
                 String food = etc.path("foodDivisionType").asText("");
                 if ("FOOD".equals(tranKindType) && !food.isBlank()) {
@@ -216,12 +217,20 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
                 } else {
                     double policyRate = foreignPolicy ? perUnit.get(policyCurrency) : 1.0;
                     TreeMap<String, Double> krwBase = new TreeMap<>();
-                    raw.forEach((day, amt) -> krwBase.put(day, amt * policyRate));
+                    // exchangeToKRW: trunc(amount × rate) per date (02 §6-2 step 3, 03 pitfall 16)
+                    raw.forEach((day, amt) -> krwBase.put(day, foreignPolicy ? truncWon(amt * policyRate) : amt));
                     JsonNode converted = needed.isEmpty() ? res : CalcConditionEngine.withOperandsInKrw(res, perUnit);
                     CalcConditionEngine.Result krwRun = CalcConditionEngine.apply(
                             converted, krwBase, travelDays, s.start().toString(), s.end().toString());
                     krwRun.limitAmounts().forEach((day, amt) -> mineKrw.merge(day, amt, Math::max));
-                    krwRun.limitAmounts().forEach((day, amt) -> mine.merge(day, amt / policyRate, Math::max));
+                    if (foreignPolicy) {
+                        // 설명 §1-1: the foreign figure on the line is the ORIGINAL foreign 규정 - the
+                        // base. Their documents define no post-condition figure in the 규정's own
+                        // currency, so none is invented here.
+                        raw.forEach((day, amt) -> mine.merge(day, amt, Math::max));
+                    } else {
+                        krwRun.limitAmounts().forEach((day, amt) -> mine.merge(day, amt, Math::max));
+                    }
                     if (krwRun.calcBreakdown() != null && krwRun.calcBreakdown().path("items").size() > 0) {
                         conditionsApplied = true;
                     }
@@ -291,6 +300,7 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
             ObjectNode krwOut = out.putObject("limitAmountsKrw");
             mergedKrw.forEach(krwOut::put);
         }
+        out.put("userCount", corpUserIds.size());   // 04 §4.6: meals sum the drafter and companions
         out.put("calcApplied", conditionsApplied);
         out.put("calcDeferred", !krwAvailable && out.path("appliedConditions").size() > 0);
         if (breakdown != null) {
@@ -388,6 +398,11 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
      * periodCondition.tranKindConditionDtos - take the rows for THIS 용도 and the maximum of their
      * pre / post days. {0, 0} when nothing is checked or the form is unknown.
      */
+    /** Math.trunc - toward zero, sub-KRW fraction dropped (02 §6-3 (3): exchangeToKRW). */
+    private static double truncWon(double v) {
+        return (double) (long) v;
+    }
+
     private int[] allowDays(JsonNode doc, JsonNode planPaper, long tranKindId) {
         int pre = 0;
         int post = 0;
@@ -473,7 +488,6 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
     private ObjectNode calcInputs(JsonNode doc) {
         ObjectNode in = objectMapper.createObjectNode();
         Set<Long> destinationIds = new LinkedHashSet<>();
-        List<Long> arrivals = new ArrayList<>();
         JsonNode routes = doc.path("bstrRoutes");
         for (JsonNode r : routes) {
             if (r.path("departureId").asLong(0) > 0) {
@@ -481,17 +495,33 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
             }
             if (r.path("arrivalId").asLong(0) > 0) {
                 destinationIds.add(r.path("arrivalId").asLong());
-                arrivals.add(r.path("arrivalId").asLong());
             }
         }
         if (!destinationIds.isEmpty()) {
             ArrayNode ids = in.putArray("destinationIds");
             destinationIds.forEach(ids::add);
-            // Visited places: the arrivals minus the final return point (the last leg comes home).
-            int visited = Math.max(0, new LinkedHashSet<>(arrivals.size() > 1
-                    ? arrivals.subList(0, arrivals.size() - 1) : arrivals).size());
-            in.put("visitedDestinationCount", visited);
         }
+        // 01 §2.3 visitedDestinationCount: every point on the route keyed by id, else by name or
+        // address, minus the first leg's departure and the last leg's arrival; omitted when 0.
+        List<String> points = new ArrayList<>();
+        int legs = 0;
+        for (JsonNode r : routes) {
+            points.add(pointKey(r, "departureId", "departureName", "departureAddress"));
+            points.add(pointKey(r, "arrivalId", "arrivalName", "arrivalAddress"));
+            legs++;
+        }
+        if (legs > 0) {
+            Set<String> visited = new LinkedHashSet<>(points);
+            visited.remove(points.get(0));
+            visited.remove(points.get(points.size() - 1));
+            visited.remove("");
+            if (!visited.isEmpty()) {
+                in.put("visitedDestinationCount", visited.size());
+            }
+        }
+        // 01 §2.3: departureTime from the FIRST period selection's selectionName, arrivalTime from
+        // the LAST selection's selectionErpCode - only when those values carry a time part (a
+        // date-only value, 10 characters, yields nothing).
         String dep = null;
         String arr = null;
         for (JsonNode row : doc.path("issuedItems")) {
@@ -500,8 +530,8 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
             }
             JsonNode sels = row.path("selections");
             if (sels.size() > 0) {
-                dep = time(sels.get(0).path("selectionMemo").asText(""));
-                arr = time(sels.get(sels.size() - 1).path("selectionMemo").asText(""));
+                dep = time(sels.get(0).path("selectionName").asText(""));
+                arr = time(sels.get(sels.size() - 1).path("selectionErpCode").asText(""));
             }
         }
         if (dep != null) {
@@ -511,6 +541,25 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
             in.put("arrivalTime", arr);
         }
         return in;
+    }
+
+    private static boolean isTransport(String tranKindType) {
+        return "TRANSPORT".equals(tranKindType) || "HD_TRANSPORT".equals(tranKindType);
+    }
+
+    private static boolean isDailyCost(String tranKindType) {
+        return "DAILY_COST".equals(tranKindType) || "HD_DAILY_COST".equals(tranKindType);
+    }
+
+    /** The last route leg's id field (01 §2.2: bstrDestinationId is the LAST leg's arrivalId). */
+    private Long lastRouteId(JsonNode doc, String field) {
+        Long last = null;
+        for (JsonNode r : doc.path("bstrRoutes")) {
+            if (r.path(field).asLong(0) > 0) {
+                last = r.path(field).asLong();
+            }
+        }
+        return last;
     }
 
     private Long firstRouteId(JsonNode doc, String field) {
@@ -541,6 +590,18 @@ public class RuledAmountLookupServiceImple implements RuledAmountLookupService {
     }
 
     /** "HH:mm" out of a memo like "09:00" or "09:00:00"; null when the memo is not a time. */
+    /** A route point's identity: {@code id:n} when it has an id, else {@code name:<name or address>}. */
+    private static String pointKey(JsonNode r, String idField, String nameField, String addressField) {
+        if (r.path(idField).asLong(0) > 0) {
+            return "id:" + r.path(idField).asLong();
+        }
+        String name = r.path(nameField).asText("");
+        if (name.isBlank()) {
+            name = r.path(addressField).asText("");
+        }
+        return name.isBlank() ? "" : "name:" + name;
+    }
+
     private static String time(String memo) {
         if (memo == null) {
             return null;

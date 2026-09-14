@@ -394,6 +394,52 @@ public class BizplayGatewayServiceImple implements BizplayGatewayService {
     }
 
     @Override
+    public JsonNode getExcessSplitSetting(String token) {
+        return getCached("excess-debit-split-setting", buildUrl(endpoints.getExcessDebitSplitSetting()), token);
+    }
+
+    @Override
+    public String divideReceipt(long receiptId, JsonNode rows, String token) {
+        return patchJson(buildUrl(endpoints.getReceiptDivide(), "receiptId", receiptId), rows, token,
+                "receipt divide (receiptId=" + receiptId + ")");
+    }
+
+    @Override
+    public String resetReceiptDivision(long receiptId, String token) {
+        return patchJson(buildUrl(endpoints.getReceiptDivideReset(), "receiptId", receiptId), null, token,
+                "receipt divide reset (receiptId=" + receiptId + ")");
+    }
+
+    /** A PATCH with an optional JSON body, answered with the provider's plain-text message. */
+    private String patchJson(String url, JsonNode body, String token, String what) {
+        String bearer = resolveToken(token);
+        try {
+            String payload = body == null ? "" : objectMapper.writeValueAsString(body);
+            if (body != null) {
+                log.info("{} body -> {}: {}", what, url, payload);
+            }
+            String response = restClient.patch()
+                    .uri(url)
+                    .header("accept", "*/*")
+                    .header("X-RR-MODE", "NONE")
+                    .header("Authorization", "Bearer " + bearer)
+                    .header("Content-Type", "application/json")
+                    .body(payload)
+                    .retrieve()
+                    .body(String.class);
+            log.info("BizPlay {} ok: {}", what, response);
+            return response;
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            log.warn("{} failed: HTTP {} {}", what, e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new IllegalStateException("BizPlay rejected the " + what + " (HTTP "
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.warn("{} failed: {}", what, e.getMessage());
+            throw new IllegalStateException("BizPlay " + what + " failed: " + rootMessage(e));
+        }
+    }
+
+    @Override
     public JsonNode getUserProfile(String token) {
         // Plain get, not getCached: identity is PER TOKEN, and the shared cache key would serve
         // whoever asked first to everyone after them.

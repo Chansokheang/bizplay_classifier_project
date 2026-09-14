@@ -5369,10 +5369,28 @@ function rcLabel(value, ...lists) {
  * (bstrReceipts, so the 정산서 points at our receipt and keeps 교통수단/출발지/도착지/이용일), and a
  * receipt that could not be attached still rides in etcReceiptSaveRequests. Deduped by receiptId. */
 function settleDraftReceipts(doc) {
-  const rows = [...(doc.etcReceiptSaveRequests || []), ...(doc.bstrReceipts || [])];
+  // The 기타증빙 detail (meal, headcount, room, star, route) lives on the ISSUED dto's receiptEtc;
+  // the bstrReceipts line cannot carry those keys (BizPlay's BstrReceiptDto rejects them), so the
+  // card borrows them here, for display only.
+  const etcById = {};
+  (doc.issuedFields || []).forEach((f) => (f.issuedReceiptDtos || []).forEach((d) => {
+    if (d && d.id != null && d.receiptEtc) etcById[d.id] = d.receiptEtc;
+  }));
+  const borrow = (r) => {
+    const e = r.id != null ? etcById[r.id] : null;
+    if (!e) return r;
+    const out = { ...r };
+    ["foodDivisionType", "personCount", "roomType", "starRating", "partnerHotel", "routeType"].forEach((k) => {
+      if ((out[k] == null || out[k] === "") && e[k] != null && e[k] !== "") out[k] = e[k];
+    });
+    return out;
+  };
+  const rows = [...(doc.etcReceiptSaveRequests || []), ...(doc.bstrReceipts || [])].map(borrow);
   const seen = new Set();
   return rows.filter((r) => {
-    const key = r.receiptId || r.id;
+    // An excess-split receipt has TWO lines under one receiptId (06 §6.2.8): key on the issued
+    // id as well, or the own-expense row would be hidden as a duplicate of the 규정 row.
+    const key = r.receiptId != null && r.id != null ? r.receiptId + ":" + r.id : (r.receiptId || r.id);
     if (key == null) return true;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -5450,6 +5468,10 @@ function settleReceiptItemHtml(r, i) {
     fld(T("Policy amount", "규정금액"), r.ruledAmount != null ? won(r.ruledAmount) : ""),
     // Layer ③: what this line CLAIMS — capped by the 규정 (LIMITED/FIXED) or the spend (실비).
     fld(T("Claim amount", "신청금액"), r.reqAmt != null ? won(r.reqAmt) : ""),
+    // 06 §6.2.8: an excess-split child is either the 규정 row the company pays or the own-expense row.
+    fld(T("Split", "분할"), r.divisionType === "EXCESS"
+        ? (Number(r.divisionOrder) === 0 ? T("policy row", "규정 행") : T("own expense", "본인 부담"))
+        : ""),
     fld(T("Pay class", "지급구분"), rcLabel(r.bstrPayClassType, TP_PAY_CLASS) || r.bstrPayClassType),
     // 세금코드 is picked from the corp's master, never typed — and the row stays visible when it is
     // unset, because "not resolved" is precisely the case the approver needs to correct.
@@ -5557,7 +5579,14 @@ function settlementReceiptsPreview() {
   const doc = (agent.draft && agent.draft[0]) || {};
   const list = settleDraftReceipts(doc);
   if (!list.length) return;
-  const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
+  // A split receipt keeps its whole spend on each child row (06 §6.2.8): count it once.
+  const seenTotal = new Set();
+  const total = list.reduce((s, r) => {
+    const k = r.receiptId || r.id;
+    if (k != null && seenTotal.has(k)) return s;
+    if (k != null) seenTotal.add(k);
+    return s + Number(r.approvalAmount || 0);
+  }, 0);
   const body = list.map((r, i) => settleReceiptItemHtml(r, i)).join("")
     + `<div class="rc-total"><span>${esc(T("Total", "합계"))}</span>`
     + `<b>${esc("₩" + total.toLocaleString())} · ${list.length}${esc(T(" item(s)", "건"))}</b></div>`;
@@ -5637,7 +5666,14 @@ async function showSettlementDetail(sessionId) {
     const doc = (data.draftJson && data.draftJson[0]) || {};
     const list = settleDraftReceipts(doc);
     const won = (n) => "₩" + Number(n || 0).toLocaleString();
-    const total = list.reduce((s, r) => s + Number(r.approvalAmount || 0), 0);
+    // A split receipt keeps its whole spend on each child row (06 §6.2.8): count it once.
+  const seenTotal = new Set();
+  const total = list.reduce((s, r) => {
+    const k = r.receiptId || r.id;
+    if (k != null && seenTotal.has(k)) return s;
+    if (k != null) seenTotal.add(k);
+    return s + Number(r.approvalAmount || 0);
+  }, 0);
     body.innerHTML = `<div class="ss-detail-meta">${esc(data.status || "")} · ${list.length} `
       + `${esc(T("receipt(s)", "건"))} · ${esc(won(total))}</div>`
       + (list.length ? list.map((r, i) => settleReceiptItemHtml(r, i)).join("")
@@ -6877,6 +6913,8 @@ async function sendAgent(opts) {
         // An attached receipt belongs in the running list as much as a registered one — it is the
         // same settlement line, and it now carries 교통수단/구간/이용일/규정금액/세금코드 to show.
         else if (data.intent === "EVIDENCE_ATTACH") settlementReceiptsPreview();
+        // The excess split replaced one line by two (규정 row + 본인 부담 row): redraw the list.
+        else if (data.intent === "EXCESS_SPLIT_DONE") settlementReceiptsPreview();
         else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
         // Filed. The conversation already said so with the document number; close the chat and
         // show the new row, the way the summary card's own submit used to.

@@ -177,6 +177,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     private final com.api.bizplay_conversational.service.corpProvisioningService.CorpProvisioningService corpProvisioningService;
     private final com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService ruledAmountLookupService;
     private final com.api.bizplay_conversational.service.claimAmountService.ClaimAmountService claimAmountService;
+    private final com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService excessSplitService;
 
     @Override
     @Transactional
@@ -703,6 +704,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
         }
 
+        // ⑰ The excess split was announced one turn ago: this message is the traveller's answer.
+        if (state.withArray("pendingExcessSplit").size() > 0 && !documents.isEmpty()) {
+            BizplayPlanAgentResponse decided = captureExcessSplitDecision(session, state, documents, message,
+                    bizplayToken, koTurn);
+            if (decided != null) {
+                return decided;
+            }
+        }
+
         // ⑫ An 초과사유 was asked one turn ago: this message is the reason (a submit request is
         // left to the submit path, which asks again rather than filing without it).
         if (!machineToken && state.withArray("pendingExcessReason").size() > 0 && !documents.isEmpty()) {
@@ -831,13 +841,35 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                                 chips = afterImportChips(state, koTurn);
                             }
                         } else {
-                            intent = "PLAN_PICK_PENDING";
-                            chips = planChipsFromState(state, koTurn);
-                            reply.append(t(koTurn,
-                                    "I couldn't match that to one plan — please pick from the list "
-                                            + "(or give me a different date range). ",
-                                    "말씀하신 내용과 정확히 일치하는 출장을 찾지 못했어요 — 목록에서 선택해 "
-                                            + "주세요 (다른 기간을 말씀하셔도 됩니다). "));
+                            // The staged list is only what the opening turn fetched (the recent
+                            // unsettled plans); a trip named here may sit outside it - already
+                            // settled once, or older. Before giving up, search by that name the
+                            // way a fresh session does; the staged list stays when nothing matches.
+                            List<TripPlanAgentResponse.PendingChoice> found = null;
+                            if (!hintWords(hint).isEmpty()) {
+                                JsonNode staged = state.withArray("planCandidates").deepCopy();
+                                int replyMark = reply.length();
+                                found = searchPlansByName(state, corpUserId, hint, bizplayToken,
+                                        subAgents, reply, koTurn);
+                                if (found == null) {
+                                    reply.setLength(replyMark);
+                                    state.set("planCandidates", staged);
+                                    state.put("stage", "AWAIT_PLAN_PICK");
+                                    state.remove("awaitingPeriod");
+                                }
+                            }
+                            if (found != null) {
+                                intent = "PLAN_SEARCH";
+                                chips = found;
+                            } else {
+                                intent = "PLAN_PICK_PENDING";
+                                chips = planChipsFromState(state, koTurn);
+                                reply.append(t(koTurn,
+                                        "I couldn't match that to one plan — please pick from the list "
+                                                + "(or give me a different date range). ",
+                                        "말씀하신 내용과 정확히 일치하는 출장을 찾지 못했어요 — 목록에서 선택해 "
+                                                + "주세요 (다른 기간을 말씀하셔도 됩니다). "));
+                            }
                         }
                     }
                 }
@@ -1118,6 +1150,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             ObjectNode state = loadState(session);
             boolean ko = "ko".equals(state.path("lang").asText(null));
             String reasonAsk = excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
+            if (reasonAsk.isBlank()) {
+                reasonAsk = excessSplitAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);   // ⑰
+            }
             if (!reasonAsk.isBlank()) {
                 saveState(session, state);
                 sessionRepo.save(session);
@@ -1253,7 +1288,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             boolean ko = "ko".equals(state.path("lang").asText(null));
             String label = fields.path("mestName").asText("") + " ₩" + fields.path("approvalAmount").asText("");
             String reply = t(ko, "Added manual expense: " + label + ". ", "직접 입력 경비를 추가했어요: " + label + ". ")
-                    + excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
+                    + excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko)
+                    + excessSplitAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
             state.put("stage", "AWAIT_TRANKIND");   // same reset as the chat path — see addManualExpense
@@ -1350,7 +1386,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             recomputeTotals(doc);
 
             String reply = t(ko, "Added manual expense. ", "직접 입력 경비를 추가했어요. ")
-                    + fxNote(fx, ko) + policyNote + excessReasonAsk(doc, state, bizplayToken, ko);
+                    + fxNote(fx, ko) + policyNote + excessReasonAsk(doc, state, bizplayToken, ko)
+                    + excessSplitAsk(doc, state, bizplayToken, ko);
             session.setDraftJson(documents);
             appendTurn(session, "assistant", reply);
             // The expense often arrives conversationally while the stage machine still waits at
@@ -2619,6 +2656,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // change which fields the receipt needs. Recompute before deciding what is still
         // missing, or a flight named this turn would be previewed without its route ever asked.
         normalizeRouteType(pending);
+        normalizeFoodDivision(pending);
         promoteTrainType(pending, message, turns, ko);
         slots = expenseSlots(state, pending);
         // Now that the slot list reflects the vehicle named THIS turn, recover any choice whose
@@ -2689,6 +2727,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 log.info("Focused re-extract recovered {} = '{}'", s.key(), truncate(v.asText(), 30));
             }
             normalizeRouteType(pending);
+            normalizeFoodDivision(pending);
             promoteTrainType(pending, message, turns, ko);
             // The focused pass is where the route usually surfaces — and where an assumption
             // would too. Same verification as the broad pass: keep it only if the user's own
@@ -3467,6 +3506,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         } else if ("routeType".equals(asking.key())) {
             options.put(t(ko, "One-way", "편도"), t(ko, "One-way", "편도"));
             options.put(t(ko, "Round-trip", "왕복"), t(ko, "Round-trip", "왕복"));
+        } else if ("foodDivisionType".equals(asking.key())) {
+            // The provider's meal catalogue (03 open item 3, the form schema's SSOT).
+            options.put(t(ko, "Breakfast", "아침"), "BREAKFAST");
+            options.put(t(ko, "Lunch", "점심"), "LUNCH");
+            options.put(t(ko, "Dinner", "저녁"), "DINNER");
+            options.put(t(ko, "Snack", "간식"), "SNACK");
+            options.put(t(ko, "Late night", "야식"), "LATE_NIGHT");
+            options.put(t(ko, "Meal (unspecified)", "식사"), "MEAL");
+            options.put(t(ko, "Other", "기타"), "ETC");
         }
         // 출발지 / 도착지: the answer is a place NAME (typed or picked), and the canonical list is
         // the provider's terminal/station master — too large to inline, and different per vehicle.
@@ -3714,6 +3762,20 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             new Slot("usedEndDate", "check-out", "체크아웃",
                     "check-out date of the stay, ISO yyyy-MM-dd", true));
 
+    /**
+     * Meals (식비) carry WHICH meal - the 규정 lookup needs it (04 §4.6: without foodDivisionType
+     * the backend skips the meal filter and answers with an arbitrary meal's limit) and BizPlay's
+     * form asks it. The values are the settled enum (03 open item 3). Headcount is optional:
+     * taken when the user says it, never invented.
+     */
+    private static final List<Slot> EXPENSE_FOOD_SLOTS = List.of(
+            new Slot("foodDivisionType", "which meal", "식사 구분",
+                    "which meal the receipt is for — answer EXACTLY one of BREAKFAST (아침/조식),"
+                            + " LUNCH (점심/중식), DINNER (저녁/석식), SNACK (간식), LATE_NIGHT (야식),"
+                            + " MEAL (식사 - a meal not further specified) or ETC (기타)", true),
+            new Slot("personCount", "headcount", "인원",
+                    "how many people ate, digits only - ONLY when the user states it", false));
+
     /** The slots for the expense being built — transport adds its own. */
     private List<Slot> expenseSlots(ObjectNode state, ObjectNode pending) {
         List<Slot> all = new ArrayList<>(EXPENSE_SLOTS);
@@ -3744,6 +3806,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             }
         } else if (detail.contains("roomType")) {
             all.addAll(EXPENSE_ROOM_SLOTS);
+        } else if (detail.contains("foodDivisionType")) {
+            all.addAll(EXPENSE_FOOD_SLOTS);
         }
         return all;
     }
@@ -3907,6 +3971,30 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * job the vehicle and seat-grade maps do. Anything that is neither is dropped rather than
      * sent as junk, so the flow asks again instead of filing a receipt with an unknown route.
      */
+    /**
+     * Normalise the meal to the provider's enum (03 open item 3) - the form's own words
+     * (아침/조식 …) or the enum name; anything else is dropped so the flow asks with the chips.
+     */
+    private void normalizeFoodDivision(ObjectNode pending) {
+        String raw = pending.path("foodDivisionType").asText("").trim();
+        if (raw.isEmpty()) {
+            return;
+        }
+        String up = raw.toUpperCase(java.util.Locale.ROOT).replaceAll("[\\s_-]", "");
+        String value = up.contains("BREAKFAST") || raw.contains("아침") || raw.contains("조식") ? "BREAKFAST"
+                : up.contains("LUNCH") || raw.contains("점심") || raw.contains("중식") ? "LUNCH"
+                : up.contains("DINNER") || raw.contains("저녁") || raw.contains("석식") ? "DINNER"
+                : up.contains("SNACK") || raw.contains("간식") ? "SNACK"
+                : up.contains("LATENIGHT") || raw.contains("야식") ? "LATE_NIGHT"
+                : up.equals("MEAL") || raw.contains("식사") ? "MEAL"
+                : up.equals("ETC") || up.equals("OTHER") || raw.contains("기타") ? "ETC" : null;
+        if (value == null) {
+            pending.remove("foodDivisionType");
+        } else {
+            pending.put("foodDivisionType", value);
+        }
+    }
+
     private void normalizeRouteType(ObjectNode pending) {
         String raw = pending.path("routeType").asText("").trim();
         if (raw.isEmpty()) {
@@ -4531,7 +4619,8 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         List<String> detailKeys = detailFieldsForType(slots(state).path("evidenceTranKindType").asText(null));
         boolean transport = detailKeys.contains("vehicleType");
         boolean lodging = detailKeys.contains("roomType");
-        if (!transport && !lodging) {
+        boolean food = detailKeys.contains("foodDivisionType");
+        if (!transport && !lodging && !food) {
             return null;
         }
         ObjectNode d = objectMapper.createObjectNode();
@@ -4563,9 +4652,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         d.putNull("starRating");
         d.putNull("roomType");
         d.putNull("partnerHotel");
-        // Meal block + common
-        d.putNull("personCount");
-        d.putNull("foodDivisionType");
+        // Meal block + common (04 §4.6: the meal classification the 규정 lookup needs; the usage
+        // day above is the receipt's own date, which BizPlay's receipt stream filters on)
+        if (food && pending.path("personCount").asInt(0) > 0) {
+            d.put("personCount", pending.path("personCount").asInt());
+        } else {
+            d.putNull("personCount");
+        }
+        putOrNull(d, "foodDivisionType", food ? pending.path("foodDivisionType").asText("") : "");
         d.putNull("cancelReason");
         d.putNull("outPolicyReason");
         return d;
@@ -4827,6 +4921,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             reply.append(policyNotes);
         }
         reply.append(excessReasonAsk(doc, state, token, ko));   // ⑫ - asked as soon as it is due
+        reply.append(excessSplitAsk(doc, state, token, ko));    // ⑰ - announced, then confirmed
     }
 
     /**
@@ -4867,6 +4962,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         r.putNull("cancelReason");
         r.put("issuedAmt", issuedAmt);
         r.put("divisionType", c.path("divisionType").asText(null));
+        // 설명 §1-1: divisionOrder is ALWAYS sent, null when unsplit - omitted, the server falls
+        // back to "first non-null per receiptId" and one row's reason overwrites the others.
+        copyNumberOrNull(r, "divisionOrder", c.path("divisionOrder"));
         r.put("bankCodeName", c.path("bankCodeName").asText(null));
         // Masked first: a card row carries both, and the draft has no business holding a full PAN.
         r.put("cardNo", firstText(c.path("maskCardNumber"), c.path("cardNumber"), c.path("cardNo")));
@@ -4901,7 +4999,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         r.putNull("internalOrderErpCode");
         r.put("depart", c.path("depart").asText(null));
         r.put("arrival", c.path("arrival").asText(null));
-        r.put("complianceTypesStr", "");
+        // 설명 §1-4: ⑦ 규정 초과 tag - claim axis, no setting gate, never on an excess-split row.
+        boolean excessSplitRow = "EXCESS".equals(c.path("divisionType").asText(""));
+        r.put("complianceTypesStr", !excessSplitRow && c.path("ruledAmount").isNumber()
+                && reqAmt > c.path("ruledAmount").asDouble() ? "RULED_AMOUNT_EXCEED" : "");
         r.put("displayHidden", false);
         // The 기타증빙 detail lives under receiptEtc on the receipt; the 정산서 detail screen
         // reads it from the LINE, so copy it across (feedback #8).
@@ -5034,6 +5135,36 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      * trip's own facts (목적/구분/기간/출발-도착) so the answer is the one that applies to THIS trip.
      * Returns null when there is no policy — registration continues either way.
      */
+    /**
+     * The plan's active companions (04 §4.6): {@code companionPlanDtos} of the plan detail, each row's {@code draftUserId}; a row whose {@code bstrStatus} is
+     * {@code DRAFT_ONLY} is the drafter's own supplementary row and must not be counted, or the
+     * limit is inflated. Empty when the plan cannot be read - the drafter alone is then asked.
+     */
+    private java.util.List<Long> companionUserIds(long planApprovalId, String token) {
+        java.util.List<Long> out = new ArrayList<>();
+        try {
+            JsonNode plan = bizplayGatewayService.getPlanDetail(planApprovalId, token);
+            // /approval/bstr/{id} carries the list at the top level; /approval/{id} under bstrResponseDto.
+            JsonNode companions = plan.path("companionPlanDtos").isArray()
+                    ? plan.path("companionPlanDtos") : plan.path("bstrResponseDto").path("companionPlanDtos");
+            for (JsonNode c : companions) {
+                if ("DRAFT_ONLY".equals(c.path("bstrStatus").asText(""))) {
+                    continue;
+                }
+                long id = c.path("draftUserId").asLong(0);
+                if (id > 0 && !out.contains(id)) {
+                    out.add(id);
+                }
+            }
+            if (!out.isEmpty()) {
+                log.info("[POLICY] meals on plan {}: {} companion(s) join the lookup {}", planApprovalId, out.size(), out);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Companion list unavailable for plan {}: {}", planApprovalId, e.getMessage());
+        }
+        return out;
+    }
+
     private JsonNode policyFor(ObjectNode doc, JsonNode receipt, String token) {
         long tranKindId = receipt.path("tranKindId").asLong(0);
         if (tranKindId <= 0) {
@@ -5043,7 +5174,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         // lookup answers 500, and without corporationId it answers 200 with an EMPTY body. The
         // traveller is the demo's static user unless the plan names one.
         Long corporationId = corporationIdFromToken(token);
-        long traveler = doc.path("bstrTravelerId").asLong(doc.path("regCorporationUserId").asLong(0));
+        // 01 §2.2 / 04 §4.10: the lookup is made for the DRAFTER (draftUserId); only meals fan out
+        // to companions. The traveller is not the axis - the drafter is.
+        long traveler = doc.path("draftUserId").asLong(doc.path("regCorporationUserId").asLong(
+                doc.path("bstrTravelerId").asLong(0)));
         if (traveler <= 0) {
             try {
                 traveler = Long.parseLong(bizplayProperties.getDefaultCorpUserId().trim());
@@ -5082,25 +5216,28 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         } catch (RuntimeException e) {
             log.debug("Plan form unavailable for the allowed-day rule: {}", e.getMessage());
         }
-        // 04 §4.6: meals are asked per person - drafter plus companions. The settlement document
-        // names the traveller only; companions join here when the plan carries them.
+        // 04 §4.6 / 회신문 §8 step 2: meals are asked per person - the drafter plus every ACTIVE
+        // companion of the plan - and the limits are summed (the lookup merges users by SUM).
+        // Every other 용도 is asked for the drafter alone.
         java.util.List<Long> users = new ArrayList<>();
         users.add(traveler);
-        // Layer ② needs KRW per unit for every foreign axis (02 §6). The receipt's own pair -
-        // KRW approvalAmount over the foreign overseasApprovalAmount - is the rate that applied to
-        // it (unit included); any other currency takes the provider's daily 환율.
-        final String receiptCurrency = line.path("currencyCode").asText("KRW").trim().toUpperCase(java.util.Locale.ROOT);
-        final double approvalKrw = line.path("approvalAmount").asDouble(0);
-        final double foreignSpend = line.path("overseasApprovalAmount").asDouble(0);
+        if ("FOOD".equals(line.path("tranKindType").asText("")) && doc.path("bstrPlanApprovalId").asLong(0) > 0) {
+            for (Long id : companionUserIds(doc.path("bstrPlanApprovalId").asLong(), token)) {
+                if (!users.contains(id)) {
+                    users.add(id);
+                }
+            }
+        }
+        // Layer ② needs KRW per unit for every foreign axis (02 §6-2: exchangeToKRW - the
+        // provider's own 환율, 100-unit currencies divided). Their document does not fix the
+        // rate's reference date; the receipt's usage date is used, the day the receipt itself
+        // was converted on.
         final String rateDay = firstNonBlank(line.path("usedStartDate").asText(""),
                 line.path("receiptEtc").path("usedStartDate").asText(""), line.path("approvalDate").asText(""));
         com.api.bizplay_conversational.service.ruledAmountLookupService.RuledAmountLookupService.KrwRate rates = currency -> {
             String code = currency == null ? "" : currency.trim().toUpperCase(java.util.Locale.ROOT);
             if (code.isBlank() || "KRW".equals(code)) {
                 return 1.0;
-            }
-            if (code.equals(receiptCurrency) && foreignSpend > 0 && approvalKrw > 0) {
-                return approvalKrw / foreignSpend;
             }
             return krwPerUnit(code, rateDay, token);
         };
@@ -5159,9 +5296,10 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
      */
     /**
      * A per-day map summed over the receipt's usage days - check-out day excluded for lodging on
-     * a 급지 path (04 §4.5) - with NO fallback to the whole map when nothing overlaps (설명 §8-2
-     * U-6 names that silent fallback as a trap). NaN when the map or the dates are missing, or
-     * no day overlaps.
+     * a 급지 path (04 §4.5), each day truncated to whole KRW BEFORE the sum (02 §6 rule 9, 03
+     * pitfall 14: the engine never rounds, the receipt stage drops the fraction per date) - with
+     * NO fallback to the whole map when nothing overlaps (설명 §8-2 U-6 names that silent
+     * fallback as a trap). NaN when the map or the dates are missing, or no day overlaps.
      */
     private double daysSum(JsonNode map, JsonNode receipt, JsonNode policy) {
         if (map == null || !map.isObject() || map.size() == 0 || receipt == null) {
@@ -5192,7 +5330,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
             JsonNode v = map.get(d.toString());
             if (v != null && v.isNumber()) {
-                sum += v.asDouble();
+                sum += (double) (long) v.asDouble();   // Math.trunc per date, then sum
                 hit++;
             }
         }
@@ -5312,18 +5450,12 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         }
         if (!policyCurrency.isBlank() && !"KRW".equalsIgnoreCase(policyCurrency)) {
             if (!Double.isNaN(krwLimit)) {
-                return Math.round(krwLimit);   // the lookup's KRW figure: converted, then conditions applied
+                return krwLimit;   // the lookup's KRW figure: provider 환율 first, then conditions, trunc per date
             }
-            // A foreign 규정 is stored in KRW (설명 §1-1). The receipt's own pair - KRW
-            // approvalAmount over the foreign overseasApprovalAmount - is the rate that applied
-            // to it (unit included), so the same rate converts the 규정금액.
-            double foreignSpend = receipt == null ? 0 : receipt.path("overseasApprovalAmount").asDouble(0);
-            if (receipt != null && policyCurrency.equalsIgnoreCase(receipt.path("currencyCode").asText(currencyCode))
-                    && foreignSpend > 0 && approvalAmount > 0) {
-                return Math.round(limit * (approvalAmount / foreignSpend));
-            }
-            log.info("[POLICY] 규정 in {} but the receipt is in {} - no rate to convert with; the "
-                    + "spend stands as the 규정금액", policyCurrency, currencyCode);
+            // A foreign 규정 is stored in KRW (설명 §1-1), converted with the provider's 환율
+            // (02 §6-2). Without a rate there is no documented figure: the spend stands, said so.
+            log.info("[POLICY] 규정 in {} but no 환율 to convert with; the spend stands as the 규정금액",
+                    policyCurrency);
             return approvalAmount;
         }
         return limit;
@@ -5430,9 +5562,15 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         String policyCurrency = policy == null ? "" : policy.path("currencyCode").asText("");
         double foreignRuled = 0;
         if (!policyCurrency.isBlank() && !"KRW".equalsIgnoreCase(policyCurrency)
-                && policyCurrency.equalsIgnoreCase(enriched.path("currencyCode").asText(""))) {
+                && policyCurrency.equalsIgnoreCase(enriched.path("currencyCode").asText(""))
+                && !policy.path("calcApplied").asBoolean(false)) {
+            // A pure foreign 규정 carries its original amount (설명 §1-1, 04 convertRuledAmountToKRW).
+            // Once a 조건식 was applied the limit is KRW only and the foreign figure stays null -
+            // a foreign comparison would judge the excess wrong (03 pitfall 18, 04 §4 path A).
             foreignRuled = Math.round(foreignBase(policy, enriched) * 100) / 100.0;   // cents, not a float tail
-            enriched.put("overseasRuledAmount", foreignRuled);   // the foreign figure, 설명 §1-1
+            enriched.put("overseasRuledAmount", foreignRuled);
+        } else {
+            enriched.putNull("overseasRuledAmount");
         }
         // Layer ③ (06_검증 §6.3-6.4): the CLAIM amount follows the 규정 - the corp's 신청금액 setting
         // decides the basis, the pay class caps it (LIMITED = MIN(규정, 지출), FIXED = 규정금액,
@@ -5527,6 +5665,293 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /**
+     * ⑰ (06 §6.5.8): with the corp's 초과금액 분할 setting on, a splittable receipt whose spend is
+     * over its 규정금액 cannot be filed until its excess is separated into a self-pay row. The
+     * receipts due are staged in the state and the traveller is told what the split means and
+     * asked to confirm; "" when nothing is due. Their own screen shows the same block.
+     */
+    private String excessSplitAsk(ObjectNode doc, ObjectNode state, String token, boolean ko) {
+        JsonNode setting = excessSplitService.setting(token);
+        if (!com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.enabled(setting)) {
+            state.remove("pendingExcessSplit");
+            return "";
+        }
+        ArrayNode pending = objectMapper.createArrayNode();
+        java.util.List<String> lines = new ArrayList<>();
+        for (JsonNode r : doc.withArray("bstrReceipts")) {
+            if (!com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.splittable(r)) {
+                continue;
+            }
+            com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.Plan plan =
+                    com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.plan(r);
+            if (plan == null) {
+                continue;
+            }
+            ObjectNode p = pending.addObject();
+            p.put("receiptId", r.path("receiptId").asLong());
+            p.put("issuedReceiptId", r.path("id").asLong());
+            p.put("excess", plan.excess());
+            p.put("policyClaim", plan.policyClaim());
+            lines.add(r.path("mestName").asText("") + " " + money(plan.used(), "KRW")
+                    + t(ko, " (policy ", " (규정 ") + money(plan.ruled(), "KRW") + t(ko, ", over by ", ", 초과 ")
+                    + money(plan.excess(), "KRW") + ")");
+        }
+        if (pending.isEmpty()) {
+            state.remove("pendingExcessSplit");
+            return "";
+        }
+        state.set("pendingExcessSplit", pending);
+        java.util.List<JsonNode> accounts =
+                com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.allowedAccounts(setting);
+        StringBuilder s = new StringBuilder();
+        s.append(t(ko, "Over the policy amount: " + String.join(", ", lines) + ". Under the BizPlay rule the "
+                        + "excess is split off as your own expense before the report can be filed. Split it? ",
+                "규정금액을 초과했어요: " + String.join(", ", lines) + ". BizPlay 규정에 따라 초과분은 본인 부담으로 "
+                        + "분할해야 상신할 수 있어요. 분할할까요? "));
+        if (accounts.size() > 1) {
+            java.util.List<String> names = new ArrayList<>();
+            for (JsonNode a : accounts) {
+                names.add(a.path("name").asText(""));
+            }
+            s.append(t(ko, "Which account for the excess: " + String.join(" / ", names) + "? ",
+                    "초과분 계정은 " + String.join(" / ", names) + " 중 어느 것으로 할까요? "));
+        }
+        return s.toString();
+    }
+
+    /**
+     * The turn after {@link #excessSplitAsk}: yes splits every staged receipt (the account is the
+     * setting's only one, or the one named), no leaves them whole - filing then stays blocked,
+     * and BizPlay's own wording says why - and anything else is asked again. The machine tokens
+     * {@code excess-split:confirm} / {@code excess-split:skip} are the chip forms of the same.
+     */
+    private BizplayPlanAgentResponse captureExcessSplitDecision(ConversationalAgentSession session, ObjectNode state,
+                                                                 ArrayNode documents, String message,
+                                                                 String token, boolean ko) {
+        String said = message == null ? "" : message.trim();
+        String decision;
+        String accountSaid = "";
+        if ("excess-split:confirm".equals(said)) {
+            decision = "yes";
+        } else if ("excess-split:skip".equals(said)) {
+            decision = "no";
+        } else if (isSubmitRequest(said)) {
+            return null;                                     // the submit path asks again
+        } else {
+            JsonNode found = slotFillerAgentService.extract(said, java.util.Map.of(
+                    "decision", "The assistant just asked whether to SPLIT the excess of an over-policy "
+                            + "receipt into the traveller's own expense. Read THIS message as the answer and "
+                            + "give EXACTLY one word: \"yes\" - agrees to split (네, 분할해줘, 그렇게 해줘, ok, "
+                            + "go ahead); \"no\" - refuses or wants to keep the receipt as it is (아니요, "
+                            + "그대로 둬, 분할하지 마); \"unclear\" - anything else, including a question or a "
+                            + "different subject",
+                    "account", "the debit account the traveller names for the excess, verbatim, if the "
+                            + "message names one; empty otherwise"), ko);
+            decision = found == null ? "unclear" : found.path("decision").asText("unclear").trim().toLowerCase(java.util.Locale.ROOT);
+            accountSaid = found == null ? "" : found.path("account").asText("").trim();
+        }
+        String reply;
+        String intent;
+        List<TripPlanAgentResponse.PendingChoice> chips = null;
+        ObjectNode doc = (ObjectNode) documents.get(0);
+        if ("yes".equals(decision)) {
+            JsonNode setting = excessSplitService.setting(token);
+            java.util.List<JsonNode> accounts =
+                    com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.allowedAccounts(setting);
+            JsonNode account = null;
+            if (accounts.size() == 1) {
+                account = accounts.get(0);
+            } else {
+                for (JsonNode a : accounts) {
+                    String name = a.path("name").asText("").replaceAll("\\s+", "");
+                    if (!name.isBlank() && !accountSaid.isBlank() && (accountSaid.replaceAll("\\s+", "").contains(name)
+                            || name.contains(accountSaid.replaceAll("\\s+", "")))) {
+                        account = a;
+                    }
+                }
+            }
+            if (account == null) {
+                java.util.List<String> names = new ArrayList<>();
+                for (JsonNode a : accounts) {
+                    names.add(a.path("name").asText(""));
+                }
+                reply = accounts.isEmpty()
+                        ? t(ko, "The corp setting names no debit account for the excess, so I can't split it here. ",
+                                "회사 설정에 초과분 계정이 없어 여기서는 분할할 수 없어요. ")
+                        : t(ko, "Which account for the excess: " + String.join(" / ", names) + "? ",
+                                "초과분 계정은 " + String.join(" / ", names) + " 중 어느 것으로 할까요? ");
+                intent = "EXCESS_SPLIT_ASK";
+            } else {
+                java.util.List<String> done = new ArrayList<>();
+                java.util.List<String> failed = new ArrayList<>();
+                for (JsonNode p : state.withArray("pendingExcessSplit")) {
+                    long receiptId = p.path("receiptId").asLong();
+                    try {
+                        String line = performExcessSplit(doc, receiptId, account, token, ko);
+                        done.add(line);
+                    } catch (RuntimeException e) {
+                        log.warn("[SPLIT] receipt {} not split: {}", receiptId, e.getMessage());
+                        failed.add(String.valueOf(receiptId) + ": " + e.getMessage());
+                    }
+                }
+                recomputeTotals(doc);
+                state.remove("pendingExcessSplit");
+                reply = (done.isEmpty() ? "" : t(ko, "Split done: ", "분할했어요: ") + String.join("; ", done) + ". ")
+                        + (failed.isEmpty() ? "" : t(ko, "Not split: ", "분할하지 못했어요: ") + String.join("; ", failed) + ". ");
+                intent = failed.isEmpty() ? "EXCESS_SPLIT_DONE" : "EXCESS_SPLIT_ASK";
+                chips = addAnotherChips(state, ko);
+            }
+        } else if ("no".equals(decision)) {
+            state.remove("pendingExcessSplit");
+            reply = t(ko, "Kept as it is. BizPlay will not accept the report while a receipt is over its policy "
+                            + "amount without the split (규정금액을 초과한 증빙이 있습니다) - say so when you want it split. ",
+                    "그대로 둘게요. 초과금액 분할 없이는 BizPlay가 상신을 받지 않아요 (규정금액을 초과한 증빙이 "
+                            + "있습니다). 분할이 필요하면 말씀해 주세요. ");
+            intent = "EXCESS_SPLIT_SKIPPED";
+            chips = addAnotherChips(state, ko);
+        } else {
+            reply = t(ko, "Shall I split the excess into your own expense? Yes or no. ",
+                    "초과분을 본인 부담으로 분할할까요? 네 / 아니요로 알려주세요. ");
+            intent = "EXCESS_SPLIT_ASK";
+        }
+        session.setDraftJson(documents);
+        appendTurn(session, "user", message);
+        appendTurn(session, "assistant", reply);
+        saveState(session, state);
+        ConversationalAgentSession saved = sessionRepo.save(session);
+        return BizplayPlanAgentResponse.builder()
+                .sessionId(saved.getId().toString())
+                .status(saved.getStatus() == null ? null : saved.getStatus().name())
+                .intent(intent)
+                .subAgents(List.of("SETTLEMENT_AGENT", "BIZPLAY_GATEWAY"))
+                .reply(reply.trim())
+                .pendingChoices(chips)
+                .draftJson(saved.getDraftJson())
+                .build();
+    }
+
+    /**
+     * Divide one receipt (06 §6.2.8) and rebuild its lines from BizPlay's read-back: the parent's
+     * bstrReceipts row and issued dto are replaced by one of each per child, amounts from the
+     * child, 규정금액 and spend kept whole, the parent's issued id in receiptIds replaced by the
+     * children's. Returns the one-line summary for the reply.
+     */
+    private String performExcessSplit(ObjectNode doc, long receiptId, JsonNode account, String token, boolean ko) {
+        ObjectNode row = null;
+        for (JsonNode r : doc.withArray("bstrReceipts")) {
+            if (r.path("receiptId").asLong() == receiptId && r instanceof ObjectNode o) {
+                row = o;
+            }
+        }
+        ObjectNode field = null;
+        ObjectNode dto = null;
+        for (JsonNode f : doc.withArray("issuedFields")) {
+            if (f.path("receiptId").asLong() == receiptId && f instanceof ObjectNode o) {
+                field = o;
+                JsonNode first = f.path("issuedReceiptDtos").size() > 0 ? f.path("issuedReceiptDtos").get(0) : null;
+                dto = first instanceof ObjectNode d ? d : null;
+            }
+        }
+        if (row == null || dto == null) {
+            throw new IllegalStateException("receipt " + receiptId + " is not on the settlement");
+        }
+        com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.Plan plan =
+                com.api.bizplay_conversational.service.excessSplitService.ExcessSplitService.plan(row);
+        if (plan == null) {
+            throw new IllegalStateException("receipt " + receiptId + " has no excess to split");
+        }
+        JsonNode dept = row.path("budgetDepartmentId").asLong(0) > 0 ? null : firstBudgetDepartment(token);
+        ArrayNode rows = excessSplitService.rows(row, dto, plan, account.path("accountSubjectId").asLong(),
+                account.path("name").asText(null), dept);
+        java.util.List<JsonNode> children = excessSplitService.divide(receiptId, rows, token);
+        if (children.size() < 2) {
+            throw new IllegalStateException("BizPlay returned " + children.size() + " child row(s) for receipt " + receiptId);
+        }
+        long parentIssuedId = row.path("id").asLong();
+        ArrayNode newRows = objectMapper.createArrayNode();
+        ArrayNode newDtos = objectMapper.createArrayNode();
+        for (JsonNode child : children) {
+            long childId = child.path("id").asLong();
+            double amt = child.path("issuedAmt").asDouble(0);
+            double vat = child.path("vatAmt").asDouble(0);
+            JsonNode slip = child.path("slip");
+            ObjectNode r = row.deepCopy();
+            r.put("id", childId);
+            r.put("divisionType", "EXCESS");
+            r.put("divisionOrder", child.path("divisionOrder").asInt(0));
+            r.put("reqAmt", amt);                        // 06 §6.2.8: only the claim is divided
+            r.put("issuedAmt", amt);
+            r.put("settleAmount", amt);
+            r.put("supplyAmount", child.path("splAmt").asDouble(amt));
+            r.put("vatAmount", vat);
+            r.put("slipAmt", amt);
+            r.put("slipSplAmt", slip.path("slipSplAmt").asDouble(amt));
+            r.put("slipVatAmt", slip.path("slipVatAmt").asDouble(vat));
+            if (slip.path("accountSubjectId").asLong(0) > 0) {
+                r.put("accountSubjectId", slip.path("accountSubjectId").asLong());
+                r.put("accountSubjectName", slip.path("accountSubjectName").asText(null));
+                r.put("accountSubjectErpCode", slip.path("accountSubjectErpCode").asText(null));
+            }
+            if (slip.path("budgetDepartmentId").asLong(0) > 0) {
+                r.put("budgetDepartmentId", slip.path("budgetDepartmentId").asLong());
+                r.put("budgetDepartmentName", slip.path("budgetDepartmentName").asText(null));
+                r.put("budgetDepartmentErpCode", slip.path("budgetDepartmentErpCode").asText(null));
+            }
+            r.put("complianceTypesStr", "");            // 설명 §1-4: excess-split rows carry no tag
+            newRows.add(r);
+
+            ObjectNode d = dto.deepCopy();
+            d.put("id", childId);
+            d.put("divisionType", "EXCESS");
+            d.put("divisionOrder", child.path("divisionOrder").asInt(0));
+            d.put("excessOver", child.path("excessOver").asBoolean(false));
+            d.put("reqAmt", amt);
+            d.put("issuedAmt", amt);
+            d.put("splAmt", child.path("splAmt").asDouble(amt));
+            d.put("vatAmt", vat);
+            if (d.path("slip").isObject()) {
+                ObjectNode ds = (ObjectNode) d.get("slip");
+                ds.put("slipAmt", amt);
+                ds.put("slipSplAmt", slip.path("slipSplAmt").asDouble(amt));
+                ds.put("slipVatAmt", slip.path("slipVatAmt").asDouble(vat));
+                if (slip.path("accountSubjectId").asLong(0) > 0) {
+                    ds.put("accountSubjectId", slip.path("accountSubjectId").asLong());
+                    ds.put("accountSubjectName", slip.path("accountSubjectName").asText(null));
+                    ds.put("accountSubjectErpCode", slip.path("accountSubjectErpCode").asText(null));
+                }
+            }
+            newDtos.add(d);
+        }
+        // Replace the parent's row, dto and receiptIds entry with the children's.
+        ArrayNode receipts = doc.withArray("bstrReceipts");
+        ArrayNode kept = objectMapper.createArrayNode();
+        for (JsonNode r : receipts) {
+            if (r.path("receiptId").asLong() == receiptId) {
+                kept.addAll(newRows);
+            } else {
+                kept.add(r);
+            }
+        }
+        doc.set("bstrReceipts", kept);
+        field.set("issuedReceiptDtos", newDtos);
+        ArrayNode ids = objectMapper.createArrayNode();
+        for (JsonNode id : doc.withArray("receiptIds")) {
+            if (id.asLong() == parentIssuedId) {
+                for (JsonNode child : children) {
+                    ids.add(child.path("id").asLong());
+                }
+            } else {
+                ids.add(id);
+            }
+        }
+        doc.set("receiptIds", ids);
+        log.info("[SPLIT] receipt {} -> issued {} replaced by {} (policy {} / excess {})", receiptId, parentIssuedId,
+                children.stream().map(c -> c.path("id").asLong()).toList(), plan.policyClaim(), plan.excess());
+        return row.path("mestName").asText("") + " " + t(ko, "policy ", "규정 ") + money(plan.policyClaim(), "KRW")
+                + t(ko, " / own expense ", " / 본인 부담 ") + money(plan.excess(), "KRW");
+    }
+
+    /**
      * The turn after {@link #excessReasonAsk}: this message is the reason. The slot judge pulls it
      * out (a file-it request is left to the submit path, which asks again); it lands on every
      * staged line - the bstrReceipts row and its issued dto - and the stage resumes.
@@ -5611,7 +6036,14 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
         StringBuilder s = new StringBuilder();
         if (limit > 0) {
             s.append(label).append(": ").append(kind).append(" ")
-                    .append(money(limit, policyCurrency)).append(t(ko, " per day. ", "/일. "));
+                    .append(money(limit, policyCurrency)).append(t(ko, " per day", "/일"));
+            int people = policy.path("userCount").asInt(1);
+            if (people > 1) {
+                // 04 §4.6: the meal limit rises with the companions - say how many were counted.
+                s.append(t(ko, " for " + people + " people (companions included)",
+                        " (동행 " + (people - 1) + "명 포함, " + people + "인 합산)"));
+            }
+            s.append(". ");
             JsonNode items = policy.path("calcBreakdown").path("items");
             if (items.isArray() && items.size() > 0) {
                 // Layer ②: the conditions that shaped the amount, in the provider's own wording.
@@ -5622,7 +6054,9 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
                 s.append(t(ko, "Conditions: " + String.join(", ", parts) + ". ",
                         "적용 조건: " + String.join(", ", parts) + ". "));
             }
-            boolean converted = !foreignPolicy || foreignRuled > 0;
+            // The KRW figure exists whenever the lookup could convert (limitAmountsKrw); the foreign
+            // figure alone is no signal - it is null once a 조건식 was applied (03 pitfall 18).
+            boolean converted = !foreignPolicy || policy.path("limitAmountsKrw").size() > 0;
             if (!converted) {
                 // A foreign 규정 with a receipt in another currency: no rate pairs them, so the
                 // 규정금액 stayed at the spend - said plainly, not compared silently.
@@ -5823,30 +6257,35 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
     }
 
     /**
-     * Amount fields as the captured sample computes them: the totals span ALL evidence (card rows
-     * + fixed-allowance rows), the settle/personal figure is the out-of-pocket side, and each cost
-     * bucket sums the fixed-allowance (etcReceiptSaveRequests) rows of that kind — card receipts
-     * never land in a bucket, exactly as the sample's FOOD receipt leaves foodCostAmount at 0.
+     * Amount fields as 증빙_규정금액_설명 §9-4 defines them: every total is a sum of CLAIMS
+     * (reqAmt). totalBstrAmount spans every manual receipt plus the automatic rows;
+     * totalSettleAmount (= totalPersonalAmount, the amount reimbursed) takes the 기타증빙,
+     * personal-card and my-data receipts plus the automatic rows - a corporate card is the
+     * company's own money; totalPointAmount the 비플 point/money receipts. Cancelled receipts are
+     * deducted from those three totals only. The cost buckets sum the automatic rows of their
+     * kind, and lodging additionally the manual ROOM receipts' claims.
      */
     private void recomputeTotals(ObjectNode doc) {
         double total = 0;
         double personal = 0;
         double point = 0;
+        java.util.Map<String, Double> buckets = new java.util.HashMap<>();
         for (JsonNode r : doc.withArray("bstrReceipts")) {
-            double amt = r.path("approvalAmount").asDouble(0);
-            total += amt;
-            // Layer ③: what is reimbursed is the CLAIM (reqAmt, capped by the 규정), not the spend.
-            double claimed = r.path("reqAmt").isNumber() ? r.path("reqAmt").asDouble() : amt;
+            double claim = r.path("reqAmt").isNumber() ? r.path("reqAmt").asDouble() : r.path("approvalAmount").asDouble(0);
+            double signed = r.path("approvalCanceled").asBoolean(false) ? -claim : claim;
+            total += signed;
             String type = r.path("bstrReceiptType").asText("");
-            if ("POINT".equals(type)) {
-                point += claimed;
-            } else if (!"CORP".equals(type)) {
-                personal += claimed;   // corporate cards are paid by the company; the rest is reimbursed
+            if ("POINT".equals(type) || "BZP_POINT".equals(type) || "BZP_MONEY".equals(type)) {
+                point += signed;
+            } else if ("ETC".equals(type) || "PERSONAL".equals(type) || "MY_DATA".equals(type)) {
+                personal += signed;
+            }
+            if ("ROOM".equals(r.path("tranKindType").asText(""))) {
+                buckets.merge("lodgingCostAmount", claim, Double::sum);
             }
         }
-        java.util.Map<String, Double> buckets = new java.util.HashMap<>();
         for (JsonNode e : doc.withArray("etcReceiptSaveRequests")) {
-            double amt = e.path("approvalAmount").asDouble(0);
+            double amt = e.path("reqAmt").isNumber() ? e.path("reqAmt").asDouble() : e.path("approvalAmount").asDouble(0);
             total += amt;
             personal += amt;
             String bucket = COST_BUCKETS.get(e.path("tranKindType").asText(""));
@@ -8007,8 +8446,11 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             boolean ko) {
         String reasonAsk = documents.isEmpty() ? ""
                 : excessReasonAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);
+        if (reasonAsk.isBlank() && !documents.isEmpty()) {
+            reasonAsk = excessSplitAsk((ObjectNode) documents.get(0), state, bizplayToken, ko);   // ⑰
+        }
         if (!reasonAsk.isBlank()) {
-            // ⑫: BizPlay's screen refuses to file without the reason; so do we, and ask for it.
+            // ⑫ / ⑰: BizPlay's screen refuses to file without the reason or the split; so do we.
             appendTurn(session, "user", message);
             appendTurn(session, "assistant", reasonAsk);
             saveState(session, state);
@@ -8016,7 +8458,7 @@ public class BizplaySettlementAgentServiceImple implements BizplaySettlementAgen
             return BizplayPlanAgentResponse.builder()
                     .sessionId(savedAsk.getId().toString())
                     .status(savedAsk.getStatus() == null ? null : savedAsk.getStatus().name())
-                    .intent("EXCESS_REASON_ASK")
+                    .intent(state.withArray("pendingExcessSplit").size() > 0 ? "EXCESS_SPLIT_ASK" : "EXCESS_REASON_ASK")
                     .subAgents(List.of("SETTLEMENT_AGENT"))
                     .reply(reasonAsk.trim())
                     .draftJson(savedAsk.getDraftJson())

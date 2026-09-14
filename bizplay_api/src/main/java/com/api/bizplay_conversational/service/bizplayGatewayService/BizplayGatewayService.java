@@ -224,6 +224,22 @@ public interface BizplayGatewayService {
     JsonNode getExpenseExceedReasons(String token);
 
     /**
+     * The corp's 초과금액 분할 setting (06_검증 §6.5.8): {@code splitPopupUsed},
+     * {@code allowedAccounts[{accountSubjectId, code, name}]}, {@code evidenceAccounts[]}. Cached.
+     */
+    JsonNode getExcessSplitSetting(String token);
+
+    /**
+     * Divide a receipt into the given child issued rows (06_검증 §6.2.8) - the WHOLE child set,
+     * since the provider deactivates every existing child on each call. Returns the provider's
+     * message ("작성영수증이 수정되었습니다."); throws when refused.
+     */
+    String divideReceipt(long receiptId, JsonNode rows, String token);
+
+    /** Undo a division: the original issued row becomes active again. */
+    String resetReceiptDivision(long receiptId, String token);
+
+    /**
      * 세금코드 master: id, taxCode ("V0"), taxName, taxRate, deductionStatus and the account subject
      * each code is assigned to. Cached - it is corp master data.
      */

@@ -504,26 +504,45 @@ An entry with `"choices": []` is a free-text question — that turn carries no `
 6. **`draftJson`** — the same structure as the BizPlay save body, so it can be used directly for
    previews.
 7. **규정금액 on a receipt line** — every expense line in `draftJson` carries `ruledAmount` (KRW)
-   and, for a 규정 quoted in a foreign currency, `overseasRuledAmount` in that currency. It is
+   and, for a 규정 quoted in a foreign currency with no condition applied, `overseasRuledAmount`
+   in that currency (null once a condition was applied: the limit is then KRW only). It is
    computed the way BizPlay's own screen does it, in three layers: ① `POST
    /api/v2/bstr/policy/renewal/limit` per 급지 section and traveler gives the BASE amount per day
-   plus the matched conditions; ② the conditions are applied day by day on our side (the
+   plus the matched conditions (meals are asked once per person, the drafter plus the plan's
+   active companions, and the per-day limits are summed; the reply says how many people. A manual
+   meal receipt is asked WHICH meal - chips 아침/점심/저녁/간식/야식/식사/기타, sent as
+   `foodDivisionType` - because without it BizPlay answers with an arbitrary meal row, and it
+   carries its usage day so BizPlay's own receipt list shows it); ② the conditions are applied day by day on our side (the
    `appliedConditions[]` engine — dayType, date and period options, the 8 operators, tiered
    `dailyDiff`, travel days, per-day `supersededByIds` fallback; a foreign 규정 or operand is
-   converted to KRW FIRST, with the receipt's own rate); ③ the receipt's usage days are summed
-   (check-out day excluded for lodging on a 급지 path). 실비 (ACTUAL / ACTUAL_FIXED) and the
+   converted to KRW FIRST, with BizPlay's own exchange rate); ③ the receipt's usage days are summed,
+   each day truncated to whole won first (check-out day excluded for lodging on a 급지 path). 실비 (ACTUAL / ACTUAL_FIXED) and the
    transport 등급제 carry the spend; no 규정 at all is 0. The `reply` says what applied, e.g.
-   "규정: 한도 USD 100/일. 적용 조건: 평일 +10,000원. 규정금액 ₩287,580 (USD 215)." A receipt over
+   "규정: 한도 USD 100/일. 적용 조건: 평일 +10,000원. 규정금액 ₩282,958 (USD 200)." A receipt over
    the 규정금액 is reported ("규정 금액을 초과했습니다") but still files — BizPlay's excess checks
    are client-side there, and the server accepts the amount.
 8. **Claim amount and excess reason** — each line's `reqAmt` (what is claimed) is filled the way
    BizPlay's screen fills it: the corp's 신청금액 setting (`GET /api/v2/business-setting/etc/BSTR/requestedAmount`)
    chooses the basis per card type, and the pay class caps it — LIMITED to the smaller of 규정금액
    and spend, FIXED / FUEL to the 규정금액, 실비 and corporate cards to the spend, a 기타증빙 without
-   any rule is left for the user to enter. `totalSettleAmount` sums the claims, `totalBstrAmount`
-   the spends. When a 용도 has an ACTIVE 초과사유 setting (`GET /api/v2/bstr/expense-exceed-reason`)
+   any rule is left for the user to enter. The document totals follow their §9-4: every total is a
+   sum of claims (`reqAmt`), `totalSettleAmount` over 기타증빙 / personal-card / my-data receipts plus
+   the automatic rows, corporate cards excluded. When a 용도 has an ACTIVE 초과사유 setting (`GET /api/v2/bstr/expense-exceed-reason`)
    and the receipt is over by that setting's rule, the agent asks for the reason right after the
    receipt lands (`EXCESS_REASON_ASK`), reads the next message as the reason
    (`EXCESS_REASON_SAVED`, written to the line's `excessReason`), and refuses to file until it is
    there — the chat submit answers `EXCESS_REASON_ASK`, the create endpoint answers 400 with the
    same question. A corp with no such setting is never asked.
+9. **Excess split** — when the corp setting `excessDebitSplit.splitPopupUsed` is on, BizPlay's own
+   screen refuses to file while a splittable receipt's spend exceeds its 규정금액. The agent does the
+   same and offers the one remedy their system has: right after such a receipt lands it announces
+   the excess and asks (`EXCESS_SPLIT_ASK`, "…초과분은 본인 부담으로 분할해야 상신할 수 있어요. 분할할까요?").
+   A yes divides the receipt at BizPlay (`PATCH /api/v2/receipt/divide/{receiptId}`) into two
+   `EXCESS` rows — the 규정 row claiming `MIN(spend, 규정금액)` and the own-expense row claiming the
+   excess, posted to the setting's allowed debit account — and rebuilds the line from BizPlay's
+   read-back: two `bstrReceipts` rows and two `issuedReceiptDtos` under the same `receiptId`, spend
+   and 규정금액 kept whole, `receiptIds` carrying the children (`EXCESS_SPLIT_DONE`). A no keeps the
+   receipt whole (`EXCESS_SPLIT_SKIPPED`) and filing stays refused with the same question; the chip
+   forms are `excess-split:confirm` / `excess-split:skip`. Every line also carries `divisionOrder`
+   (null when unsplit) and the `RULED_AMOUNT_EXCEED` tag in `complianceTypesStr` when its claim is
+   over its 규정금액, as their §1-1 and §1-4 require.

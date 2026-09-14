@@ -232,6 +232,15 @@ public class ApprovalLineServiceImple implements ApprovalLineService {
         for (JsonNode u : users) {
             names.add(u.path("userName").asText(""));
         }
+        // The USER'S message must write somebody - a name, team or title from the roster - before
+        // any extracted name counts. A judge handed the conversation can lift "김도하" out of an
+        // earlier turn while the message itself says "광주로 목적지 바꿔줘"; the roster word test on
+        // the message, not on the judge's answer, is what keeps that a destination change.
+        if (!mentionsAnyone(wholeMessage, users)) {
+            log.info("[APPR] '{}' writes no roster name, team or title — no person resolved.",
+                    truncate(wholeMessage, 30));
+            return null;
+        }
         if (!want.isBlank()) {
             for (JsonNode u : users) {
                 String n = u.path("userName").asText("");
@@ -250,6 +259,35 @@ public class ApprovalLineServiceImple implements ApprovalLineService {
         }
         String candidate = users.get(pick).path("userName").asText("");
         return namesThisPerson(haystack, candidate, turns, ko) ? users.get(pick) : null;
+    }
+
+    /**
+     * Does the message write any roster word at all — a person's name (2+ characters of it), their
+     * team, their position, duty or responsibility? Compared with spaces removed. A message with
+     * none of them names nobody, whatever a judge might later be talked into.
+     */
+    private static boolean mentionsAnyone(String message, JsonNode users) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String m = message.replaceAll("\\s+", "");
+        for (JsonNode u : users) {
+            java.util.List<String> words = new ArrayList<>();
+            words.add(u.path("userName").asText(""));
+            words.add(u.path("positionName").asText(""));
+            words.add(u.path("dutyName").asText(""));
+            words.add(u.path("responsibilityName").asText(""));
+            for (JsonNode d : u.path("departments")) {
+                words.add(d.path("departmentName").asText(""));
+            }
+            for (String w : words) {
+                String word = w == null ? "" : w.replaceAll("\\s+", "");
+                if (word.length() >= 2 && m.contains(word)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

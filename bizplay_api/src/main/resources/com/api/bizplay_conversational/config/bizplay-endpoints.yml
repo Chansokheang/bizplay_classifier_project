@@ -64,6 +64,13 @@ bizplay:
     requested-amount-setting: /api/v2/business-setting/etc/BSTR/requestedAmount
     # 06_검증 §6.5.7: the 초과사유 settings per 용도 - only an ACTIVE row makes a reason mandatory.
     expense-exceed-reasons: /api/v2/bstr/expense-exceed-reason
+    # 06_검증 §6.5.8: the corp's 초과금액 분할 setting - splitPopupUsed gates ⑰, allowedAccounts is the
+    # whitelist of debit accounts the excess row may be posted to.
+    excess-debit-split-setting: /api/v2/business-setting/etc/BSTR/excessDebitSplit
+    # 06_검증 §6.2.8: divide a receipt into child issued rows (the excess split's two EXCESS rows);
+    # the reset undoes it. Both PATCH; confirmed on cloud-dev 2026-09-11.
+    receipt-divide: /api/v2/receipt/divide/{receiptId}
+    receipt-divide-reset: /api/v2/receipt/divide/reset/{receiptId}
     # Which 용도 carry a 출장비 규정 at all, per TranKind type (also carries each 용도's debit account).
     policy-trankinds: /api/v2/bstr/policy/trankindlist/{tranKindType}
     # 세금코드 master - the source for a line's taxCodeId/taxName (company feedback #8).
