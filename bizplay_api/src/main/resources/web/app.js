@@ -573,7 +573,9 @@ let apData = [];
 let apModules = [];
 
 /* Full-page settings view: hides the tab content while open ("← To Chat" returns). */
+const SETTINGS_UI_ENABLED = false;   // DISABLED 2026-09-29: settings were reachable by anonymous visitors
 function openAp() {
+  if (!SETTINGS_UI_ENABLED) return;   // model setup, agent prompts and starters stay closed until there is real sign-in
   $("apCorpPill").textContent = `corp ${CORP_NO}`;
   document.body.classList.add("ap-open");
   window.scrollTo(0, 0);

@@ -58,24 +58,27 @@ public class CustomAgentController {
         return ResponseEntity.ok(ApiResponse.ok(out));
     }
 
-    @Operation(summary = "Create/update a custom agent")
-    @PutMapping("/{name:.+}")
-    public ResponseEntity<ApiResponse<CustomAgentResponse>> put(@RequestParam("corpNo") String corpNo,
-                                                                @PathVariable("name") String name,
-                                                                @RequestBody CustomAgentRequest request) {
-        log.info("PUT /api/v1/agent-conversations/custom-agents/{} - corpNo={}", name, corpNo);
-        return ResponseEntity.ok(ApiResponse.ok(customAgentService.put(corpNo, name, request)));
-    }
+    // DISABLED 2026-09-29: PUT and the test run were open to the internet with no authentication, so
+    // anyone could define an agent with its own prompt and tool list for any corp and run it. Listing
+    // and deleting stay available. Re-enable only behind authentication.
+    // @Operation(summary = "Create/update a custom agent")
+    // @PutMapping("/{name:.+}")
+    // public ResponseEntity<ApiResponse<CustomAgentResponse>> put(@RequestParam("corpNo") String corpNo,
+    //                                                             @PathVariable("name") String name,
+    //                                                             @RequestBody CustomAgentRequest request) {
+    //     log.info("PUT /api/v1/agent-conversations/custom-agents/{} - corpNo={}", name, corpNo);
+    //     return ResponseEntity.ok(ApiResponse.ok(customAgentService.put(corpNo, name, request)));
+    // }
 
-    @Operation(summary = "Run a custom agent once with a test message")
-    @PostMapping("/{name:.+}/test")
-    public ResponseEntity<ApiResponse<CustomAgentResponse>> test(@RequestParam("corpNo") String corpNo,
-                                                                 @PathVariable("name") String name,
-                                                                 @RequestBody CustomAgentRequest request) {
-        log.info("POST /api/v1/agent-conversations/custom-agents/{}/test - corpNo={}", name, corpNo);
-        return ResponseEntity.ok(ApiResponse.ok(
-                customAgentService.test(corpNo, name, request == null ? null : request.getMessage())));
-    }
+    // @Operation(summary = "Run a custom agent once with a test message")
+    // @PostMapping("/{name:.+}/test")
+    // public ResponseEntity<ApiResponse<CustomAgentResponse>> test(@RequestParam("corpNo") String corpNo,
+    //                                                              @PathVariable("name") String name,
+    //                                                              @RequestBody CustomAgentRequest request) {
+    //     log.info("POST /api/v1/agent-conversations/custom-agents/{}/test - corpNo={}", name, corpNo);
+    //     return ResponseEntity.ok(ApiResponse.ok(
+    //             customAgentService.test(corpNo, name, request == null ? null : request.getMessage())));
+    // }
 
     @Operation(summary = "Delete a custom agent")
     @DeleteMapping("/{name:.+}")

@@ -55,27 +55,30 @@ public class McpServerController {
         return ResponseEntity.ok(ApiResponse.ok(out));
     }
 
-    @Operation(summary = "Register/update an MCP server (URL is SSRF-guarded)")
-    @PutMapping("/{name:.+}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> put(@RequestParam("corpNo") String corpNo,
-                                                                @PathVariable("name") String name,
-                                                                @RequestBody McpServerRequest request) {
-        log.info("PUT /api/v1/agent-conversations/mcp-servers/{} - corpNo={}", name, corpNo);
-        ConversationalMcpServer s = mcpClientService.put(corpNo, name,
-                request == null ? null : request.getUrl(),
-                request == null ? null : request.getAuthHeader(),
-                request == null ? null : request.getTrusted(),
-                request == null ? null : request.getEnabled());
-        return ResponseEntity.ok(ApiResponse.ok(toMap(s)));
-    }
+    // DISABLED 2026-09-29: PUT and the connection test were open to the internet with no authentication,
+    // so anyone could register a server URL, mark it trusted, and make this service connect to it.
+    // Listing and deleting stay available. Re-enable only behind authentication.
+    // @Operation(summary = "Register/update an MCP server (URL is SSRF-guarded)")
+    // @PutMapping("/{name:.+}")
+    // public ResponseEntity<ApiResponse<Map<String, Object>>> put(@RequestParam("corpNo") String corpNo,
+    //                                                             @PathVariable("name") String name,
+    //                                                             @RequestBody McpServerRequest request) {
+    //     log.info("PUT /api/v1/agent-conversations/mcp-servers/{} - corpNo={}", name, corpNo);
+    //     ConversationalMcpServer s = mcpClientService.put(corpNo, name,
+    //             request == null ? null : request.getUrl(),
+    //             request == null ? null : request.getAuthHeader(),
+    //             request == null ? null : request.getTrusted(),
+    //             request == null ? null : request.getEnabled());
+    //     return ResponseEntity.ok(ApiResponse.ok(toMap(s)));
+    // }
 
-    @Operation(summary = "Connection test: MCP initialize + tools/list")
-    @PostMapping("/{name:.+}/test")
-    public ResponseEntity<ApiResponse<McpClientService.TestResult>> test(@RequestParam("corpNo") String corpNo,
-                                                                         @PathVariable("name") String name) {
-        log.info("POST /api/v1/agent-conversations/mcp-servers/{}/test - corpNo={}", name, corpNo);
-        return ResponseEntity.ok(ApiResponse.ok(mcpClientService.test(corpNo, name)));
-    }
+    // @Operation(summary = "Connection test: MCP initialize + tools/list")
+    // @PostMapping("/{name:.+}/test")
+    // public ResponseEntity<ApiResponse<McpClientService.TestResult>> test(@RequestParam("corpNo") String corpNo,
+    //                                                                      @PathVariable("name") String name) {
+    //     log.info("POST /api/v1/agent-conversations/mcp-servers/{}/test - corpNo={}", name, corpNo);
+    //     return ResponseEntity.ok(ApiResponse.ok(mcpClientService.test(corpNo, name)));
+    // }
 
     @Operation(summary = "Remove an MCP server")
     @DeleteMapping("/{name:.+}")

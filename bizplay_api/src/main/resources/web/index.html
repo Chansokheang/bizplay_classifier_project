@@ -57,7 +57,10 @@
         </div>
       </div>
       <div class="top-right">
-        <button id="openApBtn" class="btn btn-quiet btn-sm admin-only hidden" title="Model setup and agent setup"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> Setting</button>
+        <!-- DISABLED 2026-09-29: the Admin role here is a client-side toggle anyone can click, so the settings
+             page let anonymous visitors change models and agent prompts. The button stays in the page,
+             hidden and disabled, and no longer follows the role toggle (no "admin-only" class). -->
+        <button id="openApBtn" class="btn btn-quiet btn-sm hidden" disabled aria-hidden="true" title="Model setup and agent setup"><svg class="ico" aria-hidden="true"><use href="#i-cpu"/></svg> Setting</button>
         <div class="lang-toggle role-toggle" role="group" aria-label="Role">
           <button class="lang-btn role-btn active" data-role="traveler" type="button"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Traveler</button>
           <button class="lang-btn role-btn" data-role="admin" type="button"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg> Admin</button>

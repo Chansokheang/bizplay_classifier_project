@@ -32,11 +32,13 @@ public class LlmSettingsController {
         return ResponseEntity.ok(ApiResponse.ok(llmSettingsService.getSettings()));
     }
 
-    @Operation(summary = "Set the active conversational LLM (empty model clears the override)")
-    @PutMapping
-    public ResponseEntity<ApiResponse<LlmSettingsResponse>> update(
-            @RequestBody LlmSettingsUpdateRequest request) {
-        log.info("PUT /api/v1/agent-conversations/llm-settings - model={}", request.getModel());
-        return ResponseEntity.ok(ApiResponse.ok(llmSettingsService.setActiveModel(request.getModel())));
-    }
+    // DISABLED 2026-09-29: this route was open to the internet with no authentication, so anyone could
+    // point every conversational agent at a model of their choosing. Re-enable only behind authentication.
+    // @Operation(summary = "Set the active conversational LLM (empty model clears the override)")
+    // @PutMapping
+    // public ResponseEntity<ApiResponse<LlmSettingsResponse>> update(
+    //         @RequestBody LlmSettingsUpdateRequest request) {
+    //     log.info("PUT /api/v1/agent-conversations/llm-settings - model={}", request.getModel());
+    //     return ResponseEntity.ok(ApiResponse.ok(llmSettingsService.setActiveModel(request.getModel())));
+    // }
 }

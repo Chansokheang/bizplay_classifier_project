@@ -49,24 +49,27 @@ public class AgentPromptController {
         return ResponseEntity.ok(ApiResponse.ok(agentPromptService.get(corpNo, name)));
     }
 
-    @Operation(summary = "Create/update a corp's custom prompt (name 'starter-message' = the chat opener)")
-    @PutMapping("/{name:.+}")
-    public ResponseEntity<ApiResponse<AgentPromptResponse>> put(@RequestParam("corpNo") String corpNo,
-                                                                @PathVariable("name") String name,
-                                                                @RequestBody AgentPromptRequest request) {
-        log.info("PUT /api/v1/agent-conversations/agent-prompts/{} - corpNo={}", name, corpNo);
-        return ResponseEntity.ok(ApiResponse.ok(agentPromptService.put(corpNo, name, request)));
-    }
+    // DISABLED 2026-09-29: PUT and POST were open to the internet with no authentication, so anyone could
+    // rewrite the system prompt of any sub-agent for any corp. Reading and resetting to the built-in
+    // default stay available. Re-enable only behind authentication.
+    // @Operation(summary = "Create/update a corp's custom prompt (name 'starter-message' = the chat opener)")
+    // @PutMapping("/{name:.+}")
+    // public ResponseEntity<ApiResponse<AgentPromptResponse>> put(@RequestParam("corpNo") String corpNo,
+    //                                                             @PathVariable("name") String name,
+    //                                                             @RequestBody AgentPromptRequest request) {
+    //     log.info("PUT /api/v1/agent-conversations/agent-prompts/{} - corpNo={}", name, corpNo);
+    //     return ResponseEntity.ok(ApiResponse.ok(agentPromptService.put(corpNo, name, request)));
+    // }
 
-    /** POST alias of PUT — "create" reads naturally for first-time customization. */
-    @Operation(summary = "Create a corp's custom prompt (alias of PUT)")
-    @PostMapping("/{name:.+}")
-    public ResponseEntity<ApiResponse<AgentPromptResponse>> create(@RequestParam("corpNo") String corpNo,
-                                                                   @PathVariable("name") String name,
-                                                                   @RequestBody AgentPromptRequest request) {
-        log.info("POST /api/v1/agent-conversations/agent-prompts/{} - corpNo={}", name, corpNo);
-        return ResponseEntity.ok(ApiResponse.ok(agentPromptService.put(corpNo, name, request)));
-    }
+    // /** POST alias of PUT — "create" reads naturally for first-time customization. */
+    // @Operation(summary = "Create a corp's custom prompt (alias of PUT)")
+    // @PostMapping("/{name:.+}")
+    // public ResponseEntity<ApiResponse<AgentPromptResponse>> create(@RequestParam("corpNo") String corpNo,
+    //                                                                @PathVariable("name") String name,
+    //                                                                @RequestBody AgentPromptRequest request) {
+    //     log.info("POST /api/v1/agent-conversations/agent-prompts/{} - corpNo={}", name, corpNo);
+    //     return ResponseEntity.ok(ApiResponse.ok(agentPromptService.put(corpNo, name, request)));
+    // }
 
     @Operation(summary = "Reset a corp's prompt to the built-in default")
     @DeleteMapping("/{name:.+}")
