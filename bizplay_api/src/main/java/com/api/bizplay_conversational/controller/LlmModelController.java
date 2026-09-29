@@ -27,10 +27,14 @@ import java.util.List;
  * their API key), which are hot-registered into the live ChatClient registry. Static app.llm.models
  * config entries are listed too, but are read-only (source = CONFIG).
  */
+// DISABLED 2026-09-29: these routes were open to the internet with no authentication and were used
+// to register about 155 models whose baseUrl pointed at internal hosts and ports, then probe them
+// through POST /{name}/test. Without @RestController Spring registers none of the routes below.
+// Re-enable only behind authentication, with baseUrl restricted to an allowlist of hosts.
 @Slf4j
 @Tag(name = "Conversational LLM Models", description = "Add, update, and delete LLM models at runtime.")
-@RestController
-@RequestMapping("/api/v1/agent-conversations/llm-models")
+// @RestController
+// @RequestMapping("/api/v1/agent-conversations/llm-models")
 @RequiredArgsConstructor
 public class LlmModelController {
 
