@@ -4860,8 +4860,8 @@ async function submitManualDetail(detail, file) {
     agent.status = data.status || agent.status;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;
+    settlementReceiptsPreview();                 // the running list FIRST (cards first, question last)
     appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
-    settlementReceiptsPreview();                 // show the running list after each add
     manualExpenseFollowUp(data.pendingChoices);
     return true;
   } catch (e) {
@@ -4927,8 +4927,8 @@ function settlementAttachImageForm() {
       agent.draft = data.draftJson || agent.draft;
       agent.lastData = data;
       agent.attachForm = null;   // this receipt is filed; the next one opens its own picker
+      settlementReceiptsPreview();   // the running list FIRST (cards first, question last)
       appendMsg("assistant", data.reply || T("Registered.", "등록했어요."));
-      settlementReceiptsPreview();
       if ((data.pendingChoices || []).length) {
         appendMsg("assistant", "", { choiceGroups: data.pendingChoices });
       }
@@ -5092,8 +5092,8 @@ async function submitManualComplete(expense, detail, file) {
     agent.status = data.status || agent.status;
     agent.draft = data.draftJson || agent.draft;
     agent.lastData = data;
+    settlementReceiptsPreview();                 // the running list FIRST (cards first, question last)
     appendMsg("assistant", data.reply || T("Expense added.", "경비를 추가했어요."));
-    settlementReceiptsPreview();                 // show the running list after each add
     manualExpenseFollowUp(data.pendingChoices);
     return true;
   } catch (e) {
@@ -6831,7 +6831,30 @@ async function sendAgent(opts) {
       if (wizAsked.el && wizAsked.el.classList) wizAsked.el.classList.add("choice-done");
     }
     if (chatOnly) ensureWizardSections();          // completed sections preview first…
-    appendMsg("assistant", data.reply || "(no reply)", {
+    // CARDS FIRST, QUESTION LAST (user, 2026-09-29). A preview is the context its question is
+    // about, so every card this turn produces is drawn BEFORE the sentence that asks about it -
+    // in the plan chat and the settlement chat alike. The turn then reads: what it looks like
+    // now, then what I'm asking. Each call below is idempotent (previewCard redraws only on a
+    // real change), so the branches further down that still call them add nothing a second time.
+    if (chatOnly) {
+      if (data.intent === "DRAFT_QUERY"
+          && /show|preview|display|all|보여|전체|요약|정리|summar/i.test(message || "")) {
+        showAllPreviews(true);
+      }
+      if (data.uiRefresh && data.uiRefresh.length) {
+        ensureWizardSections();
+        showAllPreviews(true);
+      }
+      if (agent.settle) {
+        if (data.intent === "EVIDENCE_ATTACH" || data.intent === "EXCESS_SPLIT_DONE"
+            || data.intent === "SETTLEMENT_READY") {
+          settlementReceiptsPreview();
+        }
+        // Not idempotent (it appends a fresh node), so it is drawn HERE and nowhere else.
+        if (data.intent === "SETTLEMENT_READY") settlementSummaryCard(data.draftJson);
+      }
+    }
+    const replyNode = appendMsg("assistant", data.reply || "(no reply)", {
       // Chat mode reads as a plain conversation — internal intent/sub-agent
       // badges (PURPOSE_SELECTION etc.) stay on the developer-facing form view.
       intent: chatOnly ? null : data.intent,
@@ -6917,7 +6940,7 @@ async function sendAgent(opts) {
         else if (data.intent === "EVIDENCE_ATTACH") settlementReceiptsPreview();
         // The excess split replaced one line by two (규정 row + 본인 부담 row): redraw the list.
         else if (data.intent === "EXCESS_SPLIT_DONE") settlementReceiptsPreview();
-        else if (data.intent === "SETTLEMENT_READY") { settlementReceiptsPreview(); settlementSummaryCard(data.draftJson); }
+        else if (data.intent === "SETTLEMENT_READY") settlementReceiptsPreview();   // summary card drawn above the reply
         // Filed. The conversation already said so with the document number; close the chat and
         // show the new row, the way the summary card's own submit used to.
         else if (data.intent === "CREATE_SETTLEMENT") {
@@ -6990,11 +7013,27 @@ async function sendAgent(opts) {
     } else if (chatOnly && !hasChoices && !wizardIncomplete()) {
       appendCreateAction();
     }
+    // CARDS FIRST, QUESTION LAST (user, 2026-09-29). Drawing the previews before the reply is
+    // not enough on its own: previewCard keeps the old card and appends a NEW one whenever the
+    // content changed, so a card re-rendered later in the turn lands under the message. The
+    // reply therefore hops below the last preview appended after it. Chips and widgets are
+    // added after that point, so they stay under the question they belong to.
+    if (chatOnly && replyNode && replyNode.isConnected) {
+      let lastCard = null;
+      for (let n = replyNode.nextElementSibling; n; n = n.nextElementSibling) {
+        if (n.classList && n.classList.contains("chat-section")) lastCard = n;
+      }
+      if (lastCard) {
+        lastCard.after(replyNode);
+        const th = $("agentThread");
+        th.scrollTop = th.scrollHeight;
+      }
+    }
   } catch (e) {
     typing.remove();
     appendMsg("assistant", "⚠ " + friendlyError(e.message), { error: true });
     // restore the attachments the user tried to send so they aren't lost
-    agent.pending = sentFiles;
+    agent.pending = sentFiles;   // (see the reply repositioning just above the catch)
     renderAgentFiles();
   } finally {
     setAgentBusy(false);
@@ -7459,6 +7498,7 @@ function appendMsg(role, text, meta = {}) {
   }
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
+  return wrap;
 }
 function appendTyping() {
   const thread = $("agentThread");
