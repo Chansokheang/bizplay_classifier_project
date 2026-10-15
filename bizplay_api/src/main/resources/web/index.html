@@ -540,8 +540,22 @@
               <span>Model</span>
               <div class="select-wrap"><select id="agentModelSelect"><option value="">Auto</option></select></div>
             </label>
+            <button type="button" class="model-key-btn" id="modelKeyBtn" aria-expanded="false"
+                    aria-controls="modelKeyRow" title="Admin token needed to change the model from outside the server">
+              <svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg><span id="modelKeyState">Token</span>
+            </button>
             <span class="composer-model-hint">applies to all agents</span>
             <span class="composer-kbd-hint"><kbd>Ctrl</kbd>+<kbd>Space</kbd> templates</span>
+            <!-- Inline replacement for the old window.prompt(): a browser can suppress repeated
+                 prompts ("prevent this page from creating additional dialogs"), which made the
+                 model picker look broken. This row cannot be suppressed. -->
+            <div class="model-key-row hidden" id="modelKeyRow">
+              <input type="password" id="modelKeyInput" placeholder="X-Admin-Token"
+                     autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <button type="button" class="btn btn-xs btn-approve" id="modelKeySave">Save</button>
+              <button type="button" class="btn btn-xs" id="modelKeyClear">Clear</button>
+              <span class="model-key-msg" id="modelKeyMsg"></span>
+            </div>
           </div>
         </div>
       </aside>

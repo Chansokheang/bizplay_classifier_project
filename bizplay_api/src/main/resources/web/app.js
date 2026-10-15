@@ -305,6 +305,7 @@ function renderModelSelectors() {
   };
   fill($("llmActiveSelect"), "Auto — each agent’s default");
   fill($("agentModelSelect"), "Auto");
+  syncModelKeyBtn();
 }
 
 async function fetchLlmSettings() {
@@ -329,6 +330,78 @@ async function loadLlmSettings() {
 function llmAdminToken() { try { return localStorage.getItem("bizplay.llmAdminToken") || ""; } catch (e) { return ""; } }
 function setLlmAdminToken(v) { try { v ? localStorage.setItem("bizplay.llmAdminToken", v) : localStorage.removeItem("bizplay.llmAdminToken"); } catch (e) { /* private mode */ } }
 
+/* The token field lives inline under the composer rather than in a window.prompt(): a browser
+ * that has been told to block this page's dialogs returns null from prompt() without showing
+ * anything, which makes the model picker look broken for no visible reason. */
+let llmPendingModel = null;   // model switch waiting on a token; null = nothing pending
+
+function syncModelKeyBtn() {
+  const btn = $("modelKeyBtn");
+  if (!btn) return;
+  const has = !!llmAdminToken();
+  btn.classList.toggle("is-set", has);
+  const lbl = $("modelKeyState");
+  if (lbl) lbl.textContent = has ? "Token saved" : "Token";
+  btn.title = has
+    ? "An admin token is saved in this browser"
+    : "Admin token needed to change the model from outside the server";
+}
+
+function modelKeyMsg(text, isErr) {
+  const el = $("modelKeyMsg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("err", !!isErr);
+}
+
+/* message: why we are asking (the server's own words on a 403). pending: the model to retry once
+ * a token is saved, left out when the operator opened the field themselves. */
+function openModelKeyRow(message, pending) {
+  const row = $("modelKeyRow");
+  if (!row) return;
+  llmPendingModel = pending === undefined ? null : pending;
+  row.classList.remove("hidden");
+  const btn = $("modelKeyBtn");
+  if (btn) btn.setAttribute("aria-expanded", "true");
+  const input = $("modelKeyInput");
+  input.value = llmAdminToken();
+  modelKeyMsg(message ? message + " Paste it here and press Save." : "", !!message);
+  input.focus();
+  input.select();
+}
+
+function closeModelKeyRow() {
+  llmPendingModel = null;
+  const row = $("modelKeyRow");
+  if (row) row.classList.add("hidden");
+  const btn = $("modelKeyBtn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+  modelKeyMsg("");
+}
+
+async function saveModelKey() {
+  const input = $("modelKeyInput");
+  const v = (input.value || "").trim();
+  if (!v) {
+    modelKeyMsg("Paste the token first, or press Clear to forget the saved one.", true);
+    input.focus();
+    return;
+  }
+  setLlmAdminToken(v);
+  syncModelKeyBtn();
+  const retry = llmPendingModel;          // "" (Auto) is a real value, so null is the sentinel
+  if (retry === null) { modelKeyMsg("Saved in this browser."); return; }
+  closeModelKeyRow();
+  await setActiveLlm(retry);              // a second 403 reopens this row with the server's message
+}
+
+function clearModelKey() {
+  setLlmAdminToken("");
+  $("modelKeyInput").value = "";
+  syncModelKeyBtn();
+  modelKeyMsg("Token removed from this browser.");
+}
+
 async function putActiveLlm(model, token) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers["X-Admin-Token"] = token;
@@ -343,21 +416,13 @@ async function setActiveLlm(model) {
   beginLoad();
   [$("llmActiveSelect"), $("agentModelSelect")].forEach((s) => { if (s) s.disabled = true; });
   try {
-    let { res, json } = await putActiveLlm(model, llmAdminToken());
-    // 403 = this browser is not on the server and holds no (valid) token. Ask for it once and
-    // retry, rather than leaving the picker silently stuck on its old value.
+    const { res, json } = await putActiveLlm(model, llmAdminToken());
+    // 403 = this browser is not the server and holds no valid token. Open the inline token field
+    // with this switch pending on it, rather than leaving the picker stuck on its old value.
     if (res.status === 403) {
-      const asked = window.prompt((json && json.message)
-        ? json.message + "\n\nAdmin token (leave blank to cancel):"
-        : "Admin token (leave blank to cancel):", llmAdminToken());
-      if (!asked) {
-        toast((json && json.message) || "Changing the model is not allowed from here.", "err");
-        renderModelSelectors();
-        return;
-      }
-      setLlmAdminToken(asked.trim());
-      ({ res, json } = await putActiveLlm(model, llmAdminToken()));
-      if (res.status === 403) setLlmAdminToken("");   // wrong token: don't keep it
+      renderModelSelectors();   // the switch did not happen - put the select back
+      openModelKeyRow((json && json.message) || "Changing the model is not allowed from here.", model);
+      return;
     }
     if (!res.ok) throw apiError(json, res);
     const s = (json && (json.data || json.payload)) || {};
@@ -2721,6 +2786,16 @@ function init() {
   $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
+  $("modelKeyBtn").addEventListener("click", () => {
+    $("modelKeyRow").classList.contains("hidden") ? openModelKeyRow() : closeModelKeyRow();
+  });
+  $("modelKeySave").addEventListener("click", saveModelKey);
+  $("modelKeyClear").addEventListener("click", clearModelKey);
+  $("modelKeyInput").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); saveModelKey(); }
+    if (ev.key === "Escape") { ev.preventDefault(); closeModelKeyRow(); }
+  });
+  syncModelKeyBtn();
   $("agentFileInput").addEventListener("change", onAgentFiles);
   $("agentFiles").addEventListener("click", (ev) => {
     const rm = ev.target.closest("[data-fchip]");
@@ -3225,7 +3300,7 @@ async function startPcPicker(cell, kind, key, was) {
     if (!t) return null;
     return sites.find((x) => x.name === t)
       || sites.find((x) => (x.address || "").startsWith(t))
-      || sites.find((x) => t.startsWith(x.address || " "))
+      || sites.find((x) => x.address && t.startsWith(x.address))
       || null;
   };
   const firstLeg = String(was).split(",")[0].split("→");
@@ -3519,7 +3594,7 @@ async function planRoutePicker() {
     const a = String(address || "").trim();
     if (!a) return null;
     const hit = sites.find((x) => (x.address || "") === a)
-      || sites.find((x) => a.startsWith(x.address || " "))
+      || sites.find((x) => x.address && a.startsWith(x.address))
       || sites.find((x) => (x.address || "").startsWith(a));
     return hit ? hit.name : null;
   };
