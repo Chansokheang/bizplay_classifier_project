@@ -66,9 +66,16 @@ public class LlmSettingsController {
             @RequestHeader(value = "X-Admin-Token", required = false) String token,
             HttpServletRequest http) {
         if (!mayChangeModel(http, token)) {
+            boolean configured = adminToken != null && !adminToken.isBlank();
             log.warn("PUT /api/v1/agent-conversations/llm-settings REFUSED for {} - not a local "
-                    + "caller and no valid X-Admin-Token", http.getRemoteAddr());
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.ok(null));
+                    + "caller and no valid X-Admin-Token (token configured: {})",
+                    http.getRemoteAddr(), configured);
+            // Say WHICH of the two doors is shut, so the operator knows what to do next.
+            String why = configured
+                    ? "Changing the model from outside this server needs a valid X-Admin-Token header."
+                    : "Changing the model is limited to the server itself. To allow it remotely, set "
+                      + "LLM_SETTINGS_ADMIN_TOKEN on the server and send it as the X-Admin-Token header.";
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(why));
         }
         log.info("PUT /api/v1/agent-conversations/llm-settings - model={}", request.getModel());
         return ResponseEntity.ok(ApiResponse.ok(llmSettingsService.setActiveModel(request.getModel())));

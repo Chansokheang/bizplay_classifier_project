@@ -322,15 +322,43 @@ async function loadLlmSettings() {
   catch (e) { const el = $("llmMsg"); if (el) el.textContent = friendlyError(e.message); }
 }
 
+/* Changing the active model is limited to the server itself unless an admin token is configured
+ * there (LLM_SETTINGS_ADMIN_TOKEN). A remote operator who has that token types it once; it stays
+ * in this browser only and rides along as X-Admin-Token. Nothing is baked into the page, so a
+ * visitor without the token still cannot repoint everyone's agents. */
+function llmAdminToken() { try { return localStorage.getItem("bizplay.llmAdminToken") || ""; } catch (e) { return ""; } }
+function setLlmAdminToken(v) { try { v ? localStorage.setItem("bizplay.llmAdminToken", v) : localStorage.removeItem("bizplay.llmAdminToken"); } catch (e) { /* private mode */ } }
+
+async function putActiveLlm(model, token) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["X-Admin-Token"] = token;
+  const res = await fetch(llmSettingsUrl(), {
+    method: "PUT", headers, body: JSON.stringify({ model: model || null }),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { res, json };
+}
+
 async function setActiveLlm(model) {
   beginLoad();
   [$("llmActiveSelect"), $("agentModelSelect")].forEach((s) => { if (s) s.disabled = true; });
   try {
-    const res = await fetch(llmSettingsUrl(), {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: model || null }),
-    });
-    const json = await res.json().catch(() => ({}));
+    let { res, json } = await putActiveLlm(model, llmAdminToken());
+    // 403 = this browser is not on the server and holds no (valid) token. Ask for it once and
+    // retry, rather than leaving the picker silently stuck on its old value.
+    if (res.status === 403) {
+      const asked = window.prompt((json && json.message)
+        ? json.message + "\n\nAdmin token (leave blank to cancel):"
+        : "Admin token (leave blank to cancel):", llmAdminToken());
+      if (!asked) {
+        toast((json && json.message) || "Changing the model is not allowed from here.", "err");
+        renderModelSelectors();
+        return;
+      }
+      setLlmAdminToken(asked.trim());
+      ({ res, json } = await putActiveLlm(model, llmAdminToken()));
+      if (res.status === 403) setLlmAdminToken("");   // wrong token: don't keep it
+    }
     if (!res.ok) throw apiError(json, res);
     const s = (json && (json.data || json.payload)) || {};
     llmActiveModel = s.activeModel || "";
