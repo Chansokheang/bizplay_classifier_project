@@ -15,7 +15,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -33,12 +32,12 @@ public class LlmSettingsController {
     private final LlmSettingsService llmSettingsService;
 
     /**
-     * Shared secret that lets a NON-local caller change the active model. Unset by default, which
-     * means remote callers are refused outright and only a request from the machine running the
-     * app can switch models.
+     * Close the model picker to remote callers. FALSE by default, so the demo's picker switches
+     * models with nothing to type - which is the whole point of having it in the composer. Set
+     * {@code LLM_SETTINGS_LOCKED=true} on a deployment where only the host may repoint the agents.
      */
-    @Value("${app.conversational.llm-settings.admin-token:}")
-    private String adminToken;
+    @Value("${app.conversational.llm-settings.locked:false}")
+    private boolean locked;
 
     @Operation(summary = "Get the active conversational LLM and the selectable models")
     @GetMapping
@@ -48,45 +47,29 @@ public class LlmSettingsController {
     }
 
     /**
-     * Set the active model.
+     * Set the active model (an empty model clears the override and each agent falls back to its
+     * own default).
      * <p>
-     * This route was DISABLED on 2026-09-29 because it was reachable from the internet with no
-     * authentication at all - anyone could point every conversational agent at a model of their
-     * choosing. It is enabled again here, but gated: the caller must either be on the machine
-     * running the app (loopback) or present {@code X-Admin-Token} matching
-     * {@code app.conversational.llm-settings.admin-token}. That property is EMPTY by default, so
-     * an internet-facing deployment stays closed until someone deliberately sets it. The demo UI
-     * sends no token, which is what makes the picker work locally and refuse in production.
+     * This route was disabled on 2026-09-29 for being reachable from the internet unauthenticated,
+     * then gated behind a shared token. The token was dropped on 2026-10-15: every other endpoint
+     * in this demo is open, the setting is not a secret, and typing a token to change a dropdown
+     * made the picker unusable in practice. {@code LLM_SETTINGS_LOCKED=true} brings the gate back
+     * for a deployment that needs it.
      */
     @Operation(summary = "Set the active conversational LLM (empty model clears the override). "
-            + "Local callers only, unless X-Admin-Token is configured and supplied.")
+            + "Open unless the deployment sets LLM_SETTINGS_LOCKED=true, which limits it to the host.")
     @PutMapping
     public ResponseEntity<ApiResponse<LlmSettingsResponse>> update(
-            @RequestBody LlmSettingsUpdateRequest request,
-            @RequestHeader(value = "X-Admin-Token", required = false) String token,
-            HttpServletRequest http) {
-        if (!mayChangeModel(http, token)) {
-            boolean configured = adminToken != null && !adminToken.isBlank();
-            log.warn("PUT /api/v1/agent-conversations/llm-settings REFUSED for {} - not a local "
-                    + "caller and no valid X-Admin-Token (token configured: {})",
-                    http.getRemoteAddr(), configured);
-            // Say WHICH of the two doors is shut, so the operator knows what to do next.
-            String why = configured
-                    ? "Changing the model from outside this server needs a valid X-Admin-Token header."
-                    : "Changing the model is limited to the server itself. To allow it remotely, set "
-                      + "LLM_SETTINGS_ADMIN_TOKEN on the server and send it as the X-Admin-Token header.";
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(why));
+            @RequestBody LlmSettingsUpdateRequest request, HttpServletRequest http) {
+        if (locked && !isLoopback(http.getRemoteAddr())) {
+            log.warn("PUT /api/v1/agent-conversations/llm-settings REFUSED for {} - "
+                    + "LLM_SETTINGS_LOCKED=true limits model changes to this machine",
+                    http.getRemoteAddr());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(
+                    "This deployment only accepts model changes from the server itself."));
         }
         log.info("PUT /api/v1/agent-conversations/llm-settings - model={}", request.getModel());
         return ResponseEntity.ok(ApiResponse.ok(llmSettingsService.setActiveModel(request.getModel())));
-    }
-
-    /** Loopback caller, or the configured admin token. Never both-optional: an unset token denies. */
-    private boolean mayChangeModel(HttpServletRequest http, String token) {
-        if (adminToken != null && !adminToken.isBlank() && adminToken.equals(token)) {
-            return true;
-        }
-        return isLoopback(http.getRemoteAddr());
     }
 
     private boolean isLoopback(String addr) {

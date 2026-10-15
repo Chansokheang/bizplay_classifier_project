@@ -1286,32 +1286,12 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px; cursor
 .composer-row textarea { flex: 1; min-height: 44px; max-height: 140px; resize: none; }
 .composer-actions { display: flex; gap: 6px; align-items: center; }
 /* model switcher under the composer */
-.composer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.composer-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .composer-model { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--soft); cursor: pointer; }
 .composer-model .ico { width: 14px; height: 14px; color: var(--primary); }
 .composer-model .select-wrap { min-width: 0; }
 .composer-model select { padding: 5px 26px 5px 9px; font-size: 12px; font-weight: 600; width: auto; min-width: 150px; }
 .composer-model-hint { font-size: 11px; color: var(--muted); }
-/* Admin-token field for the model picker — see index.html for why this is not a window.prompt(). */
-.model-key-btn {
-  display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 11.5px; font-weight: 600;
-  color: var(--muted); background: #fff; border: 1px solid var(--line); border-radius: 999px;
-  padding: 3px 10px; cursor: pointer;
-  transition: border-color .15s ease, color .15s ease, background-color .15s ease;
-}
-.model-key-btn:hover { border-color: var(--primary); color: var(--primary); }
-.model-key-btn .ico { width: 12px; height: 12px; }
-.model-key-btn.is-set { color: var(--ok); border-color: var(--ok); background: rgba(31,157,87,.07); }
-.model-key-btn[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
-.model-key-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.model-key-row input {
-  flex: 1 1 200px; min-width: 0; padding: 5px 9px; font-size: 12px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; color: var(--text);
-}
-.model-key-row input:focus { outline: none; border-color: var(--primary); }
-.model-key-msg { flex-basis: 100%; font-size: 11px; color: var(--muted); }
-.model-key-msg.err { color: var(--danger); }
-.model-key-msg:empty { display: none; }
 .attach-btn { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 17px; background: #fff; color: var(--soft); }
 .attach-btn:hover { border-color: var(--primary); color: var(--primary); }
 .composer-actions .btn { height: 40px; }

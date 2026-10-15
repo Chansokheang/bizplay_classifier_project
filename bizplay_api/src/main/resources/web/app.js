@@ -305,7 +305,6 @@ function renderModelSelectors() {
   };
   fill($("llmActiveSelect"), "Auto — each agent’s default");
   fill($("agentModelSelect"), "Auto");
-  syncModelKeyBtn();
 }
 
 async function fetchLlmSettings() {
@@ -323,90 +322,14 @@ async function loadLlmSettings() {
   catch (e) { const el = $("llmMsg"); if (el) el.textContent = friendlyError(e.message); }
 }
 
-/* Changing the active model is limited to the server itself unless an admin token is configured
- * there (LLM_SETTINGS_ADMIN_TOKEN). A remote operator who has that token types it once; it stays
- * in this browser only and rides along as X-Admin-Token. Nothing is baked into the page, so a
- * visitor without the token still cannot repoint everyone's agents. */
-function llmAdminToken() { try { return localStorage.getItem("bizplay.llmAdminToken") || ""; } catch (e) { return ""; } }
-function setLlmAdminToken(v) { try { v ? localStorage.setItem("bizplay.llmAdminToken", v) : localStorage.removeItem("bizplay.llmAdminToken"); } catch (e) { /* private mode */ } }
-
-/* The token field lives inline under the composer rather than in a window.prompt(): a browser
- * that has been told to block this page's dialogs returns null from prompt() without showing
- * anything, which makes the model picker look broken for no visible reason. */
-let llmPendingModel = null;   // model switch waiting on a token; null = nothing pending
-
-function syncModelKeyBtn() {
-  const btn = $("modelKeyBtn");
-  if (!btn) return;
-  const has = !!llmAdminToken();
-  btn.classList.toggle("is-set", has);
-  const lbl = $("modelKeyState");
-  if (lbl) lbl.textContent = has ? "Token saved" : "Token";
-  btn.title = has
-    ? "An admin token is saved in this browser"
-    : "Admin token needed to change the model from outside the server";
-}
-
-function modelKeyMsg(text, isErr) {
-  const el = $("modelKeyMsg");
-  if (!el) return;
-  el.textContent = text || "";
-  el.classList.toggle("err", !!isErr);
-}
-
-/* message: why we are asking (the server's own words on a 403). pending: the model to retry once
- * a token is saved, left out when the operator opened the field themselves. */
-function openModelKeyRow(message, pending) {
-  const row = $("modelKeyRow");
-  if (!row) return;
-  llmPendingModel = pending === undefined ? null : pending;
-  row.classList.remove("hidden");
-  const btn = $("modelKeyBtn");
-  if (btn) btn.setAttribute("aria-expanded", "true");
-  const input = $("modelKeyInput");
-  input.value = llmAdminToken();
-  modelKeyMsg(message ? message + " Paste it here and press Save." : "", !!message);
-  input.focus();
-  input.select();
-}
-
-function closeModelKeyRow() {
-  llmPendingModel = null;
-  const row = $("modelKeyRow");
-  if (row) row.classList.add("hidden");
-  const btn = $("modelKeyBtn");
-  if (btn) btn.setAttribute("aria-expanded", "false");
-  modelKeyMsg("");
-}
-
-async function saveModelKey() {
-  const input = $("modelKeyInput");
-  const v = (input.value || "").trim();
-  if (!v) {
-    modelKeyMsg("Paste the token first, or press Clear to forget the saved one.", true);
-    input.focus();
-    return;
-  }
-  setLlmAdminToken(v);
-  syncModelKeyBtn();
-  const retry = llmPendingModel;          // "" (Auto) is a real value, so null is the sentinel
-  if (retry === null) { modelKeyMsg("Saved in this browser."); return; }
-  closeModelKeyRow();
-  await setActiveLlm(retry);              // a second 403 reopens this row with the server's message
-}
-
-function clearModelKey() {
-  setLlmAdminToken("");
-  $("modelKeyInput").value = "";
-  syncModelKeyBtn();
-  modelKeyMsg("Token removed from this browser.");
-}
-
-async function putActiveLlm(model, token) {
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["X-Admin-Token"] = token;
+/* The active model is a plain runtime setting, not a secret: the PUT is open unless the
+ * deployment sets LLM_SETTINGS_LOCKED=true, in which case only the host may change it and a
+ * remote picker simply reports the refusal. Nothing to type either way. */
+async function putActiveLlm(model) {
   const res = await fetch(llmSettingsUrl(), {
-    method: "PUT", headers, body: JSON.stringify({ model: model || null }),
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: model || null }),
   });
   const json = await res.json().catch(() => ({}));
   return { res, json };
@@ -416,14 +339,7 @@ async function setActiveLlm(model) {
   beginLoad();
   [$("llmActiveSelect"), $("agentModelSelect")].forEach((s) => { if (s) s.disabled = true; });
   try {
-    const { res, json } = await putActiveLlm(model, llmAdminToken());
-    // 403 = this browser is not the server and holds no valid token. Open the inline token field
-    // with this switch pending on it, rather than leaving the picker stuck on its old value.
-    if (res.status === 403) {
-      renderModelSelectors();   // the switch did not happen - put the select back
-      openModelKeyRow((json && json.message) || "Changing the model is not allowed from here.", model);
-      return;
-    }
+    const { res, json } = await putActiveLlm(model);
     if (!res.ok) throw apiError(json, res);
     const s = (json && (json.data || json.payload)) || {};
     llmActiveModel = s.activeModel || "";
@@ -2786,16 +2702,6 @@ function init() {
   $("chatToggleBtn").addEventListener("click", toggleChatPane);
   $("agentSendBtn").addEventListener("click", sendAgent);
   $("agentModelSelect").addEventListener("change", (ev) => setActiveLlm(ev.target.value));
-  $("modelKeyBtn").addEventListener("click", () => {
-    $("modelKeyRow").classList.contains("hidden") ? openModelKeyRow() : closeModelKeyRow();
-  });
-  $("modelKeySave").addEventListener("click", saveModelKey);
-  $("modelKeyClear").addEventListener("click", clearModelKey);
-  $("modelKeyInput").addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") { ev.preventDefault(); saveModelKey(); }
-    if (ev.key === "Escape") { ev.preventDefault(); closeModelKeyRow(); }
-  });
-  syncModelKeyBtn();
   $("agentFileInput").addEventListener("change", onAgentFiles);
   $("agentFiles").addEventListener("click", (ev) => {
     const rm = ev.target.closest("[data-fchip]");
